@@ -1,7 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketServer.Model;
 
-namespace SocketServerTest;
+namespace SocketServerTest.Model;
 [TestClass]
 public class TcpClientTests
 {

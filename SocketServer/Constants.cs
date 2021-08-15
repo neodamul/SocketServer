@@ -4,11 +4,9 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace SocketServer
+namespace SocketServer;
+public class Constants
 {
-    public class Constants
-    {
-        public const string LocalHostIpAddres = "127.0.0.1";
-        public const int LocalHostPort = 0;
-    }
+    public const string LocalHostIpAddres = "127.0.0.1";
+    public const int LocalHostPort = 0;
 }
