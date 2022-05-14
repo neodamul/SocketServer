@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 using System.Net;
 using System.Net.Sockets;
 using System.Xml.Linq;
-using SocketServer.Interface;
+using SocketCommon.Interface;
 
 namespace SocketServer.Model;
 public class TcpServer : TcpClient, IServer, IClient, IDisposable

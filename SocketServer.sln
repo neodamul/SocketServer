@@ -7,6 +7,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "SocketServer", "SocketServe
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketServerTest", "SocketServerTest\SocketServerTest.csproj", "{933C15E5-80CC-4389-9B25-FEDFAA8ACE01}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SocketCommon", "SocketCommon\SocketCommon.csproj", "{0C14FD34-5A13-4F51-B687-D16425E3FC26}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,11 +23,30 @@ Global
 		{933C15E5-80CC-4389-9B25-FEDFAA8ACE01}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{933C15E5-80CC-4389-9B25-FEDFAA8ACE01}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{933C15E5-80CC-4389-9B25-FEDFAA8ACE01}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0C14FD34-5A13-4F51-B687-D16425E3FC26}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0C14FD34-5A13-4F51-B687-D16425E3FC26}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0C14FD34-5A13-4F51-B687-D16425E3FC26}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0C14FD34-5A13-4F51-B687-D16425E3FC26}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {157ECD12-3EB5-49AD-A5DF-C410C9770E61}
+	EndGlobalSection
+	GlobalSection(MonoDevelopProperties) = preSolution
+		Policies = $0
+		$0.DotNetNamingPolicy = $1
+		$1.DirectoryNamespaceAssociation = PrefixedHierarchical
+		$0.TextStylePolicy = $2
+		$2.inheritsSet = null
+		$2.scope = text/x-csharp
+		$0.CSharpFormattingPolicy = $3
+		$3.scope = text/x-csharp
+		$0.TextStylePolicy = $4
+		$4.FileWidth = 80
+		$4.TabsToSpaces = True
+		$4.scope = text/plain
+		$0.StandardHeader = $5
 	EndGlobalSection
 EndGlobal
