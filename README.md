@@ -190,3 +190,16 @@ healthcheck를 30초마다 자동 전송하는 주기 실행 스케줄러는 아
 - healthcheck 30초 주기 실행 스케줄러 추가
 - 송수신 프로토콜과 예외 처리 정책 정의
 - HelloWorld 외 추가 요청/응답 프로토콜 확장
+
+## 오픈소스 라이브러리
+
+이 프로젝트는 다음 NuGet 오픈소스 라이브러리를 사용합니다.
+
+- `log4net` `3.3.1`: 공통 로깅
+- `Google.Protobuf` `3.20.1`: Protocol Buffers 지원
+- `Grpc.Net.Client` `2.46.0`: gRPC 클라이언트 지원
+- `Grpc.Tools` `2.46.1`: gRPC/Protobuf 빌드 도구
+- `Microsoft.NET.Test.Sdk` `17.2.0`: .NET 테스트 실행
+- `MSTest.TestAdapter` `2.2.10`: MSTest 어댑터
+- `MSTest.TestFramework` `2.2.10`: MSTest 프레임워크
+- `coverlet.collector` `3.1.2`: 테스트 커버리지 수집
