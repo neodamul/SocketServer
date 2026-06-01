@@ -1,25 +1,20 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Net;
 using System.Net.Sockets;
-using System.Xml.Linq;
 using SocketCommon.Interface;
 
 namespace SocketServer.Model;
 public class TcpClient : IClient, IDisposable
 {
-    private Socket Socket = null;
+    protected Socket Socket = null;
 
     private bool disposedValue;
 
     private int Id { get; set; }
     private string Name { get; set; }
     private AddressFamily Family { get; set; }
-    private IPAddress IpAddress { get; set; }
-    private int Port { get; set; }
+    protected IPAddress IpAddress { get; private set; }
+    protected int Port { get; private set; }
 
     public TcpClient() : this(0, null)
     { }
@@ -39,6 +34,7 @@ public class TcpClient : IClient, IDisposable
 
     public void Initialize()
     {
+        this.Socket?.Dispose();
         this.Socket = new Socket(this.Family, SocketType.Stream, ProtocolType.Tcp);
     }
 
@@ -76,17 +72,58 @@ public class TcpClient : IClient, IDisposable
 
     public bool Connect()
     {
-        return true;
+        try
+        {
+            if (this.Socket == null)
+            {
+                this.Initialize();
+            }
+
+            this.Socket.Connect(new IPEndPoint(this.IpAddress, this.Port));
+            return true;
+        }
+        catch (SocketException)
+        {
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
     }
 
     public bool Disconnect()
     {
+        if (this.Socket == null)
+        {
+            return true;
+        }
+
+        try
+        {
+            if (this.Socket.Connected)
+            {
+                this.Socket.Shutdown(SocketShutdown.Both);
+            }
+        }
+        catch (SocketException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        finally
+        {
+            this.Socket.Dispose();
+            this.Socket = null;
+        }
+
         return true;
     }
 
     public bool IsConnected()
     {
-        return true;
+        return this.Socket?.Connected ?? false;
     }
 
     public override string ToString()
@@ -100,11 +137,9 @@ public class TcpClient : IClient, IDisposable
         {
             if (disposing)
             {
-                // TODO: 관리형 상태(관리형 개체)를 삭제합니다.
+                this.Disconnect();
             }
 
-            // TODO: 비관리형 리소스(비관리형 개체)를 해제하고 종료자를 재정의합니다.
-            // TODO: 큰 필드를 null로 설정합니다.
             disposedValue = true;
         }
     }

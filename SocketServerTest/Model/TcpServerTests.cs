@@ -9,27 +9,34 @@ public class TcpServerTests
     public void StartTest()
     {
         TcpServer server = new();
-        server.Start();
+        Assert.IsTrue(server.Start());
+        Assert.AreNotEqual(0, server.GetPort());
+        server.End();
     }
 
     [TestMethod()]
     public void BindTest()
     {
         TcpServer server = new();
-        server.Bind();
+        Assert.IsTrue(server.Bind());
+        Assert.AreNotEqual(0, server.GetPort());
+        server.End();
     }
 
     [TestMethod()]
     public void ListenTest()
     {
         TcpServer server = new();
-        server.Listen();
+        Assert.IsTrue(server.Bind());
+        Assert.IsTrue(server.Listen());
+        server.End();
     }
 
     [TestMethod()]
     public void EndTest()
     {
         TcpServer server = new();
-        server.End();
+        Assert.IsTrue(server.Start());
+        Assert.IsTrue(server.End());
     }
 }

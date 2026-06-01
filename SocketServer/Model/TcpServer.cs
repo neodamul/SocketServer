@@ -1,11 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Net;
 using System.Net.Sockets;
-using System.Xml.Linq;
 using SocketCommon.Interface;
 
 namespace SocketServer.Model;
@@ -26,21 +21,61 @@ public class TcpServer : TcpClient, IServer, IClient, IDisposable
 
     public bool Start()
     {
-        return true;
+        return this.Bind() && this.Listen();
     }
 
     public bool Bind()
     {
-        return true;
+        try
+        {
+            if (this.Socket == null)
+            {
+                this.Initialize();
+            }
+
+            this.Socket.Bind(new IPEndPoint(this.IpAddress, this.Port));
+            if (this.Socket.LocalEndPoint is IPEndPoint localEndPoint)
+            {
+                this.SetPort(localEndPoint.Port);
+            }
+
+            return true;
+        }
+        catch (SocketException)
+        {
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
     }
 
     public bool Listen()
     {
-        return true;
+        try
+        {
+            if (this.Socket == null)
+            {
+                return false;
+            }
+
+            this.Socket.Listen(100);
+            return true;
+        }
+        catch (SocketException)
+        {
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
     }
 
     public bool End()
     {
+        this.Disconnect();
         return true;
     }
 
@@ -50,11 +85,10 @@ public class TcpServer : TcpClient, IServer, IClient, IDisposable
         {
             if (disposing)
             {
-                // TODO: 관리형 상태(관리형 개체)를 삭제합니다.
+                this.End();
             }
 
-            // TODO: 비관리형 리소스(비관리형 개체)를 해제하고 종료자를 재정의합니다.
-            // TODO: 큰 필드를 null로 설정합니다.
+            base.Dispose(disposing);
             disposedValue = true;
         }
     }
