@@ -2,6 +2,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
+using SocketCommon.Model;
 using SocketClientTcpClient = SocketClient.Model.TcpClient;
 
 namespace SocketClientTest.Model;
@@ -61,6 +62,27 @@ public class TcpClientTests
         SocketClientTcpClient client = new();
         client.SetPort(TestPort);
         Assert.AreEqual(TestPort, client.GetPort());
+    }
+
+    [TestMethod]
+    public async Task ClientHelloWorldRequestTest()
+    {
+        using Socket listener = CreateListener();
+        Task<Socket> acceptTask = listener.AcceptAsync();
+
+        SocketClientTcpClient client = new(1, "testClient", "127.0.0.1", TestPort);
+        Assert.IsTrue(client.Connect());
+        using Socket accepted = await acceptTask;
+
+        Assert.IsTrue(client.SendHelloWorldRequest());
+        Assert.IsTrue(HelloWorldProtocol.TryReceiveRequest(accepted, out HelloWorldRequest request));
+        Assert.IsNotNull(request);
+
+        Assert.IsTrue(HelloWorldProtocol.Send(accepted, HelloWorldProtocol.CreateResponse()));
+        Assert.IsTrue(client.TryReceiveHelloWorldResponse(out HelloWorldResponse response));
+        Assert.AreEqual("Hello, World!", response.Message);
+
+        client.Disconnect();
     }
 
     private static Socket CreateListener()

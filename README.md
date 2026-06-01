@@ -12,7 +12,8 @@ SocketServer.sln
 │   │   ├── IClient.cs
 │   │   └── IServer.cs
 │   ├── Model/
-│   │   └── HealthCheckProtocol.cs
+│   │   ├── HealthCheckProtocol.cs
+│   │   └── HelloWorldProtocol.cs
 │   └── SocketCommon.csproj
 ├── SocketClient/
 │   ├── Model/
@@ -25,7 +26,8 @@ SocketServer.sln
 │   └── SocketServer.csproj
 ├── SocketCommonTest/
 │   ├── Model/
-│   │   └── HealthCheckProtocolTests.cs
+│   │   ├── HealthCheckProtocolTests.cs
+│   │   └── HelloWorldProtocolTests.cs
 │   └── SocketCommonTest.csproj
 ├── SocketClientTest/
 │   ├── Model/
@@ -54,6 +56,8 @@ SocketServer.sln
 - `SendHealthCheck()`로 `PING` 전송
 - `SendHealthCheckResponse()`로 `PONG OK` 응답 전송
 - `TryReceiveHealthCheck()`로 healthcheck 메시지 수신
+- `SendHelloWorldRequest()`로 HelloWorld 요청 전송
+- `TryReceiveHelloWorldResponse()`로 HelloWorld 응답 수신
 - `ToString()`으로 `Id:Name:Family:IpAddress:Port` 형식 출력
 
 ### `TcpServer`
@@ -66,6 +70,7 @@ SocketServer.sln
 - 포트 `0`으로 바인딩하면 OS가 할당한 실제 포트를 `GetPort()`로 조회
 - `Listen()` 호출 시 TCP 연결 대기 시작
 - `End()` 호출 시 서버 소켓 종료
+- `AcceptHelloWorldRequestAndRespond()` 호출 시 연결을 수락하고 HelloWorld 요청에 응답
 
 ### `SocketCommon`
 
@@ -75,6 +80,7 @@ SocketServer.sln
 - `IClient`: 초기화, 연결, 연결 종료, 연결 상태, IP/포트 설정과 조회
 - `IServer`: `IClient`를 확장하고 서버 시작, 종료, 바인드, 리슨 메서드 정의
 - `HealthCheckProtocol`: 연결 유지를 위한 healthcheck 메시지 인코딩/파싱
+- `HelloWorldProtocol`: HelloWorld 요청/응답 메시지 인코딩/파싱
 
 ### `HealthCheckProtocol`
 
@@ -99,6 +105,28 @@ TCP 연결에서 사용할 때:
 ```csharp
 client.SendHealthCheck();
 client.TryReceiveHealthCheck(out HealthCheckMessage response);
+```
+
+### `HelloWorldProtocol`
+
+`SocketCommon.Model.HelloWorldProtocol`은 클라이언트가 서버에 기본 HelloWorld 요청을 보내고 서버가 응답하는 라인 기반 프로토콜입니다.
+
+```text
+HELLOWORLD/1 REQUEST
+HELLOWORLD/1 RESPONSE Hello, World!
+```
+
+클라이언트에서 사용할 때:
+
+```csharp
+client.SendHelloWorldRequest();
+client.TryReceiveHelloWorldResponse(out HelloWorldResponse response);
+```
+
+서버에서 사용할 때:
+
+```csharp
+server.AcceptHelloWorldRequestAndRespond();
 ```
 
 ## 실행 예시
@@ -157,6 +185,8 @@ dotnet run --project SocketServer/SocketServer.csproj
 
 - healthcheck `PING`, `PONG OK` 메시지 인코딩/파싱 검증
 - healthcheck 메시지의 실제 소켓 송수신 검증
+- HelloWorld 요청/응답 메시지 인코딩/파싱 검증
+- HelloWorld 요청/응답 메시지의 실제 소켓 송수신 검증
 
 `SocketClientTest`:
 
@@ -164,13 +194,15 @@ dotnet run --project SocketServer/SocketServer.csproj
 - `TcpClient.Connect()`, `Disconnect()`, `IsConnected()` 호출
 - IP 주소 설정/조회 검증
 - 포트 설정/조회 검증
+- HelloWorld 요청 전송 및 응답 수신 검증
 
 `SocketServerTest`:
 
 - `TcpServer.Start()`, `Bind()`, `Listen()`, `End()` 호출
+- HelloWorld 요청 수락 및 응답 검증
 - 테스트 TCP 포트는 `5001` 사용
 
-비동기 accept 루프와 주기 실행 스케줄러는 아직 구현되어 있지 않습니다.
+지속 실행되는 비동기 accept 루프와 주기 실행 스케줄러는 아직 구현되어 있지 않습니다.
 
 ## 향후 개선 방향
 
@@ -178,4 +210,4 @@ dotnet run --project SocketServer/SocketServer.csproj
 - healthcheck 30초 주기 실행 스케줄러 추가
 - 다중 클라이언트 처리와 비동기 I/O 적용
 - 송수신 프로토콜과 예외 처리 정책 정의
-- 실제 메시지 송수신을 검증하는 통합 테스트 추가
+- HelloWorld 외 추가 요청/응답 프로토콜 확장

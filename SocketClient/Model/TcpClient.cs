@@ -160,6 +160,27 @@ public class TcpClient : IClient, IDisposable
         return HealthCheckProtocol.TryReceive(this.Socket, out message);
     }
 
+    public bool SendHelloWorldRequest()
+    {
+        if (this.Socket == null)
+        {
+            return false;
+        }
+
+        return HelloWorldProtocol.Send(this.Socket, HelloWorldProtocol.CreateRequest());
+    }
+
+    public bool TryReceiveHelloWorldResponse(out HelloWorldResponse response)
+    {
+        response = null;
+        if (this.Socket == null)
+        {
+            return false;
+        }
+
+        return HelloWorldProtocol.TryReceiveResponse(this.Socket, out response);
+    }
+
     public override string ToString()
     {
         return Id + ":" + Name + ":" + Family + ":" + IpAddress + ":" + Port;

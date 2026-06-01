@@ -1,4 +1,7 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System.Threading.Tasks;
+using SocketClient.Model;
+using SocketCommon.Model;
 using SocketServer.Model;
 
 namespace SocketServer.Model.Tests;
@@ -40,5 +43,23 @@ public class TcpServerTests
         TcpServer server = new(1, "testServer", "127.0.0.1", TestPort);
         Assert.IsTrue(server.Start());
         Assert.IsTrue(server.End());
+    }
+
+    [TestMethod()]
+    public async Task HelloWorldResponseTest()
+    {
+        TcpServer server = new(1, "testServer", "127.0.0.1", TestPort);
+        Assert.IsTrue(server.Start());
+        Task<bool> serverTask = Task.Run(() => server.AcceptHelloWorldRequestAndRespond());
+
+        TcpClient client = new(1, "testClient", "127.0.0.1", TestPort);
+        Assert.IsTrue(client.Connect());
+        Assert.IsTrue(client.SendHelloWorldRequest());
+        Assert.IsTrue(client.TryReceiveHelloWorldResponse(out HelloWorldResponse response));
+        Assert.AreEqual("Hello, World!", response.Message);
+        Assert.IsTrue(await serverTask);
+
+        client.Disconnect();
+        server.End();
     }
 }

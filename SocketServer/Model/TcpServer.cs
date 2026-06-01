@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using SocketCommon;
 using SocketCommon.Interface;
+using SocketCommon.Model;
 
 namespace SocketServer.Model;
 public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDisposable
@@ -78,6 +79,33 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     {
         this.Disconnect();
         return true;
+    }
+
+    public bool AcceptHelloWorldRequestAndRespond()
+    {
+        if (this.Socket == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            using Socket client = this.Socket.Accept();
+            if (!HelloWorldProtocol.TryReceiveRequest(client, out HelloWorldRequest request))
+            {
+                return false;
+            }
+
+            return HelloWorldProtocol.Send(client, HelloWorldProtocol.CreateResponse());
+        }
+        catch (SocketException)
+        {
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
     }
 
     protected override void Dispose(bool disposing)
