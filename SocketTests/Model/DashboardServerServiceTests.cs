@@ -2,7 +2,7 @@
 using SocketCommon.Model;
 using SocketDashboard.Model;
 
-namespace SocketDashboardTest.Model;
+namespace SocketTests.Model;
 
 [TestClass]
 public class DashboardServerServiceTests

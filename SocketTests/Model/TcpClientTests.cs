@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 using SocketCommon.Model;
 using SocketClientTcpClient = SocketClient.Model.TcpClient;
 
-namespace SocketClientTest.Model;
+namespace SocketTests.Model;
 [TestClass]
 public class TcpClientTests
 {

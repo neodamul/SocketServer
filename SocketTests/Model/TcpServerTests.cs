@@ -6,7 +6,7 @@ using SocketClient.Model;
 using SocketCommon.Model;
 using SocketServer.Model;
 
-namespace SocketServer.Model.Tests;
+namespace SocketTests.Model;
 [TestClass()]
 public class TcpServerTests
 {

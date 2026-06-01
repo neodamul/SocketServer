@@ -2,7 +2,7 @@
 using System.Net.Sockets;
 using SocketCommon.Model;
 
-namespace SocketCommonTest.Model;
+namespace SocketTests.Model;
 
 [TestClass]
 public class SocketFactoryTests

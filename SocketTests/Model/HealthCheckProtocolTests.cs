@@ -7,7 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketCommon.Model;
 
-namespace SocketCommonTest.Model;
+namespace SocketTests.Model;
 
 [TestClass]
 public class HealthCheckProtocolTests
