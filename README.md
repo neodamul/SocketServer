@@ -170,29 +170,9 @@ GET /api/server/status
 
 ## 테스트
 
-테스트는 단일 `SocketTests` 프로젝트에 통합되어 있으며 MSTest를 사용합니다.
+테스트는 단일 `SocketTests` 프로젝트에 통합되어 있으며 MSTest를 사용합니다. `SocketCommon`, `SocketClient`, `SocketServer`, `SocketDashboard` 프로젝트를 참조해 공통 프로토콜, 클라이언트/서버 송수신, 대시보드 상태 서비스를 함께 검증합니다.
 
-현재 테스트 범위:
-
-`SocketTests`:
-
-- healthcheck `PING`, `PONG OK` 메시지 인코딩/파싱 검증
-- healthcheck 메시지의 실제 소켓 송수신 검증
-- HelloWorld 요청/응답 메시지 인코딩/파싱 검증
-- HelloWorld 요청/응답 메시지의 실제 소켓 송수신 검증
-- 4KB를 초과하는 HelloWorld payload 제한 검증
-- TCP 소켓 기본 옵션과 `SocketAsyncEventArgs` 팩토리 설정 검증
-- `TcpClient.Initialize()` 호출
-- `TcpClient.Connect()`, `Disconnect()`, `IsConnected()` 호출
-- IP 주소 설정/조회 검증
-- 포트 설정/조회 검증
-- HelloWorld 요청 전송 및 응답 수신 검증
-- `TcpServer.Start()`, `Bind()`, `Listen()`, `End()` 호출
-- `TcpServer.GetStatus()` 기반 상태 조회 검증
-- HelloWorld 요청 수락 및 응답 검증
-- 다중 클라이언트 동시 접속 후 healthcheck와 HelloWorld 요청/응답 검증
-- 테스트 TCP 포트는 `5001` 사용
-- 대시보드 상태 서비스가 내부 서버를 시작하고 상태 API 모델을 구성하는지 검증
+테스트 TCP 포트는 `5001`을 사용합니다.
 
 healthcheck를 30초마다 자동 전송하는 주기 실행 스케줄러는 아직 구현되어 있지 않습니다.
 
