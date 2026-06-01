@@ -1,5 +1,6 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using SocketClient.Model;
 using SocketCommon.Model;
@@ -10,6 +11,21 @@ namespace SocketServer.Model.Tests;
 public class TcpServerTests
 {
     private const int TestPort = 5001;
+    private Mutex? testPortMutex;
+
+    [TestInitialize]
+    public void Initialize()
+    {
+        this.testPortMutex = new Mutex(false, "SocketServer.TestPort.5001");
+        this.testPortMutex.WaitOne();
+    }
+
+    [TestCleanup]
+    public void Cleanup()
+    {
+        this.testPortMutex?.ReleaseMutex();
+        this.testPortMutex?.Dispose();
+    }
 
     [TestMethod()]
     public void StartTest()
@@ -44,6 +60,35 @@ public class TcpServerTests
         TcpServer server = new(1, "testServer", "127.0.0.1", TestPort);
         Assert.IsTrue(server.Start());
         Assert.IsTrue(server.End());
+    }
+
+    [TestMethod()]
+    public void GetStatusTest()
+    {
+        TcpServer server = new(1, "testServer", "127.0.0.1", TestPort);
+
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+
+            TcpServerStatus status = server.GetStatus();
+
+            Assert.IsTrue(status.IsSocketInitialized);
+            Assert.IsTrue(status.IsBound);
+            Assert.IsTrue(status.IsListening);
+            Assert.IsTrue(status.IsAcceptLoopRunning);
+            Assert.AreEqual("127.0.0.1", status.IpAddress);
+            Assert.AreEqual(TestPort, status.Port);
+            Assert.AreEqual(SocketFactory.ListenBacklog, status.ListenBacklog);
+            Assert.AreEqual(SocketFactory.NoDelay, status.NoDelay);
+            Assert.AreEqual(SocketMessageFrame.MaxPayloadLength, status.MaxPayloadLength);
+            Assert.IsNotNull(status.StartedAt);
+        }
+        finally
+        {
+            server.End();
+        }
     }
 
     [TestMethod()]

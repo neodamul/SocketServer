@@ -2,6 +2,7 @@
 using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketCommon.Model;
@@ -13,6 +14,21 @@ public class HealthCheckProtocolTests
 {
     private const int TestPort = 5001;
     private const uint TestClientId = 7;
+    private Mutex? testPortMutex;
+
+    [TestInitialize]
+    public void Initialize()
+    {
+        this.testPortMutex = new Mutex(false, "SocketServer.TestPort.5001");
+        this.testPortMutex.WaitOne();
+    }
+
+    [TestCleanup]
+    public void Cleanup()
+    {
+        this.testPortMutex?.ReleaseMutex();
+        this.testPortMutex?.Dispose();
+    }
 
     [TestMethod]
     public void KeepAliveIntervalTest()

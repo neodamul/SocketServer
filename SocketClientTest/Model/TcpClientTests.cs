@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 using SocketCommon.Model;
 using SocketClientTcpClient = SocketClient.Model.TcpClient;
@@ -10,6 +11,21 @@ namespace SocketClientTest.Model;
 public class TcpClientTests
 {
     private const int TestPort = 5001;
+    private Mutex? testPortMutex;
+
+    [TestInitialize]
+    public void Initialize()
+    {
+        this.testPortMutex = new Mutex(false, "SocketServer.TestPort.5001");
+        this.testPortMutex.WaitOne();
+    }
+
+    [TestCleanup]
+    public void Cleanup()
+    {
+        this.testPortMutex?.ReleaseMutex();
+        this.testPortMutex?.Dispose();
+    }
 
     [TestMethod]
     public void ClientInitializeTest()

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SocketServer Dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <h1>SocketServer Dashboard</h1>
+        <p id="endpoint">/api/server/status</p>
+      </div>
+      <div class="status-pill" id="health">Connecting</div>
+    </header>
+
+    <section class="metrics" aria-label="Server metrics">
+      <article>
+        <span>Listening</span>
+        <strong id="isListening">-</strong>
+      </article>
+      <article>
+        <span>Accept Loop</span>
+        <strong id="acceptLoop">-</strong>
+      </article>
+      <article>
+        <span>Connected</span>
+        <strong id="connectedClients">-</strong>
+      </article>
+      <article>
+        <span>Accepted</span>
+        <strong id="acceptedClients">-</strong>
+      </article>
+      <article>
+        <span>Closed</span>
+        <strong id="closedClients">-</strong>
+      </article>
+      <article>
+        <span>Received</span>
+        <strong id="receivedMessages">-</strong>
+      </article>
+      <article>
+        <span>Sent</span>
+        <strong id="sentMessages">-</strong>
+      </article>
+      <article>
+        <span>SAEA Pool</span>
+        <strong id="saeaPool">-</strong>
+      </article>
+    </section>
+
+    <section class="details" aria-label="Server details">
+      <div>
+        <span>Address</span>
+        <strong id="address">-</strong>
+      </div>
+      <div>
+        <span>Backlog</span>
+        <strong id="backlog">-</strong>
+      </div>
+      <div>
+        <span>NoDelay</span>
+        <strong id="noDelay">-</strong>
+      </div>
+      <div>
+        <span>Max Payload</span>
+        <strong id="maxPayload">-</strong>
+      </div>
+      <div>
+        <span>Started</span>
+        <strong id="startedAt">-</strong>
+      </div>
+      <div>
+        <span>Updated</span>
+        <strong id="updatedAt">-</strong>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

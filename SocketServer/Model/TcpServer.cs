@@ -15,6 +15,12 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     private readonly HashSet<Socket> connectedClients = new();
     private CancellationTokenSource acceptLoopCancellation;
     private Task acceptLoopTask;
+    private bool isListening;
+    private DateTimeOffset? startedAt;
+    private long totalAcceptedClients;
+    private long totalClosedClients;
+    private long totalReceivedMessages;
+    private long totalSentMessages;
     private bool disposedValue;
 
     public TcpServer() : base(0, null)
@@ -70,6 +76,8 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             }
 
             this.Socket.Listen(SocketFactory.ListenBacklog);
+            this.isListening = true;
+            this.startedAt ??= DateTimeOffset.UtcNow;
             return true;
         }
         catch (SocketException)
@@ -87,6 +95,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         this.acceptLoopCancellation?.Cancel();
         this.CloseConnectedClients();
         this.Disconnect();
+        this.isListening = false;
         this.acceptLoopCancellation?.Dispose();
         this.acceptLoopCancellation = null;
         this.acceptLoopTask = null;
@@ -117,6 +126,30 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         {
             return this.connectedClients.Count;
         }
+    }
+
+    public TcpServerStatus GetStatus()
+    {
+        return new TcpServerStatus
+        {
+            IsSocketInitialized = this.Socket != null,
+            IsBound = this.Socket?.IsBound ?? false,
+            IsListening = this.isListening,
+            IsAcceptLoopRunning = this.acceptLoopTask != null && !this.acceptLoopTask.IsCompleted,
+            IpAddress = this.GetIpAddress(),
+            Port = this.GetPort(),
+            ConnectedClientCount = this.GetConnectedClientCount(),
+            TotalAcceptedClients = Interlocked.Read(ref this.totalAcceptedClients),
+            TotalClosedClients = Interlocked.Read(ref this.totalClosedClients),
+            TotalReceivedMessages = Interlocked.Read(ref this.totalReceivedMessages),
+            TotalSentMessages = Interlocked.Read(ref this.totalSentMessages),
+            ListenBacklog = SocketFactory.ListenBacklog,
+            NoDelay = SocketFactory.NoDelay,
+            MaxPayloadLength = SocketMessageFrame.MaxPayloadLength,
+            SocketAsyncEventArgsAvailableCount = SocketAsyncEventArgsFactory.AvailableCount,
+            StartedAt = this.startedAt,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
     }
 
     public bool AcceptHelloWorldRequestAndRespond()
@@ -176,6 +209,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 }
 
                 this.AddConnectedClient(client);
+                Interlocked.Increment(ref this.totalAcceptedClients);
                 _ = this.HandleClientAsync(client, cancellationToken);
             }
             catch (SocketException)
@@ -206,6 +240,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                     break;
                 }
 
+                Interlocked.Increment(ref this.totalReceivedMessages);
                 bool handled = await this.HandleClientMessageAsync(client, frame);
                 if (!handled)
                 {
@@ -216,25 +251,42 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         finally
         {
             this.RemoveConnectedClient(client);
+            Interlocked.Increment(ref this.totalClosedClients);
             CloseClient(client);
         }
     }
 
-    private Task<bool> HandleClientMessageAsync(Socket client, SocketMessageFrame frame)
+    private async Task<bool> HandleClientMessageAsync(Socket client, SocketMessageFrame frame)
     {
+        bool sent;
         if (HealthCheckProtocol.TryDecode(frame, out HealthCheckMessage healthCheckMessage))
         {
-            return healthCheckMessage.Type == HealthCheckMessageType.Ping
-                ? HealthCheckProtocol.SendAsync(client, HealthCheckProtocol.CreatePong(healthCheckMessage.ClientId))
-                : Task.FromResult(true);
+            if (healthCheckMessage.Type != HealthCheckMessageType.Ping)
+            {
+                return true;
+            }
+
+            sent = await HealthCheckProtocol.SendAsync(client, HealthCheckProtocol.CreatePong(healthCheckMessage.ClientId));
+            if (sent)
+            {
+                Interlocked.Increment(ref this.totalSentMessages);
+            }
+
+            return sent;
         }
 
         if (HelloWorldProtocol.TryDecodeRequest(frame, out HelloWorldRequest helloWorldRequest))
         {
-            return HelloWorldProtocol.SendAsync(client, HelloWorldProtocol.CreateResponse(helloWorldRequest.ClientId));
+            sent = await HelloWorldProtocol.SendAsync(client, HelloWorldProtocol.CreateResponse(helloWorldRequest.ClientId));
+            if (sent)
+            {
+                Interlocked.Increment(ref this.totalSentMessages);
+            }
+
+            return sent;
         }
 
-        return Task.FromResult(false);
+        return false;
     }
 
     private void AddConnectedClient(Socket client)

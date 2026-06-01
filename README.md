@@ -26,8 +26,18 @@ SocketServer.sln
 ├── SocketServer/
 │   ├── Program.cs
 │   ├── Model/
-│   │   └── TcpServer.cs
+│   │   ├── TcpServer.cs
+│   │   └── TcpServerStatus.cs
 │   └── SocketServer.csproj
+├── SocketDashboard/
+│   ├── Program.cs
+│   ├── Model/
+│   │   └── DashboardServerService.cs
+│   ├── wwwroot/
+│   │   ├── app.js
+│   │   ├── index.html
+│   │   └── styles.css
+│   └── SocketDashboard.csproj
 ├── SocketCommonTest/
 │   ├── Model/
 │   │   ├── HealthCheckProtocolTests.cs
@@ -37,10 +47,14 @@ SocketServer.sln
 │   ├── Model/
 │   │   └── TcpClientTests.cs
 │   └── SocketClientTest.csproj
-└── SocketServerTest/
+├── SocketServerTest/
+│   ├── Model/
+│   │   └── TcpServerTests.cs
+│   └── SocketServerTest.csproj
+└── SocketDashboardTest/
     ├── Model/
-    │   └── TcpServerTests.cs
-    └── SocketServerTest.csproj
+    │   └── DashboardServerServiceTests.cs
+    └── SocketDashboardTest.csproj
 ```
 
 ## 주요 클래스
@@ -76,9 +90,20 @@ SocketServer.sln
 - `StartClientAcceptLoop()` 호출 시 백그라운드 accept loop 시작
 - 연결별 처리 루프에서 healthcheck `PING`에 `PONG OK`로 응답
 - 연결별 처리 루프에서 HelloWorld 요청에 응답
+- `GetStatus()`로 서버 바인드/리스닝/연결/메시지 카운터 상태 조회
 - 여러 플랫폼에서 실행된 클라이언트가 단일 서버에 동시에 접속 가능
 - `End()` 호출 시 서버 소켓 종료
 - `AcceptHelloWorldRequestAndRespond()` 호출 시 연결을 수락하고 HelloWorld 요청에 응답
+
+### `SocketDashboard`
+
+`SocketDashboard`는 `SocketServer` 상태를 확인하는 ASP.NET Core 기반 대시보드 프로젝트입니다.
+
+- 시작 시 내부 `TcpServer`를 기본 포트 `5000`에서 시작하고 accept loop를 실행
+- `/api/server/status` API로 서버 상태 JSON 제공
+- 정적 대시보드 화면에서 API를 1초마다 호출해 실시간 갱신
+- 리스닝 상태, accept loop 상태, 접속 클라이언트 수, 누적 accept/close/message 카운터 표시
+- backlog, `NoDelay`, 최대 payload, `SocketAsyncEventArgs` 풀 잔여 수 표시
 
 ### `SocketCommon`
 
@@ -225,6 +250,20 @@ dotnet test SocketServer.sln
 dotnet run --project SocketServer/SocketServer.csproj
 ```
 
+대시보드 실행:
+
+```bash
+dotnet run --project SocketDashboard/SocketDashboard.csproj
+```
+
+기본 대시보드 웹 주소는 `http://127.0.0.1:5080`입니다. 대시보드가 모니터링하는 내부 SocketServer는 기본 TCP 포트 `5000`을 사용합니다.
+
+대시보드 API:
+
+```text
+GET /api/server/status
+```
+
 ## 테스트
 
 테스트 프로젝트는 MSTest를 사용합니다.
@@ -251,9 +290,14 @@ dotnet run --project SocketServer/SocketServer.csproj
 `SocketServerTest`:
 
 - `TcpServer.Start()`, `Bind()`, `Listen()`, `End()` 호출
+- `TcpServer.GetStatus()` 기반 상태 조회 검증
 - HelloWorld 요청 수락 및 응답 검증
 - 다중 클라이언트 동시 접속 후 healthcheck와 HelloWorld 요청/응답 검증
 - 테스트 TCP 포트는 `5001` 사용
+
+`SocketDashboardTest`:
+
+- 대시보드 상태 서비스가 내부 서버를 시작하고 상태 API 모델을 구성하는지 검증
 
 healthcheck를 30초마다 자동 전송하는 주기 실행 스케줄러는 아직 구현되어 있지 않습니다.
 
