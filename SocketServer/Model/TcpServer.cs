@@ -6,11 +6,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using SocketCommon;
 using SocketCommon.Interface;
+using SocketCommon.Logging;
 using SocketCommon.Model;
 
 namespace SocketServer.Model;
 public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDisposable
 {
+    private static readonly SocketLogger Logger = SocketLogManager.GetLogger<TcpServer>();
+
     private readonly object clientLock = new();
     private readonly HashSet<Socket> connectedClients = new();
     private CancellationTokenSource acceptLoopCancellation;
@@ -36,7 +39,9 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     public bool Start()
     {
-        return this.Bind() && this.Listen();
+        bool started = this.Bind() && this.Listen();
+        Logger.Info($"Server start requested. endpoint={this.GetIpAddress()}:{this.GetPort()}, success={started}");
+        return started;
     }
 
     public bool Bind()
@@ -54,14 +59,17 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 this.SetPort(localEndPoint.Port);
             }
 
+            Logger.Info($"Server socket bound. endpoint={this.IpAddress}:{this.Port}");
             return true;
         }
-        catch (SocketException)
+        catch (SocketException exception)
         {
+            Logger.Warn($"Server bind failed. endpoint={this.IpAddress}:{this.Port}", exception);
             return false;
         }
-        catch (ObjectDisposedException)
+        catch (ObjectDisposedException exception)
         {
+            Logger.Warn("Server bind failed because socket is disposed.", exception);
             return false;
         }
     }
@@ -78,14 +86,17 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             this.Socket.Listen(SocketFactory.ListenBacklog);
             this.isListening = true;
             this.startedAt ??= DateTimeOffset.UtcNow;
+            Logger.Info($"Server listening. endpoint={this.IpAddress}:{this.Port}, backlog={SocketFactory.ListenBacklog}");
             return true;
         }
-        catch (SocketException)
+        catch (SocketException exception)
         {
+            Logger.Warn($"Server listen failed. endpoint={this.IpAddress}:{this.Port}", exception);
             return false;
         }
-        catch (ObjectDisposedException)
+        catch (ObjectDisposedException exception)
         {
+            Logger.Warn("Server listen failed because socket is disposed.", exception);
             return false;
         }
     }
@@ -99,6 +110,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         this.acceptLoopCancellation?.Dispose();
         this.acceptLoopCancellation = null;
         this.acceptLoopTask = null;
+        Logger.Info($"Server ended. endpoint={this.GetIpAddress()}:{this.GetPort()}");
         return true;
     }
 
@@ -106,6 +118,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     {
         if (this.Socket == null || !this.Socket.IsBound)
         {
+            Logger.Warn("Accept loop start skipped because server socket is not bound.");
             return false;
         }
 
@@ -117,6 +130,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         this.acceptLoopCancellation?.Dispose();
         this.acceptLoopCancellation = new CancellationTokenSource();
         this.acceptLoopTask = this.RunClientAcceptLoopAsync(this.acceptLoopCancellation.Token);
+        Logger.Info($"Accept loop started. endpoint={this.GetIpAddress()}:{this.GetPort()}");
         return true;
     }
 
@@ -210,15 +224,18 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
                 this.AddConnectedClient(client);
                 Interlocked.Increment(ref this.totalAcceptedClients);
+                Logger.Info($"Client accepted. remote={client.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
                 _ = this.HandleClientAsync(client, cancellationToken);
             }
-            catch (SocketException)
+            catch (SocketException exception)
             {
                 CloseClient(client);
                 if (cancellationToken.IsCancellationRequested)
                 {
                     break;
                 }
+
+                Logger.Warn("Client accept failed.", exception);
             }
             catch (ObjectDisposedException)
             {
@@ -252,6 +269,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         {
             this.RemoveConnectedClient(client);
             Interlocked.Increment(ref this.totalClosedClients);
+            Logger.Info($"Client closed. remote={client.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
             CloseClient(client);
         }
     }

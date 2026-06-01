@@ -22,6 +22,7 @@ SocketServer.sln
 - `SocketAsyncEventArgs` 기반 비동기 송수신과 객체 풀 재사용
 - 다중 클라이언트 accept loop와 연결별 메시지 처리
 - `/api/server/status` 기반 서버 상태 조회와 웹 대시보드 실시간 갱신
+- log4net 기반 공통 로깅
 
 ### 소켓 옵션과 객체 풀
 
@@ -36,6 +37,14 @@ SocketServer.sln
 - 프로세스 로드 시 초기 `1000`개를 생성합니다.
 - 풀이 부족하면 `100`개 단위로 추가 생성합니다.
 - accept, send, receive 작업은 풀에서 객체를 빌려 쓰고 완료 후 반환합니다.
+
+### 로깅
+
+모든 프로젝트는 `SocketCommon.Logging`의 공통 log4net 래퍼를 사용합니다.
+
+- 설정 파일은 루트 `log4net.config`입니다.
+- 콘솔과 `logs/socketserver.log`에 로그를 남깁니다.
+- 서버 시작/종료, 바인드/리스닝, 클라이언트 연결/종료, 주요 송수신 실패 지점을 기록합니다.
 
 ### 공통 프레임
 

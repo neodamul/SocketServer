@@ -3,12 +3,14 @@ using System.IO;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
+using SocketCommon.Logging;
 
 namespace SocketCommon.Model;
 
 public static class SocketAsyncEventArgsTransport
 {
     public const int BufferSize = 8192;
+    private static readonly SocketLogger Logger = SocketLogManager.GetLogger(typeof(SocketAsyncEventArgsTransport));
 
     public static async Task<bool> SendAsync(Socket socket, byte[] bytes)
     {
@@ -30,12 +32,14 @@ public static class SocketAsyncEventArgsTransport
 
             return true;
         }
-        catch (SocketException)
+        catch (SocketException exception)
         {
+            Logger.Warn("Socket send failed.", exception);
             return false;
         }
-        catch (ObjectDisposedException)
+        catch (ObjectDisposedException exception)
         {
+            Logger.Warn("Socket send failed because socket is disposed.", exception);
             return false;
         }
     }
@@ -67,12 +71,14 @@ public static class SocketAsyncEventArgsTransport
                 stream.Write(buffer, 0, received);
             }
         }
-        catch (SocketException)
+        catch (SocketException exception)
         {
+            Logger.Warn("Socket line receive failed.", exception);
             return null;
         }
-        catch (ObjectDisposedException)
+        catch (ObjectDisposedException exception)
         {
+            Logger.Warn("Socket line receive failed because socket is disposed.", exception);
             return null;
         }
 
@@ -100,12 +106,14 @@ public static class SocketAsyncEventArgsTransport
 
             return buffer;
         }
-        catch (SocketException)
+        catch (SocketException exception)
         {
+            Logger.Warn("Socket receive failed.", exception);
             return null;
         }
-        catch (ObjectDisposedException)
+        catch (ObjectDisposedException exception)
         {
+            Logger.Warn("Socket receive failed because socket is disposed.", exception);
             return null;
         }
     }

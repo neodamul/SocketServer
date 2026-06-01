@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="log4net" Version="3.3.1" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.2.0" />
     <PackageReference Include="MSTest.TestAdapter" Version="2.2.10" />
     <PackageReference Include="MSTest.TestFramework" Version="2.2.10" />
@@ -22,6 +23,10 @@
     <ProjectReference Include="..\SocketCommon\SocketCommon.csproj" />
     <ProjectReference Include="..\SocketDashboard\SocketDashboard.csproj" />
     <ProjectReference Include="..\SocketServer\SocketServer.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\log4net.config" Link="log4net.config" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

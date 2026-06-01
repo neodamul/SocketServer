@@ -1,11 +1,14 @@
 ﻿using System;
 using SocketCommon;
+using SocketCommon.Logging;
 using SocketServer.Model;
 
 namespace SocketDashboard.Model;
 
 public class DashboardServerService : IDisposable
 {
+    private static readonly SocketLogger Logger = SocketLogManager.GetLogger<DashboardServerService>();
+
     private readonly TcpServer server;
     private bool disposedValue;
 
@@ -19,6 +22,7 @@ public class DashboardServerService : IDisposable
         this.StartedAt = DateTimeOffset.UtcNow;
         this.server = new TcpServer(1, "dashboardServer", Constants.LocalHostIpAddress, port);
         this.StartSucceeded = this.server.Start() && this.server.StartClientAcceptLoop();
+        Logger.Info($"Dashboard server service started. port={port}, success={this.StartSucceeded}");
     }
 
     public DateTimeOffset StartedAt { get; }
@@ -39,8 +43,8 @@ public class DashboardServerService : IDisposable
     {
         if (!this.disposedValue)
         {
-            this.server.End();
             this.server.Dispose();
+            Logger.Info("Dashboard server service disposed.");
             this.disposedValue = true;
             GC.SuppressFinalize(this);
         }

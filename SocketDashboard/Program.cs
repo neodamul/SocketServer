@@ -3,6 +3,10 @@ using System;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using SocketCommon.Logging;
+
+LogConfigurator.Configure();
+SocketLogger logger = SocketLogManager.GetLogger(typeof(Program));
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
@@ -21,4 +25,5 @@ app.UseStaticFiles();
 
 app.MapGet("/api/server/status", (DashboardServerService serverService) => serverService.GetStatus());
 
+logger.Info("SocketDashboard starting.");
 app.Run();
