@@ -5,28 +5,30 @@ namespace SocketServer.Model.Tests;
 [TestClass()]
 public class TcpServerTests
 {
+    private const int TestPort = 5001;
+
     [TestMethod()]
     public void StartTest()
     {
-        TcpServer server = new();
+        TcpServer server = new(1, "testServer", "127.0.0.1", TestPort);
         Assert.IsTrue(server.Start());
-        Assert.AreNotEqual(0, server.GetPort());
+        Assert.AreEqual(TestPort, server.GetPort());
         server.End();
     }
 
     [TestMethod()]
     public void BindTest()
     {
-        TcpServer server = new();
+        TcpServer server = new(1, "testServer", "127.0.0.1", TestPort);
         Assert.IsTrue(server.Bind());
-        Assert.AreNotEqual(0, server.GetPort());
+        Assert.AreEqual(TestPort, server.GetPort());
         server.End();
     }
 
     [TestMethod()]
     public void ListenTest()
     {
-        TcpServer server = new();
+        TcpServer server = new(1, "testServer", "127.0.0.1", TestPort);
         Assert.IsTrue(server.Bind());
         Assert.IsTrue(server.Listen());
         server.End();
@@ -35,7 +37,7 @@ public class TcpServerTests
     [TestMethod()]
     public void EndTest()
     {
-        TcpServer server = new();
+        TcpServer server = new(1, "testServer", "127.0.0.1", TestPort);
         Assert.IsTrue(server.Start());
         Assert.IsTrue(server.End());
     }

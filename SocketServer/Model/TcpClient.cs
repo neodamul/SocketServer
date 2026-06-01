@@ -36,6 +36,7 @@ public class TcpClient : IClient, IDisposable
     {
         this.Socket?.Dispose();
         this.Socket = new Socket(this.Family, SocketType.Stream, ProtocolType.Tcp);
+        this.Socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
     }
 
     public void SetIpAddress(IPAddress ipAddress)
@@ -124,6 +125,37 @@ public class TcpClient : IClient, IDisposable
     public bool IsConnected()
     {
         return this.Socket?.Connected ?? false;
+    }
+
+    public bool SendHealthCheck()
+    {
+        if (this.Socket == null)
+        {
+            return false;
+        }
+
+        return HealthCheckProtocol.Send(this.Socket, HealthCheckProtocol.CreatePing());
+    }
+
+    public bool SendHealthCheckResponse()
+    {
+        if (this.Socket == null)
+        {
+            return false;
+        }
+
+        return HealthCheckProtocol.Send(this.Socket, HealthCheckProtocol.CreatePong());
+    }
+
+    public bool TryReceiveHealthCheck(out HealthCheckMessage message)
+    {
+        message = null;
+        if (this.Socket == null)
+        {
+            return false;
+        }
+
+        return HealthCheckProtocol.TryReceive(this.Socket, out message);
     }
 
     public override string ToString()

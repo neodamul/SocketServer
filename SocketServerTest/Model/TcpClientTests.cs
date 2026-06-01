@@ -5,6 +5,8 @@ namespace SocketServerTest.Model;
 [TestClass]
 public class TcpClientTests
 {
+    private const int TestPort = 5001;
+
     [TestMethod]
     public void ClientInitializeTest()
     {
@@ -16,7 +18,7 @@ public class TcpClientTests
     [TestMethod]
     public void ClientConnectTest()
     {
-        TcpServer server = new(1, "testServer");
+        TcpServer server = new(1, "testServer", "127.0.0.1", TestPort);
         Assert.IsTrue(server.Start());
 
         TcpClient client = new(1, "testClient", server.GetIpAddress(), server.GetPort());
@@ -54,7 +56,7 @@ public class TcpClientTests
     public void ClientSetPortTest()
     {
         TcpClient client = new();
-        client.SetPort(0);
-        Assert.AreEqual(0, client.GetPort());
+        client.SetPort(TestPort);
+        Assert.AreEqual(TestPort, client.GetPort());
     }
 }

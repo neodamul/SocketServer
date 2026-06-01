@@ -15,11 +15,13 @@ SocketServer.sln
 │   ├── Program.cs
 │   ├── Constants.cs
 │   ├── Model/
+│   │   ├── HealthCheckProtocol.cs
 │   │   ├── TcpClient.cs
 │   │   └── TcpServer.cs
 │   └── SocketServer.csproj
 └── SocketServerTest/
     ├── Model/
+    │   ├── HealthCheckProtocolTests.cs
     │   ├── TcpClientTests.cs
     │   └── TcpServerTests.cs
     └── SocketServerTest.csproj
@@ -34,11 +36,14 @@ SocketServer.sln
 - 클라이언트 식별자와 이름 저장
 - IPv4 주소 체계(`AddressFamily.InterNetwork`) 사용
 - 기본 IP 주소를 `127.0.0.1`로 설정
-- 기본 포트를 `0`으로 설정
+- 기본 포트를 `5000`으로 설정
 - `Initialize()` 호출 시 `SocketType.Stream`, `ProtocolType.Tcp` 기반 소켓 생성
 - `Connect()` 호출 시 설정된 IP/포트로 TCP 연결
 - `Disconnect()` 호출 시 연결 종료 및 소켓 리소스 정리
 - `IsConnected()`로 현재 소켓 연결 상태 확인
+- `SendHealthCheck()`로 `PING` 전송
+- `SendHealthCheckResponse()`로 `PONG OK` 응답 전송
+- `TryReceiveHealthCheck()`로 healthcheck 메시지 수신
 - `ToString()`으로 `Id:Name:Family:IpAddress:Port` 형식 출력
 
 ### `TcpServer`
@@ -59,6 +64,31 @@ SocketServer.sln
 - `IClient`: 초기화, 연결, 연결 종료, 연결 상태, IP/포트 설정과 조회
 - `IServer`: `IClient`를 확장하고 서버 시작, 종료, 바인드, 리슨 메서드 정의
 
+### `HealthCheckProtocol`
+
+`SocketServer.Model.HealthCheckProtocol`은 TCP 연결 상태 확인을 위한 최소 메시지 프로토콜입니다. UTF-8 라인 메시지로 인코딩하며, 현재는 요청/응답 두 가지 메시지만 정의합니다.
+
+연결 유지 정책은 30초마다 `PING`을 보내고, 상대가 `PONG OK`를 반환하면 연결이 살아 있는 것으로 판단하는 방식입니다.
+
+```text
+HEALTHCHECK/1 PING
+HEALTHCHECK/1 PONG OK
+```
+
+사용 예:
+
+```csharp
+byte[] ping = HealthCheckProtocol.Encode(HealthCheckProtocol.CreatePing());
+bool decoded = HealthCheckProtocol.TryDecode(ping, out HealthCheckMessage message);
+```
+
+TCP 연결에서 사용할 때:
+
+```csharp
+client.SendHealthCheck();
+client.TryReceiveHealthCheck(out HealthCheckMessage response);
+```
+
 ## 실행 예시
 
 `Program.cs`는 클라이언트와 서버 인스턴스를 생성하고 각 객체의 문자열 표현을 출력합니다.
@@ -74,8 +104,8 @@ Console.WriteLine(tcpServer);
 예상 출력 형식:
 
 ```text
-1:testClient:InterNetwork:127.0.0.1:0
-1:testServer:InterNetwork:127.0.0.1:0
+1:testClient:InterNetwork:127.0.0.1:5000
+1:testServer:InterNetwork:127.0.0.1:5000
 ```
 
 ## 요구 사항
@@ -117,13 +147,16 @@ dotnet run --project SocketServer/SocketServer.csproj
 - 포트 설정/조회 검증
 - `TcpServer.Start()`, `Bind()`, `Listen()`, `End()` 호출
 - 로컬 서버 시작 후 클라이언트 TCP 연결 검증
+- healthcheck `PING`, `PONG OK` 메시지 인코딩/파싱 검증
+- healthcheck 메시지의 실제 소켓 송수신 검증
+- 테스트 TCP 포트는 `5001` 사용
 
-메시지 송수신, 다중 클라이언트 처리, 비동기 accept 루프는 아직 구현되어 있지 않습니다.
+비동기 accept 루프와 주기 실행 스케줄러는 아직 구현되어 있지 않습니다.
 
 ## 향후 개선 방향
 
 - `TcpServer`에 클라이언트 수락(`Accept`) 루프 구현
-- 메시지 송수신 API 추가
+- healthcheck 30초 주기 실행 스케줄러 추가
 - 다중 클라이언트 처리와 비동기 I/O 적용
 - 송수신 프로토콜과 예외 처리 정책 정의
 - 실제 메시지 송수신을 검증하는 통합 테스트 추가
