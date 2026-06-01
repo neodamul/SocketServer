@@ -1,10 +1,11 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
+using SocketCommon;
 using SocketCommon.Interface;
 using SocketCommon.Model;
 
-namespace SocketServer.Model;
+namespace SocketClient.Model;
 public class TcpClient : IClient, IDisposable
 {
     protected Socket Socket = null;

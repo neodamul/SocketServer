@@ -1,10 +1,11 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
+using SocketCommon;
 using SocketCommon.Interface;
 
 namespace SocketServer.Model;
-public class TcpServer : TcpClient, IServer, IClient, IDisposable
+public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDisposable
 {
     private bool disposedValue;
 

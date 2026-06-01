@@ -1,4 +1,5 @@
 ﻿using System;
+using SocketClient.Model;
 using SocketServer.Model;
 
 namespace SocketServer;
