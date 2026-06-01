@@ -14,6 +14,8 @@ SocketServer.sln
 │   ├── Model/
 │   │   ├── HealthCheckProtocol.cs
 │   │   ├── HelloWorldProtocol.cs
+│   │   ├── SocketFactory.cs
+│   │   ├── SocketAsyncEventArgsFactory.cs
 │   │   ├── SocketMessageFrame.cs
 │   │   └── SocketAsyncEventArgsTransport.cs
 │   └── SocketCommon.csproj
@@ -70,7 +72,11 @@ SocketServer.sln
 - 서버 생명주기 메서드 제공: `Start()`, `Bind()`, `Listen()`, `End()`
 - `Bind()` 호출 시 설정된 IP/포트로 서버 소켓 바인딩
 - 포트 `0`으로 바인딩하면 OS가 할당한 실제 포트를 `GetPort()`로 조회
-- `Listen()` 호출 시 TCP 연결 대기 시작
+- `Listen()` 호출 시 backlog `100`으로 TCP 연결 대기 시작
+- `StartClientAcceptLoop()` 호출 시 백그라운드 accept loop 시작
+- 연결별 처리 루프에서 healthcheck `PING`에 `PONG OK`로 응답
+- 연결별 처리 루프에서 HelloWorld 요청에 응답
+- 여러 플랫폼에서 실행된 클라이언트가 단일 서버에 동시에 접속 가능
 - `End()` 호출 시 서버 소켓 종료
 - `AcceptHelloWorldRequestAndRespond()` 호출 시 연결을 수락하고 HelloWorld 요청에 응답
 
@@ -83,8 +89,24 @@ SocketServer.sln
 - `IServer`: `IClient`를 확장하고 서버 시작, 종료, 바인드, 리슨 메서드 정의
 - `HealthCheckProtocol`: 연결 유지를 위한 healthcheck 메시지 인코딩/파싱
 - `HelloWorldProtocol`: HelloWorld 요청/응답 메시지 인코딩/파싱
+- `SocketFactory`: TCP 소켓 생성과 공통 옵션 적용
+- `SocketAsyncEventArgsFactory`: 반복 사용되는 `SocketAsyncEventArgs` 객체 풀 관리
 - `SocketMessageFrame`: 12바이트 고정 헤더와 가변 payload를 가진 공통 프레임
 - `SocketAsyncEventArgsTransport`: 대용량 송수신을 위한 `SocketAsyncEventArgs` 기반 공통 전송 헬퍼
+
+### 소켓 옵션과 객체 풀
+
+소켓 생성은 `SocketFactory`를 통해 처리합니다.
+
+- TCP listen backlog는 `100`입니다.
+- `ReuseAddress`를 활성화합니다.
+- `NoDelay=true`를 기본 적용해 Nagle 알고리즘을 비활성화합니다.
+
+`SocketAsyncEventArgsFactory`는 반복적으로 필요한 `SocketAsyncEventArgs` 객체를 풀로 관리합니다.
+
+- 프로세스 로드 시 초기 `1000`개를 생성합니다.
+- 풀이 부족하면 `100`개 단위로 추가 생성합니다.
+- accept, send, receive 작업은 풀에서 객체를 빌려 쓰고 완료 후 반환합니다.
 
 ### 공통 프레임
 
@@ -103,7 +125,7 @@ SocketServer.sln
 
 - 송신은 8KB 버퍼 단위로 나누어 모든 바이트가 전송될 때까지 반복합니다.
 - 수신은 먼저 12바이트 헤더를 정확히 읽고, 헤더의 `payloadLength`만큼 payload를 이어서 읽습니다.
-- payload 최대 길이는 1MB로 제한합니다.
+- payload 최대 길이는 4KB로 제한합니다.
 - 기존 동기 API는 유지하고, `SendAsync`, `TryReceive...Async` 계열 API로 비동기 경로를 직접 사용할 수 있습니다.
 
 ### `HealthCheckProtocol`
@@ -153,6 +175,16 @@ await client.SendHelloWorldRequestAsync();
 await server.AcceptHelloWorldRequestAndRespondAsync();
 ```
 
+다중 클라이언트 서버 루프로 사용할 때:
+
+```csharp
+TcpServer server = new(1, "server", "127.0.0.1", 5000);
+server.Start();
+server.StartClientAcceptLoop();
+```
+
+`StartClientAcceptLoop()`는 서버 소켓에서 연결을 계속 수락하고, 연결별 비동기 처리 루프를 실행합니다. 각 클라이언트는 동일한 서버에 동시에 접속해 healthcheck와 HelloWorld 요청/응답을 독립적으로 주고받을 수 있습니다.
+
 ## 실행 예시
 
 `Program.cs`는 클라이언트와 서버 인스턴스를 생성하고 각 객체의 문자열 표현을 출력합니다.
@@ -174,10 +206,10 @@ Console.WriteLine(tcpServer);
 
 ## 요구 사항
 
-- .NET SDK 6.0
+- .NET SDK 9.0 이상
 - Visual Studio 2022, Rider, VS Code 또는 `dotnet` CLI
 
-프로젝트의 대상 프레임워크는 `net6.0`입니다. .NET 7 이상 SDK만 설치된 환경에서는 .NET 6 런타임을 설치하거나 `DOTNET_ROLL_FORWARD=Major` 환경 변수를 사용해야 테스트 실행이 가능합니다.
+프로젝트는 SDK 스타일의 .NET Core 계열 프로젝트이며 대상 프레임워크는 `net9.0`입니다.
 
 ## 빌드 및 테스트
 
@@ -185,12 +217,6 @@ Console.WriteLine(tcpServer);
 dotnet restore SocketServer.sln
 dotnet build SocketServer.sln
 dotnet test SocketServer.sln
-```
-
-.NET 6 런타임이 없고 최신 런타임으로 실행하려면:
-
-```bash
-DOTNET_ROLL_FORWARD=Major dotnet test SocketServer.sln
 ```
 
 실행:
@@ -211,7 +237,8 @@ dotnet run --project SocketServer/SocketServer.csproj
 - healthcheck 메시지의 실제 소켓 송수신 검증
 - HelloWorld 요청/응답 메시지 인코딩/파싱 검증
 - HelloWorld 요청/응답 메시지의 실제 소켓 송수신 검증
-- 8KB를 초과하는 대용량 HelloWorld 응답 송수신 검증
+- 4KB를 초과하는 HelloWorld payload 제한 검증
+- TCP 소켓 기본 옵션과 `SocketAsyncEventArgs` 팩토리 설정 검증
 
 `SocketClientTest`:
 
@@ -225,14 +252,13 @@ dotnet run --project SocketServer/SocketServer.csproj
 
 - `TcpServer.Start()`, `Bind()`, `Listen()`, `End()` 호출
 - HelloWorld 요청 수락 및 응답 검증
+- 다중 클라이언트 동시 접속 후 healthcheck와 HelloWorld 요청/응답 검증
 - 테스트 TCP 포트는 `5001` 사용
 
-지속 실행되는 비동기 accept 루프와 주기 실행 스케줄러는 아직 구현되어 있지 않습니다.
+healthcheck를 30초마다 자동 전송하는 주기 실행 스케줄러는 아직 구현되어 있지 않습니다.
 
 ## 향후 개선 방향
 
-- `TcpServer`에 클라이언트 수락(`Accept`) 루프 구현
 - healthcheck 30초 주기 실행 스케줄러 추가
-- 다중 클라이언트 처리와 비동기 I/O 적용
 - 송수신 프로토콜과 예외 처리 정책 정의
 - HelloWorld 외 추가 요청/응답 프로토콜 확장

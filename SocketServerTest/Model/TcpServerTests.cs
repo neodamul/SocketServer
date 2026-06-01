@@ -1,4 +1,5 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using SocketClient.Model;
 using SocketCommon.Model;
@@ -63,5 +64,55 @@ public class TcpServerTests
 
         client.Disconnect();
         server.End();
+    }
+
+    [TestMethod()]
+    public async Task ClientAcceptLoopHandlesMultipleClientsTest()
+    {
+        TcpServer server = new(1, "testServer", "127.0.0.1", TestPort);
+        List<TcpClient> clients = new()
+        {
+            new TcpClient(1, "testClient1", "127.0.0.1", TestPort),
+            new TcpClient(2, "testClient2", "127.0.0.1", TestPort),
+            new TcpClient(3, "testClient3", "127.0.0.1", TestPort),
+        };
+
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+
+            List<Task> clientTasks = new();
+            foreach (TcpClient client in clients)
+            {
+                Assert.IsTrue(client.Connect());
+                clientTasks.Add(SendHealthCheckAndHelloWorldAsync(client));
+            }
+
+            await Task.WhenAll(clientTasks);
+        }
+        finally
+        {
+            foreach (TcpClient client in clients)
+            {
+                client.Disconnect();
+            }
+
+            server.End();
+        }
+    }
+
+    private static async Task SendHealthCheckAndHelloWorldAsync(TcpClient client)
+    {
+        Assert.IsTrue(await client.SendHealthCheckAsync());
+        (bool healthCheckReceived, HealthCheckMessage healthCheckMessage) = await client.TryReceiveHealthCheckAsync();
+        Assert.IsTrue(healthCheckReceived);
+        Assert.AreEqual(HealthCheckMessageType.Pong, healthCheckMessage.Type);
+        Assert.AreEqual("OK", healthCheckMessage.Status);
+
+        Assert.IsTrue(await client.SendHelloWorldRequestAsync());
+        (bool responseReceived, HelloWorldResponse response) = await client.TryReceiveHelloWorldResponseAsync();
+        Assert.IsTrue(responseReceived);
+        Assert.AreEqual("Hello, World!", response.Message);
     }
 }

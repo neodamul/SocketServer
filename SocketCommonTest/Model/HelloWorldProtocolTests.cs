@@ -109,36 +109,23 @@ public class HelloWorldProtocolTests
     }
 
     [TestMethod]
-    public async Task SendAndReceiveLargeResponseTest()
+    public void SendLargeResponseOverPayloadLimitTest()
     {
-        string largeMessage = new('A', SocketAsyncEventArgsTransport.BufferSize * 3);
-        using Socket listener = CreateListener();
-        Task<Socket> acceptTask = listener.AcceptAsync();
+        string largeMessage = new('A', SocketMessageFrame.MaxPayloadLength + 1);
 
-        using Socket client = CreateClient();
-        client.Connect(IPAddress.Loopback, TestPort);
-        using Socket accepted = await acceptTask;
-
-        Assert.IsTrue(await HelloWorldProtocol.SendAsync(accepted, new HelloWorldResponse(TestClientId, largeMessage)));
-        (bool success, HelloWorldResponse response) = await HelloWorldProtocol.TryReceiveResponseAsync(client);
-        Assert.IsTrue(success);
-        Assert.AreEqual(TestClientId, response.ClientId);
-        Assert.AreEqual(largeMessage, response.Message);
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() => HelloWorldProtocol.Encode(new HelloWorldResponse(TestClientId, largeMessage)));
     }
 
     private static Socket CreateListener()
     {
-        Socket listener = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        listener.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        Socket listener = SocketFactory.CreateTcpSocket();
         listener.Bind(new IPEndPoint(IPAddress.Loopback, TestPort));
-        listener.Listen(10);
+        listener.Listen(SocketFactory.ListenBacklog);
         return listener;
     }
 
     private static Socket CreateClient()
     {
-        Socket client = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-        return client;
+        return SocketFactory.CreateTcpSocket();
     }
 }

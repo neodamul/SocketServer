@@ -1,6 +1,8 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 using SocketCommon;
 using SocketCommon.Interface;
@@ -9,6 +11,10 @@ using SocketCommon.Model;
 namespace SocketServer.Model;
 public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDisposable
 {
+    private readonly object clientLock = new();
+    private readonly HashSet<Socket> connectedClients = new();
+    private CancellationTokenSource acceptLoopCancellation;
+    private Task acceptLoopTask;
     private bool disposedValue;
 
     public TcpServer() : base(0, null)
@@ -63,7 +69,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 return false;
             }
 
-            this.Socket.Listen(100);
+            this.Socket.Listen(SocketFactory.ListenBacklog);
             return true;
         }
         catch (SocketException)
@@ -78,8 +84,39 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     public bool End()
     {
+        this.acceptLoopCancellation?.Cancel();
+        this.CloseConnectedClients();
         this.Disconnect();
+        this.acceptLoopCancellation?.Dispose();
+        this.acceptLoopCancellation = null;
+        this.acceptLoopTask = null;
         return true;
+    }
+
+    public bool StartClientAcceptLoop()
+    {
+        if (this.Socket == null || !this.Socket.IsBound)
+        {
+            return false;
+        }
+
+        if (this.acceptLoopTask != null && !this.acceptLoopTask.IsCompleted)
+        {
+            return true;
+        }
+
+        this.acceptLoopCancellation?.Dispose();
+        this.acceptLoopCancellation = new CancellationTokenSource();
+        this.acceptLoopTask = this.RunClientAcceptLoopAsync(this.acceptLoopCancellation.Token);
+        return true;
+    }
+
+    public int GetConnectedClientCount()
+    {
+        lock (this.clientLock)
+        {
+            return this.connectedClients.Count;
+        }
     }
 
     public bool AcceptHelloWorldRequestAndRespond()
@@ -117,6 +154,144 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         catch (ObjectDisposedException)
         {
             return false;
+        }
+    }
+
+    private async Task RunClientAcceptLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            Socket client = null;
+            try
+            {
+                client = await SocketAsyncEventArgsTransport.AcceptAsync(this.Socket);
+                if (client == null)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
+                    continue;
+                }
+
+                this.AddConnectedClient(client);
+                _ = this.HandleClientAsync(client, cancellationToken);
+            }
+            catch (SocketException)
+            {
+                CloseClient(client);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                CloseClient(client);
+                break;
+            }
+        }
+    }
+
+    private async Task HandleClientAsync(Socket client, CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(client);
+                if (!success)
+                {
+                    break;
+                }
+
+                bool handled = await this.HandleClientMessageAsync(client, frame);
+                if (!handled)
+                {
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            this.RemoveConnectedClient(client);
+            CloseClient(client);
+        }
+    }
+
+    private Task<bool> HandleClientMessageAsync(Socket client, SocketMessageFrame frame)
+    {
+        if (HealthCheckProtocol.TryDecode(frame, out HealthCheckMessage healthCheckMessage))
+        {
+            return healthCheckMessage.Type == HealthCheckMessageType.Ping
+                ? HealthCheckProtocol.SendAsync(client, HealthCheckProtocol.CreatePong(healthCheckMessage.ClientId))
+                : Task.FromResult(true);
+        }
+
+        if (HelloWorldProtocol.TryDecodeRequest(frame, out HelloWorldRequest helloWorldRequest))
+        {
+            return HelloWorldProtocol.SendAsync(client, HelloWorldProtocol.CreateResponse(helloWorldRequest.ClientId));
+        }
+
+        return Task.FromResult(false);
+    }
+
+    private void AddConnectedClient(Socket client)
+    {
+        lock (this.clientLock)
+        {
+            this.connectedClients.Add(client);
+        }
+    }
+
+    private void RemoveConnectedClient(Socket client)
+    {
+        lock (this.clientLock)
+        {
+            this.connectedClients.Remove(client);
+        }
+    }
+
+    private void CloseConnectedClients()
+    {
+        Socket[] clients;
+        lock (this.clientLock)
+        {
+            clients = new Socket[this.connectedClients.Count];
+            this.connectedClients.CopyTo(clients);
+            this.connectedClients.Clear();
+        }
+
+        foreach (Socket client in clients)
+        {
+            CloseClient(client);
+        }
+    }
+
+    private static void CloseClient(Socket client)
+    {
+        if (client == null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (client.Connected)
+            {
+                client.Shutdown(SocketShutdown.Both);
+            }
+        }
+        catch (SocketException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        finally
+        {
+            client.Dispose();
         }
     }
 

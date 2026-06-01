@@ -112,8 +112,9 @@ public static class SocketAsyncEventArgsTransport
 
     public static Task<Socket> AcceptAsync(Socket socket)
     {
-        SocketAsyncEventArgs args = new();
+        SocketAsyncEventArgs args = SocketAsyncEventArgsFactory.Rent();
         TaskCompletionSource<Socket> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler<SocketAsyncEventArgs> handler = null;
 
         void Complete(SocketAsyncEventArgs completedArgs)
         {
@@ -121,11 +122,18 @@ public static class SocketAsyncEventArgsTransport
                 ? completedArgs.AcceptSocket
                 : null;
 
-            completedArgs.Dispose();
+            if (acceptedSocket != null)
+            {
+                SocketFactory.ConfigureTcpSocket(acceptedSocket);
+            }
+
+            completedArgs.Completed -= handler;
+            SocketAsyncEventArgsFactory.Return(completedArgs);
             completion.TrySetResult(acceptedSocket);
         }
 
-        args.Completed += (_, completedArgs) => Complete(completedArgs);
+        handler = (_, completedArgs) => Complete(completedArgs);
+        args.Completed += handler;
 
         bool pending;
         try
@@ -134,7 +142,8 @@ public static class SocketAsyncEventArgsTransport
         }
         catch
         {
-            args.Dispose();
+            args.Completed -= handler;
+            SocketAsyncEventArgsFactory.Return(args);
             throw;
         }
 
@@ -160,7 +169,7 @@ public static class SocketAsyncEventArgsTransport
 
     private static SocketAsyncEventArgs CreateArgs(byte[] buffer, int offset, int count)
     {
-        SocketAsyncEventArgs args = new();
+        SocketAsyncEventArgs args = SocketAsyncEventArgsFactory.Rent();
         args.SetBuffer(buffer, offset, count);
         return args;
     }
@@ -168,6 +177,7 @@ public static class SocketAsyncEventArgsTransport
     private static Task<int> RunAsync(Socket socket, SocketAsyncEventArgs args, Func<Socket, SocketAsyncEventArgs, bool> operation)
     {
         TaskCompletionSource<int> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler<SocketAsyncEventArgs> handler = null;
 
         void Complete(SocketAsyncEventArgs completedArgs)
         {
@@ -175,11 +185,13 @@ public static class SocketAsyncEventArgsTransport
                 ? completedArgs.BytesTransferred
                 : -1;
 
-            completedArgs.Dispose();
+            completedArgs.Completed -= handler;
+            SocketAsyncEventArgsFactory.Return(completedArgs);
             completion.TrySetResult(bytesTransferred);
         }
 
-        args.Completed += (_, completedArgs) => Complete(completedArgs);
+        handler = (_, completedArgs) => Complete(completedArgs);
+        args.Completed += handler;
 
         bool pending;
         try
@@ -188,7 +200,8 @@ public static class SocketAsyncEventArgsTransport
         }
         catch
         {
-            args.Dispose();
+            args.Completed -= handler;
+            SocketAsyncEventArgsFactory.Return(args);
             throw;
         }
 

@@ -110,17 +110,14 @@ public class HealthCheckProtocolTests
 
     private static Socket CreateListener()
     {
-        Socket listener = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        listener.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        Socket listener = SocketFactory.CreateTcpSocket();
         listener.Bind(new IPEndPoint(IPAddress.Loopback, TestPort));
-        listener.Listen(10);
+        listener.Listen(SocketFactory.ListenBacklog);
         return listener;
     }
 
     private static Socket CreateClient()
     {
-        Socket client = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-        return client;
+        return SocketFactory.CreateTcpSocket();
     }
 }

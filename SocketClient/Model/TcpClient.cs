@@ -39,8 +39,7 @@ public class TcpClient : IClient, IDisposable
     public void Initialize()
     {
         this.Socket?.Dispose();
-        this.Socket = new Socket(this.Family, SocketType.Stream, ProtocolType.Tcp);
-        this.Socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        this.Socket = SocketFactory.CreateTcpSocket(this.Family);
     }
 
     public void SetIpAddress(IPAddress ipAddress)

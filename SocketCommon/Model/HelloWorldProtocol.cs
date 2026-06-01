@@ -88,10 +88,16 @@ public static class HelloWorldProtocol
 
     public static Task<bool> SendAsync(Socket socket, HelloWorldResponse response)
     {
+        byte[] payload = Encoding.UTF8.GetBytes(response.Message);
+        if (payload.Length > SocketMessageFrame.MaxPayloadLength)
+        {
+            return Task.FromResult(false);
+        }
+
         return SocketMessageFrame.SendAsync(socket, new SocketMessageFrame(
             response.ClientId,
             ResponseMessageId,
-            Encoding.UTF8.GetBytes(response.Message)));
+            payload));
     }
 
     public static bool TryReceiveRequest(Socket socket, out HelloWorldRequest request)

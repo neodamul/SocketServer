@@ -8,13 +8,17 @@ namespace SocketCommon.Model;
 public class SocketMessageFrame
 {
     public const int HeaderLength = 12;
-    public const int MaxPayloadLength = 1024 * 1024;
+    public const int MaxPayloadLength = 4 * 1024;
 
     public SocketMessageFrame(uint clientId, uint messageId, byte[] payload)
     {
         this.ClientId = clientId;
         this.MessageId = messageId;
         this.Payload = payload ?? Array.Empty<byte>();
+        if (this.Payload.Length > MaxPayloadLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(payload));
+        }
     }
 
     public uint ClientId { get; }
