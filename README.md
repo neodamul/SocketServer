@@ -13,7 +13,9 @@ SocketServer.sln
 │   │   └── IServer.cs
 │   ├── Model/
 │   │   ├── HealthCheckProtocol.cs
-│   │   └── HelloWorldProtocol.cs
+│   │   ├── HelloWorldProtocol.cs
+│   │   ├── SocketMessageFrame.cs
+│   │   └── SocketAsyncEventArgsTransport.cs
 │   └── SocketCommon.csproj
 ├── SocketClient/
 │   ├── Model/
@@ -81,16 +83,38 @@ SocketServer.sln
 - `IServer`: `IClient`를 확장하고 서버 시작, 종료, 바인드, 리슨 메서드 정의
 - `HealthCheckProtocol`: 연결 유지를 위한 healthcheck 메시지 인코딩/파싱
 - `HelloWorldProtocol`: HelloWorld 요청/응답 메시지 인코딩/파싱
+- `SocketMessageFrame`: 12바이트 고정 헤더와 가변 payload를 가진 공통 프레임
+- `SocketAsyncEventArgsTransport`: 대용량 송수신을 위한 `SocketAsyncEventArgs` 기반 공통 전송 헬퍼
+
+### 공통 프레임
+
+모든 프로토콜 메시지는 `SocketMessageFrame` 형식으로 인코딩합니다. 헤더는 12바이트 고정 길이이며 모든 정수는 big-endian(network byte order)입니다.
+
+```text
+0..3   clientId      uint32
+4..7   messageId     uint32
+8..11  payloadLength uint32
+12..   payload       byte[payloadLength]
+```
+
+### 대용량 송수신
+
+프로토콜의 실제 소켓 송수신은 `SocketAsyncEventArgs`를 사용하는 `SocketAsyncEventArgsTransport`를 통해 처리합니다.
+
+- 송신은 8KB 버퍼 단위로 나누어 모든 바이트가 전송될 때까지 반복합니다.
+- 수신은 먼저 12바이트 헤더를 정확히 읽고, 헤더의 `payloadLength`만큼 payload를 이어서 읽습니다.
+- payload 최대 길이는 1MB로 제한합니다.
+- 기존 동기 API는 유지하고, `SendAsync`, `TryReceive...Async` 계열 API로 비동기 경로를 직접 사용할 수 있습니다.
 
 ### `HealthCheckProtocol`
 
-`SocketCommon.Model.HealthCheckProtocol`은 TCP 연결 상태 확인을 위한 최소 메시지 프로토콜입니다. UTF-8 라인 메시지로 인코딩하며, 현재는 요청/응답 두 가지 메시지만 정의합니다.
+`SocketCommon.Model.HealthCheckProtocol`은 TCP 연결 상태 확인을 위한 최소 메시지 프로토콜입니다.
 
 연결 유지 정책은 30초마다 `PING`을 보내고, 상대가 `PONG OK`를 반환하면 연결이 살아 있는 것으로 판단하는 방식입니다.
 
 ```text
-HEALTHCHECK/1 PING
-HEALTHCHECK/1 PONG OK
+messageId 1: PING, payloadLength 0
+messageId 2: PONG, payload "OK"
 ```
 
 사용 예:
@@ -103,30 +127,30 @@ bool decoded = HealthCheckProtocol.TryDecode(ping, out HealthCheckMessage messag
 TCP 연결에서 사용할 때:
 
 ```csharp
-client.SendHealthCheck();
-client.TryReceiveHealthCheck(out HealthCheckMessage response);
+await client.SendHealthCheckAsync();
+(bool ok, HealthCheckMessage response) = await client.TryReceiveHealthCheckAsync();
 ```
 
 ### `HelloWorldProtocol`
 
-`SocketCommon.Model.HelloWorldProtocol`은 클라이언트가 서버에 기본 HelloWorld 요청을 보내고 서버가 응답하는 라인 기반 프로토콜입니다.
+`SocketCommon.Model.HelloWorldProtocol`은 클라이언트가 서버에 기본 HelloWorld 요청을 보내고 서버가 응답하는 프레임 기반 프로토콜입니다.
 
 ```text
-HELLOWORLD/1 REQUEST
-HELLOWORLD/1 RESPONSE Hello, World!
+messageId 100: HelloWorldRequest, payloadLength 0
+messageId 101: HelloWorldResponse, payload "Hello, World!"
 ```
 
 클라이언트에서 사용할 때:
 
 ```csharp
-client.SendHelloWorldRequest();
-client.TryReceiveHelloWorldResponse(out HelloWorldResponse response);
+await client.SendHelloWorldRequestAsync();
+(bool ok, HelloWorldResponse response) = await client.TryReceiveHelloWorldResponseAsync();
 ```
 
 서버에서 사용할 때:
 
 ```csharp
-server.AcceptHelloWorldRequestAndRespond();
+await server.AcceptHelloWorldRequestAndRespondAsync();
 ```
 
 ## 실행 예시
@@ -187,6 +211,7 @@ dotnet run --project SocketServer/SocketServer.csproj
 - healthcheck 메시지의 실제 소켓 송수신 검증
 - HelloWorld 요청/응답 메시지 인코딩/파싱 검증
 - HelloWorld 요청/응답 메시지의 실제 소켓 송수신 검증
+- 8KB를 초과하는 대용량 HelloWorld 응답 송수신 검증
 
 `SocketClientTest`:
 

@@ -1,6 +1,7 @@
-﻿using System.Net;
+﻿using System.Buffers.Binary;
+using System;
+using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using SocketCommon.Model;
@@ -11,45 +12,56 @@ namespace SocketCommonTest.Model;
 public class HelloWorldProtocolTests
 {
     private const int TestPort = 5001;
+    private const uint TestClientId = 7;
 
     [TestMethod]
     public void EncodeRequestTest()
     {
-        byte[] bytes = HelloWorldProtocol.Encode(HelloWorldProtocol.CreateRequest());
+        byte[] bytes = HelloWorldProtocol.Encode(HelloWorldProtocol.CreateRequest(TestClientId));
 
-        Assert.AreEqual("HELLOWORLD/1 REQUEST\n", Encoding.UTF8.GetString(bytes));
+        Assert.AreEqual(SocketMessageFrame.HeaderLength, bytes.Length);
+        Assert.AreEqual(TestClientId, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(0, 4)));
+        Assert.AreEqual(HelloWorldProtocol.RequestMessageId, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(4, 4)));
+        Assert.AreEqual((uint)0, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(8, 4)));
     }
 
     [TestMethod]
     public void EncodeResponseTest()
     {
-        byte[] bytes = HelloWorldProtocol.Encode(HelloWorldProtocol.CreateResponse());
+        byte[] bytes = HelloWorldProtocol.Encode(HelloWorldProtocol.CreateResponse(TestClientId));
 
-        Assert.AreEqual("HELLOWORLD/1 RESPONSE Hello, World!\n", Encoding.UTF8.GetString(bytes));
+        Assert.AreEqual(SocketMessageFrame.HeaderLength + HelloWorldProtocol.DefaultMessage.Length, bytes.Length);
+        Assert.AreEqual(TestClientId, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(0, 4)));
+        Assert.AreEqual(HelloWorldProtocol.ResponseMessageId, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(4, 4)));
+        Assert.AreEqual((uint)HelloWorldProtocol.DefaultMessage.Length, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(8, 4)));
     }
 
     [TestMethod]
     public void DecodeRequestTest()
     {
-        bool result = HelloWorldProtocol.TryDecodeRequest("HELLOWORLD/1 REQUEST\n", out HelloWorldRequest request);
+        byte[] bytes = HelloWorldProtocol.Encode(HelloWorldProtocol.CreateRequest(TestClientId));
+        bool result = HelloWorldProtocol.TryDecodeRequest(bytes, out HelloWorldRequest request);
 
         Assert.IsTrue(result);
         Assert.IsNotNull(request);
+        Assert.AreEqual(TestClientId, request.ClientId);
     }
 
     [TestMethod]
     public void DecodeResponseTest()
     {
-        bool result = HelloWorldProtocol.TryDecodeResponse("HELLOWORLD/1 RESPONSE Hello, World!\n", out HelloWorldResponse response);
+        byte[] bytes = HelloWorldProtocol.Encode(HelloWorldProtocol.CreateResponse(TestClientId));
+        bool result = HelloWorldProtocol.TryDecodeResponse(bytes, out HelloWorldResponse response);
 
         Assert.IsTrue(result);
+        Assert.AreEqual(TestClientId, response.ClientId);
         Assert.AreEqual("Hello, World!", response.Message);
     }
 
     [TestMethod]
     public void DecodeInvalidRequestTest()
     {
-        bool result = HelloWorldProtocol.TryDecodeRequest("UNKNOWN\n", out HelloWorldRequest request);
+        bool result = HelloWorldProtocol.TryDecodeRequest(new byte[] { 1, 2, 3 }, out HelloWorldRequest request);
 
         Assert.IsFalse(result);
         Assert.IsNull(request);
@@ -58,7 +70,7 @@ public class HelloWorldProtocolTests
     [TestMethod]
     public void DecodeInvalidResponseTest()
     {
-        bool result = HelloWorldProtocol.TryDecodeResponse("HELLOWORLD/1 RESPONSE\n", out HelloWorldResponse response);
+        bool result = HelloWorldProtocol.TryDecodeResponse(HelloWorldProtocol.Encode(HelloWorldProtocol.CreateRequest(TestClientId)), out HelloWorldResponse response);
 
         Assert.IsFalse(result);
         Assert.IsNull(response);
@@ -74,9 +86,10 @@ public class HelloWorldProtocolTests
         client.Connect(IPAddress.Loopback, TestPort);
         using Socket accepted = await acceptTask;
 
-        Assert.IsTrue(HelloWorldProtocol.Send(client, HelloWorldProtocol.CreateRequest()));
+        Assert.IsTrue(HelloWorldProtocol.Send(client, HelloWorldProtocol.CreateRequest(TestClientId)));
         Assert.IsTrue(HelloWorldProtocol.TryReceiveRequest(accepted, out HelloWorldRequest request));
         Assert.IsNotNull(request);
+        Assert.AreEqual(TestClientId, request.ClientId);
     }
 
     [TestMethod]
@@ -89,9 +102,28 @@ public class HelloWorldProtocolTests
         client.Connect(IPAddress.Loopback, TestPort);
         using Socket accepted = await acceptTask;
 
-        Assert.IsTrue(HelloWorldProtocol.Send(accepted, HelloWorldProtocol.CreateResponse()));
+        Assert.IsTrue(HelloWorldProtocol.Send(accepted, HelloWorldProtocol.CreateResponse(TestClientId)));
         Assert.IsTrue(HelloWorldProtocol.TryReceiveResponse(client, out HelloWorldResponse response));
+        Assert.AreEqual(TestClientId, response.ClientId);
         Assert.AreEqual("Hello, World!", response.Message);
+    }
+
+    [TestMethod]
+    public async Task SendAndReceiveLargeResponseTest()
+    {
+        string largeMessage = new('A', SocketAsyncEventArgsTransport.BufferSize * 3);
+        using Socket listener = CreateListener();
+        Task<Socket> acceptTask = listener.AcceptAsync();
+
+        using Socket client = CreateClient();
+        client.Connect(IPAddress.Loopback, TestPort);
+        using Socket accepted = await acceptTask;
+
+        Assert.IsTrue(await HelloWorldProtocol.SendAsync(accepted, new HelloWorldResponse(TestClientId, largeMessage)));
+        (bool success, HelloWorldResponse response) = await HelloWorldProtocol.TryReceiveResponseAsync(client);
+        Assert.IsTrue(success);
+        Assert.AreEqual(TestClientId, response.ClientId);
+        Assert.AreEqual(largeMessage, response.Message);
     }
 
     private static Socket CreateListener()

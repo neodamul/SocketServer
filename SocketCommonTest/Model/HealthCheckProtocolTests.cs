@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Buffers.Binary;
+using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
@@ -11,6 +12,7 @@ namespace SocketCommonTest.Model;
 public class HealthCheckProtocolTests
 {
     private const int TestPort = 5001;
+    private const uint TestClientId = 7;
 
     [TestMethod]
     public void KeepAliveIntervalTest()
@@ -21,25 +23,33 @@ public class HealthCheckProtocolTests
     [TestMethod]
     public void EncodePingTest()
     {
-        byte[] bytes = HealthCheckProtocol.Encode(HealthCheckProtocol.CreatePing());
+        byte[] bytes = HealthCheckProtocol.Encode(HealthCheckProtocol.CreatePing(TestClientId));
 
-        Assert.AreEqual("HEALTHCHECK/1 PING\n", Encoding.UTF8.GetString(bytes));
+        Assert.AreEqual(SocketMessageFrame.HeaderLength, bytes.Length);
+        Assert.AreEqual(TestClientId, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(0, 4)));
+        Assert.AreEqual(HealthCheckProtocol.PingMessageId, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(4, 4)));
+        Assert.AreEqual((uint)0, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(8, 4)));
     }
 
     [TestMethod]
     public void EncodePongTest()
     {
-        byte[] bytes = HealthCheckProtocol.Encode(HealthCheckProtocol.CreatePong());
+        byte[] bytes = HealthCheckProtocol.Encode(HealthCheckProtocol.CreatePong(TestClientId));
 
-        Assert.AreEqual("HEALTHCHECK/1 PONG OK\n", Encoding.UTF8.GetString(bytes));
+        Assert.AreEqual(SocketMessageFrame.HeaderLength + 2, bytes.Length);
+        Assert.AreEqual(TestClientId, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(0, 4)));
+        Assert.AreEqual(HealthCheckProtocol.PongMessageId, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(4, 4)));
+        Assert.AreEqual((uint)2, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(8, 4)));
     }
 
     [TestMethod]
     public void DecodePingTest()
     {
-        bool result = HealthCheckProtocol.TryDecode("HEALTHCHECK/1 PING\n", out HealthCheckMessage message);
+        byte[] bytes = HealthCheckProtocol.Encode(HealthCheckProtocol.CreatePing(TestClientId));
+        bool result = HealthCheckProtocol.TryDecode(bytes, out HealthCheckMessage message);
 
         Assert.IsTrue(result);
+        Assert.AreEqual(TestClientId, message.ClientId);
         Assert.AreEqual(HealthCheckMessageType.Ping, message.Type);
         Assert.AreEqual("", message.Status);
     }
@@ -47,9 +57,11 @@ public class HealthCheckProtocolTests
     [TestMethod]
     public void DecodePongTest()
     {
-        bool result = HealthCheckProtocol.TryDecode("HEALTHCHECK/1 PONG OK\n", out HealthCheckMessage message);
+        byte[] bytes = HealthCheckProtocol.Encode(HealthCheckProtocol.CreatePong(TestClientId));
+        bool result = HealthCheckProtocol.TryDecode(bytes, out HealthCheckMessage message);
 
         Assert.IsTrue(result);
+        Assert.AreEqual(TestClientId, message.ClientId);
         Assert.AreEqual(HealthCheckMessageType.Pong, message.Type);
         Assert.AreEqual("OK", message.Status);
     }
@@ -57,7 +69,7 @@ public class HealthCheckProtocolTests
     [TestMethod]
     public void DecodeInvalidMessageTest()
     {
-        bool result = HealthCheckProtocol.TryDecode("UNKNOWN\n", out HealthCheckMessage message);
+        bool result = HealthCheckProtocol.TryDecode(new byte[] { 1, 2, 3 }, out HealthCheckMessage message);
 
         Assert.IsFalse(result);
         Assert.IsNull(message);
@@ -73,8 +85,9 @@ public class HealthCheckProtocolTests
         client.Connect(IPAddress.Loopback, TestPort);
         using Socket accepted = await acceptTask;
 
-        Assert.IsTrue(HealthCheckProtocol.Send(client, HealthCheckProtocol.CreatePing()));
+        Assert.IsTrue(HealthCheckProtocol.Send(client, HealthCheckProtocol.CreatePing(TestClientId)));
         Assert.IsTrue(HealthCheckProtocol.TryReceive(accepted, out HealthCheckMessage message));
+        Assert.AreEqual(TestClientId, message.ClientId);
         Assert.AreEqual(HealthCheckMessageType.Ping, message.Type);
     }
 
@@ -88,8 +101,9 @@ public class HealthCheckProtocolTests
         client.Connect(IPAddress.Loopback, TestPort);
         using Socket accepted = await acceptTask;
 
-        Assert.IsTrue(HealthCheckProtocol.Send(accepted, HealthCheckProtocol.CreatePong()));
+        Assert.IsTrue(HealthCheckProtocol.Send(accepted, HealthCheckProtocol.CreatePong(TestClientId)));
         Assert.IsTrue(HealthCheckProtocol.TryReceive(client, out HealthCheckMessage message));
+        Assert.AreEqual(TestClientId, message.ClientId);
         Assert.AreEqual(HealthCheckMessageType.Pong, message.Type);
         Assert.AreEqual("OK", message.Status);
     }

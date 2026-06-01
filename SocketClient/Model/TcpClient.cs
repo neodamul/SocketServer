@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading.Tasks;
 using SocketCommon;
 using SocketCommon.Interface;
 using SocketCommon.Model;
@@ -17,6 +18,7 @@ public class TcpClient : IClient, IDisposable
     private AddressFamily Family { get; set; }
     protected IPAddress IpAddress { get; private set; }
     protected int Port { get; private set; }
+    protected uint ClientId => this.Id < 0 ? 0 : (uint)this.Id;
 
     public TcpClient() : this(0, null)
     { }
@@ -131,54 +133,72 @@ public class TcpClient : IClient, IDisposable
 
     public bool SendHealthCheck()
     {
-        if (this.Socket == null)
-        {
-            return false;
-        }
+        return SendHealthCheckAsync().GetAwaiter().GetResult();
+    }
 
-        return HealthCheckProtocol.Send(this.Socket, HealthCheckProtocol.CreatePing());
+    public Task<bool> SendHealthCheckAsync()
+    {
+        return this.Socket == null
+            ? Task.FromResult(false)
+            : HealthCheckProtocol.SendAsync(this.Socket, HealthCheckProtocol.CreatePing(this.ClientId));
     }
 
     public bool SendHealthCheckResponse()
     {
-        if (this.Socket == null)
-        {
-            return false;
-        }
+        return SendHealthCheckResponseAsync().GetAwaiter().GetResult();
+    }
 
-        return HealthCheckProtocol.Send(this.Socket, HealthCheckProtocol.CreatePong());
+    public Task<bool> SendHealthCheckResponseAsync()
+    {
+        return this.Socket == null
+            ? Task.FromResult(false)
+            : HealthCheckProtocol.SendAsync(this.Socket, HealthCheckProtocol.CreatePong(this.ClientId));
     }
 
     public bool TryReceiveHealthCheck(out HealthCheckMessage message)
     {
-        message = null;
+        (bool success, HealthCheckMessage receivedMessage) = TryReceiveHealthCheckAsync().GetAwaiter().GetResult();
+        message = receivedMessage;
+        return success;
+    }
+
+    public async Task<(bool Success, HealthCheckMessage Message)> TryReceiveHealthCheckAsync()
+    {
         if (this.Socket == null)
         {
-            return false;
+            return (false, null);
         }
 
-        return HealthCheckProtocol.TryReceive(this.Socket, out message);
+        return await HealthCheckProtocol.TryReceiveAsync(this.Socket);
     }
 
     public bool SendHelloWorldRequest()
     {
-        if (this.Socket == null)
-        {
-            return false;
-        }
+        return SendHelloWorldRequestAsync().GetAwaiter().GetResult();
+    }
 
-        return HelloWorldProtocol.Send(this.Socket, HelloWorldProtocol.CreateRequest());
+    public Task<bool> SendHelloWorldRequestAsync()
+    {
+        return this.Socket == null
+            ? Task.FromResult(false)
+            : HelloWorldProtocol.SendAsync(this.Socket, HelloWorldProtocol.CreateRequest(this.ClientId));
     }
 
     public bool TryReceiveHelloWorldResponse(out HelloWorldResponse response)
     {
-        response = null;
+        (bool success, HelloWorldResponse receivedResponse) = TryReceiveHelloWorldResponseAsync().GetAwaiter().GetResult();
+        response = receivedResponse;
+        return success;
+    }
+
+    public async Task<(bool Success, HelloWorldResponse Response)> TryReceiveHelloWorldResponseAsync()
+    {
         if (this.Socket == null)
         {
-            return false;
+            return (false, null);
         }
 
-        return HelloWorldProtocol.TryReceiveResponse(this.Socket, out response);
+        return await HelloWorldProtocol.TryReceiveResponseAsync(this.Socket);
     }
 
     public override string ToString()

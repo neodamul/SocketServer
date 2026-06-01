@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Net.Sockets;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace SocketCommon.Model;
 
@@ -12,12 +13,15 @@ public enum HealthCheckMessageType
 
 public class HealthCheckMessage
 {
-    public HealthCheckMessage(HealthCheckMessageType type, string status = "")
+    public HealthCheckMessage(uint clientId, HealthCheckMessageType type, string status = "")
     {
+        this.ClientId = clientId;
         this.Type = type;
         this.Status = status;
         this.CreatedAt = DateTimeOffset.UtcNow;
     }
+
+    public uint ClientId { get; }
 
     public HealthCheckMessageType Type { get; }
 
@@ -31,110 +35,103 @@ public static class HealthCheckProtocol
     public const string Name = "HEALTHCHECK";
     public const int Version = 1;
     public const int KeepAliveIntervalSeconds = 30;
+    public const uint PingMessageId = 1;
+    public const uint PongMessageId = 2;
 
-    private const string PingMessage = "HEALTHCHECK/1 PING\n";
-    private const string PongMessage = "HEALTHCHECK/1 PONG OK\n";
-    private const int MaxMessageLength = 64;
+    private const string PongPayload = "OK";
 
-    public static HealthCheckMessage CreatePing()
+    public static HealthCheckMessage CreatePing(uint clientId = 0)
     {
-        return new HealthCheckMessage(HealthCheckMessageType.Ping);
+        return new HealthCheckMessage(clientId, HealthCheckMessageType.Ping);
     }
 
-    public static HealthCheckMessage CreatePong()
+    public static HealthCheckMessage CreatePong(uint clientId = 0)
     {
-        return new HealthCheckMessage(HealthCheckMessageType.Pong, "OK");
+        return new HealthCheckMessage(clientId, HealthCheckMessageType.Pong, PongPayload);
     }
 
     public static byte[] Encode(HealthCheckMessage message)
     {
-        string text = message.Type switch
-        {
-            HealthCheckMessageType.Ping => PingMessage,
-            HealthCheckMessageType.Pong => PongMessage,
-            _ => throw new ArgumentOutOfRangeException(nameof(message))
-        };
-
-        return Encoding.UTF8.GetBytes(text);
+        return CreateFrame(message).Encode();
     }
 
     public static bool Send(Socket socket, HealthCheckMessage message)
     {
-        try
-        {
-            byte[] bytes = Encode(message);
-            int sent = socket.Send(bytes);
-            return sent == bytes.Length;
-        }
-        catch (SocketException)
-        {
-            return false;
-        }
-        catch (ObjectDisposedException)
-        {
-            return false;
-        }
+        return SendAsync(socket, message).GetAwaiter().GetResult();
+    }
+
+    public static Task<bool> SendAsync(Socket socket, HealthCheckMessage message)
+    {
+        return SocketMessageFrame.SendAsync(socket, CreateFrame(message));
     }
 
     public static bool TryReceive(Socket socket, out HealthCheckMessage message)
     {
-        message = null;
-        byte[] buffer = new byte[MaxMessageLength];
-        int offset = 0;
+        (bool success, HealthCheckMessage receivedMessage) = TryReceiveAsync(socket).GetAwaiter().GetResult();
+        message = receivedMessage;
+        return success;
+    }
 
-        try
+    public static async Task<(bool Success, HealthCheckMessage Message)> TryReceiveAsync(Socket socket)
+    {
+        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(socket);
+        if (!success || !TryDecode(frame, out HealthCheckMessage message))
         {
-            while (offset < buffer.Length)
-            {
-                int received = socket.Receive(buffer, offset, 1, SocketFlags.None);
-                if (received == 0)
-                {
-                    return false;
-                }
-
-                if (buffer[offset] == (byte)'\n')
-                {
-                    string text = Encoding.UTF8.GetString(buffer, 0, offset + 1);
-                    return TryDecode(text, out message);
-                }
-
-                offset += received;
-            }
-        }
-        catch (SocketException)
-        {
-            return false;
-        }
-        catch (ObjectDisposedException)
-        {
-            return false;
+            return (false, null);
         }
 
-        return false;
+        return (true, message);
     }
 
     public static bool TryDecode(byte[] bytes, out HealthCheckMessage message)
     {
-        return TryDecode(Encoding.UTF8.GetString(bytes), out message);
+        message = null;
+        if (!SocketMessageFrame.TryDecode(bytes, out SocketMessageFrame frame))
+        {
+            return false;
+        }
+
+        return TryDecode(frame, out message);
     }
 
-    public static bool TryDecode(string text, out HealthCheckMessage message)
+    public static bool TryDecode(SocketMessageFrame frame, out HealthCheckMessage message)
     {
         message = null;
-        string normalized = text.Trim();
 
-        if (normalized == "HEALTHCHECK/1 PING")
+        if (frame.MessageId == PingMessageId && frame.Payload.Length == 0)
         {
-            message = CreatePing();
+            message = CreatePing(frame.ClientId);
             return true;
         }
 
-        if (normalized == "HEALTHCHECK/1 PONG OK")
+        if (frame.MessageId == PongMessageId)
         {
-            message = CreatePong();
+            string status = Encoding.UTF8.GetString(frame.Payload);
+            if (status != PongPayload)
+            {
+                return false;
+            }
+
+            message = CreatePong(frame.ClientId);
             return true;
         }
 
         return false;
+    }
+
+    private static SocketMessageFrame CreateFrame(HealthCheckMessage message)
+    {
+        uint messageId = message.Type switch
+        {
+            HealthCheckMessageType.Ping => PingMessageId,
+            HealthCheckMessageType.Pong => PongMessageId,
+            _ => throw new ArgumentOutOfRangeException(nameof(message))
+        };
+
+        byte[] payload = message.Type == HealthCheckMessageType.Pong
+            ? Encoding.UTF8.GetBytes(message.Status)
+            : Array.Empty<byte>();
+
+        return new SocketMessageFrame(message.ClientId, messageId, payload);
     }
 }

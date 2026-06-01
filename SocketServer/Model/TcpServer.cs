@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading.Tasks;
 using SocketCommon;
 using SocketCommon.Interface;
 using SocketCommon.Model;
@@ -83,6 +84,11 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     public bool AcceptHelloWorldRequestAndRespond()
     {
+        return AcceptHelloWorldRequestAndRespondAsync().GetAwaiter().GetResult();
+    }
+
+    public async Task<bool> AcceptHelloWorldRequestAndRespondAsync()
+    {
         if (this.Socket == null)
         {
             return false;
@@ -90,13 +96,19 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         try
         {
-            using Socket client = this.Socket.Accept();
-            if (!HelloWorldProtocol.TryReceiveRequest(client, out HelloWorldRequest request))
+            using Socket client = await SocketAsyncEventArgsTransport.AcceptAsync(this.Socket);
+            if (client == null)
             {
                 return false;
             }
 
-            return HelloWorldProtocol.Send(client, HelloWorldProtocol.CreateResponse());
+            (bool success, HelloWorldRequest request) = await HelloWorldProtocol.TryReceiveRequestAsync(client);
+            if (!success)
+            {
+                return false;
+            }
+
+            return await HelloWorldProtocol.SendAsync(client, HelloWorldProtocol.CreateResponse(request.ClientId));
         }
         catch (SocketException)
         {

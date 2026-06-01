@@ -50,12 +50,14 @@ public class TcpServerTests
     {
         TcpServer server = new(1, "testServer", "127.0.0.1", TestPort);
         Assert.IsTrue(server.Start());
-        Task<bool> serverTask = Task.Run(() => server.AcceptHelloWorldRequestAndRespond());
+        Task<bool> serverTask = server.AcceptHelloWorldRequestAndRespondAsync();
 
         TcpClient client = new(1, "testClient", "127.0.0.1", TestPort);
         Assert.IsTrue(client.Connect());
-        Assert.IsTrue(client.SendHelloWorldRequest());
-        Assert.IsTrue(client.TryReceiveHelloWorldResponse(out HelloWorldResponse response));
+        Assert.IsTrue(await client.SendHelloWorldRequestAsync());
+        (bool responseReceived, HelloWorldResponse response) = await client.TryReceiveHelloWorldResponseAsync();
+        Assert.IsTrue(responseReceived);
+        Assert.AreEqual((uint)1, response.ClientId);
         Assert.AreEqual("Hello, World!", response.Message);
         Assert.IsTrue(await serverTask);
 

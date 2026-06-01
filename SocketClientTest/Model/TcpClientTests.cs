@@ -74,12 +74,16 @@ public class TcpClientTests
         Assert.IsTrue(client.Connect());
         using Socket accepted = await acceptTask;
 
-        Assert.IsTrue(client.SendHelloWorldRequest());
-        Assert.IsTrue(HelloWorldProtocol.TryReceiveRequest(accepted, out HelloWorldRequest request));
+        Assert.IsTrue(await client.SendHelloWorldRequestAsync());
+        (bool requestReceived, HelloWorldRequest request) = await HelloWorldProtocol.TryReceiveRequestAsync(accepted);
+        Assert.IsTrue(requestReceived);
         Assert.IsNotNull(request);
+        Assert.AreEqual((uint)1, request.ClientId);
 
-        Assert.IsTrue(HelloWorldProtocol.Send(accepted, HelloWorldProtocol.CreateResponse()));
-        Assert.IsTrue(client.TryReceiveHelloWorldResponse(out HelloWorldResponse response));
+        Assert.IsTrue(await HelloWorldProtocol.SendAsync(accepted, HelloWorldProtocol.CreateResponse(request.ClientId)));
+        (bool responseReceived, HelloWorldResponse response) = await client.TryReceiveHelloWorldResponseAsync();
+        Assert.IsTrue(responseReceived);
+        Assert.AreEqual((uint)1, response.ClientId);
         Assert.AreEqual("Hello, World!", response.Message);
 
         client.Disconnect();
