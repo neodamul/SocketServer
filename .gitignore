@@ -361,3 +361,10 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# macOS Finder metadata
+.DS_Store
+
+# Local IDE settings
+.idea/
+.vscode/
