@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\SocketCommon\SocketCommon.csproj" />
     <ProjectReference Include="..\SocketServer\SocketServer.csproj" />
   </ItemGroup>
 

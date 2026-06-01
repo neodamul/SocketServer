@@ -10,12 +10,13 @@ SocketServer.sln
 │   ├── Interface/
 │   │   ├── IClient.cs
 │   │   └── IServer.cs
+│   ├── Model/
+│   │   └── HealthCheckProtocol.cs
 │   └── SocketCommon.csproj
 ├── SocketServer/
 │   ├── Program.cs
 │   ├── Constants.cs
 │   ├── Model/
-│   │   ├── HealthCheckProtocol.cs
 │   │   ├── TcpClient.cs
 │   │   └── TcpServer.cs
 │   └── SocketServer.csproj
@@ -59,14 +60,15 @@ SocketServer.sln
 
 ### `SocketCommon`
 
-`SocketCommon` 프로젝트는 클라이언트/서버가 구현해야 할 공통 인터페이스를 제공합니다.
+`SocketCommon` 프로젝트는 `SocketServer`가 참조하는 공용 라이브러리입니다. 클라이언트/서버 인터페이스와 공통 메시지 모델을 제공합니다.
 
 - `IClient`: 초기화, 연결, 연결 종료, 연결 상태, IP/포트 설정과 조회
 - `IServer`: `IClient`를 확장하고 서버 시작, 종료, 바인드, 리슨 메서드 정의
+- `HealthCheckProtocol`: 연결 유지를 위한 healthcheck 메시지 인코딩/파싱
 
 ### `HealthCheckProtocol`
 
-`SocketServer.Model.HealthCheckProtocol`은 TCP 연결 상태 확인을 위한 최소 메시지 프로토콜입니다. UTF-8 라인 메시지로 인코딩하며, 현재는 요청/응답 두 가지 메시지만 정의합니다.
+`SocketCommon.Model.HealthCheckProtocol`은 TCP 연결 상태 확인을 위한 최소 메시지 프로토콜입니다. UTF-8 라인 메시지로 인코딩하며, 현재는 요청/응답 두 가지 메시지만 정의합니다.
 
 연결 유지 정책은 30초마다 `PING`을 보내고, 상대가 `PONG OK`를 반환하면 연결이 살아 있는 것으로 판단하는 방식입니다.
 

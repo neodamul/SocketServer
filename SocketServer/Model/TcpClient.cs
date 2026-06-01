@@ -2,6 +2,7 @@
 using System.Net;
 using System.Net.Sockets;
 using SocketCommon.Interface;
+using SocketCommon.Model;
 
 namespace SocketServer.Model;
 public class TcpClient : IClient, IDisposable

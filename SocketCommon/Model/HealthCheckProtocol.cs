@@ -2,7 +2,7 @@
 using System.Net.Sockets;
 using System.Text;
 
-namespace SocketServer.Model;
+namespace SocketCommon.Model;
 
 public enum HealthCheckMessageType
 {

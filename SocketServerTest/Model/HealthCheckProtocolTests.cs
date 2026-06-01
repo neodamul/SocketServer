@@ -3,7 +3,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using SocketServer.Model;
+using SocketCommon.Model;
 
 namespace SocketServerTest.Model;
 
