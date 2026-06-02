@@ -8,8 +8,14 @@ namespace SocketLoadTest;
 internal static class Program
 {
     private const int HealthCheckTimeoutSeconds = 10;
+    private const int MessageTimeoutSeconds = 10;
 
-    private static async Task<int> Main(string[] args)
+    private static Task<int> Main(string[] args)
+    {
+        return RunAsync(args);
+    }
+
+    internal static async Task<int> RunAsync(string[] args)
     {
         if (!LoadTestOptions.TryParse(args, out LoadTestOptions options, out string error))
         {
@@ -35,11 +41,11 @@ internal static class Program
         }
 
         Console.WriteLine(
-            $"Starting load test: clients={options.Clients}, batch-size={options.BatchSize}, hold-seconds={options.HoldSeconds}, endpoint={options.Host}:{options.Port}, external-server={options.ExternalServer}, use-control-server={options.UseControlServer}");
+            $"Starting load test: clients={options.Clients}, batch-size={options.BatchSize}, hold-seconds={options.HoldSeconds}, endpoint={options.Host}:{options.Port}, external-server={options.ExternalServer}, use-control-server={options.UseControlServer}, message-test={options.MessageTest}, message-rounds={options.MessageRounds}");
 
         Stopwatch stopwatch = Stopwatch.StartNew();
         LoadTestCounters counters = new();
-        List<TcpClient> connectedClients = new(options.Clients);
+        List<ConnectedLoadClient> connectedClients = new(options.Clients);
 
         try
         {
@@ -52,24 +58,35 @@ internal static class Program
                 {
                     if (result.Client != null)
                     {
-                        connectedClients.Add(result.Client);
+                        connectedClients.Add(new ConnectedLoadClient(result.ClientId, result.Client));
                     }
                 }
 
                 PrintProgress(counters, stopwatch.Elapsed);
             }
 
+            if (options.MessageTest)
+            {
+                await RunMessageTestAsync(options, connectedClients, counters);
+                PrintProgress(counters, stopwatch.Elapsed);
+            }
+
             if (options.HoldSeconds > 0)
             {
+                foreach (ConnectedLoadClient client in connectedClients)
+                {
+                    client.Client.StartHealthCheckLoop();
+                }
+
                 Console.WriteLine($"Holding {connectedClients.Count} connected clients for {options.HoldSeconds} seconds.");
                 await Task.Delay(TimeSpan.FromSeconds(options.HoldSeconds));
             }
         }
         finally
         {
-            foreach (TcpClient client in connectedClients)
+            foreach (ConnectedLoadClient client in connectedClients)
             {
-                client.Dispose();
+                client.Client.Dispose();
             }
 
             server?.End();
@@ -77,7 +94,12 @@ internal static class Program
 
         stopwatch.Stop();
         PrintSummary(counters, stopwatch.Elapsed);
-        return counters.HealthCheckFail == 0 && counters.ConnectFail == 0 ? 0 : 2;
+        return counters.HealthCheckFail == 0 &&
+            counters.ConnectFail == 0 &&
+            counters.RegisterFail == 0 &&
+            counters.MessageFail == 0
+                ? 0
+                : 2;
     }
 
     private static TcpServer? StartInProcessServer(LoadTestOptions options)
@@ -126,7 +148,6 @@ internal static class Program
             if (!connected)
             {
                 Interlocked.Increment(ref counters.ConnectFail);
-                Interlocked.Increment(ref counters.HealthCheckFail);
                 client.Dispose();
                 return ClientAttemptResult.Failed;
             }
@@ -136,8 +157,19 @@ internal static class Program
             if (healthCheckSucceeded)
             {
                 Interlocked.Increment(ref counters.HealthCheckSuccess);
-                client.StartHealthCheckLoop();
-                return new ClientAttemptResult(client);
+                if (options.MessageTest && !await client.RegisterClientAsync())
+                {
+                    Interlocked.Increment(ref counters.RegisterFail);
+                    client.Dispose();
+                    return ClientAttemptResult.Failed;
+                }
+
+                if (!options.MessageTest && options.HoldSeconds > 0)
+                {
+                    client.StartHealthCheckLoop();
+                }
+
+                return new ClientAttemptResult(clientId, client);
             }
 
             Interlocked.Increment(ref counters.HealthCheckFail);
@@ -150,6 +182,79 @@ internal static class Program
             client.Dispose();
             return ClientAttemptResult.Failed;
         }
+    }
+
+    private static async Task RunMessageTestAsync(
+        LoadTestOptions options,
+        IReadOnlyList<ConnectedLoadClient> clients,
+        LoadTestCounters counters)
+    {
+        if (clients.Count < 2)
+        {
+            Interlocked.Increment(ref counters.MessageFail);
+            Console.Error.WriteLine("Message test requires at least two connected clients.");
+            return;
+        }
+
+        int pairCount = clients.Count / 2;
+        Console.WriteLine($"Starting message test: pairs={pairCount}, rounds={options.MessageRounds}.");
+        for (int round = 1; round <= options.MessageRounds; round++)
+        {
+            Task[] tasks = new Task[pairCount];
+            for (int pairIndex = 0; pairIndex < pairCount; pairIndex++)
+            {
+                ConnectedLoadClient source = clients[pairIndex * 2];
+                ConnectedLoadClient target = clients[(pairIndex * 2) + 1];
+                tasks[pairIndex] = RunMessagePairAsync(round, source, target, counters);
+            }
+
+            await Task.WhenAll(tasks);
+        }
+    }
+
+    private static async Task RunMessagePairAsync(
+        int round,
+        ConnectedLoadClient source,
+        ConnectedLoadClient target,
+        LoadTestCounters counters)
+    {
+        string content = $"load-message-{round}-{source.ClientId}-to-{target.ClientId}";
+        Interlocked.Increment(ref counters.MessageAttempted);
+
+        Task<(bool Success, SocketCommon.Model.ClientMessageDelivery Delivery)> receiveTask =
+            target.Client.TryReceiveClientMessageAsync();
+        Task<(bool Success, SocketCommon.Model.ClientMessageAck Ack, SocketCommon.Model.ClientMessageError Error)> sendTask =
+            source.Client.SendClientMessageAsync((uint)target.ClientId, content);
+
+        Task completedReceiveTask = await Task.WhenAny(
+            receiveTask,
+            Task.Delay(TimeSpan.FromSeconds(MessageTimeoutSeconds)));
+        Task completedSendTask = await Task.WhenAny(
+            sendTask,
+            Task.Delay(TimeSpan.FromSeconds(MessageTimeoutSeconds)));
+
+        if (completedReceiveTask != receiveTask || completedSendTask != sendTask)
+        {
+            Interlocked.Increment(ref counters.MessageFail);
+            return;
+        }
+
+        (bool deliverySuccess, SocketCommon.Model.ClientMessageDelivery delivery) = await receiveTask;
+        (bool ackSuccess, SocketCommon.Model.ClientMessageAck ack, SocketCommon.Model.ClientMessageError error) = await sendTask;
+
+        if (!deliverySuccess ||
+            !ackSuccess ||
+            delivery.SourceClientId != (uint)source.ClientId ||
+            delivery.TargetClientId != (uint)target.ClientId ||
+            delivery.Content != content ||
+            ack.TargetClientId != (uint)target.ClientId ||
+            error != null)
+        {
+            Interlocked.Increment(ref counters.MessageFail);
+            return;
+        }
+
+        Interlocked.Increment(ref counters.MessageSuccess);
     }
 
     private static async Task<bool> SendAndReceiveHealthCheckAsync(TcpClient client)
@@ -197,7 +302,7 @@ internal static class Program
     private static void PrintProgress(LoadTestCounters counters, TimeSpan elapsed)
     {
         Console.WriteLine(
-            $"Progress: attempted={counters.Attempted}, connected={counters.Connected}, healthcheck-success={counters.HealthCheckSuccess}, healthcheck-fail={counters.HealthCheckFail}, elapsed={elapsed}");
+            $"Progress: attempted={counters.Attempted}, connected={counters.Connected}, healthcheck-success={counters.HealthCheckSuccess}, healthcheck-fail={counters.HealthCheckFail}, registered-fail={counters.RegisterFail}, message-success={counters.MessageSuccess}, message-fail={counters.MessageFail}, elapsed={elapsed}");
     }
 
     private static void PrintSummary(LoadTestCounters counters, TimeSpan elapsed)
@@ -208,13 +313,17 @@ internal static class Program
         Console.WriteLine($"Connect failed: {counters.ConnectFail}");
         Console.WriteLine($"Healthcheck succeeded: {counters.HealthCheckSuccess}");
         Console.WriteLine($"Healthcheck failed: {counters.HealthCheckFail}");
+        Console.WriteLine($"Register failed: {counters.RegisterFail}");
+        Console.WriteLine($"Message attempted: {counters.MessageAttempted}");
+        Console.WriteLine($"Message succeeded: {counters.MessageSuccess}");
+        Console.WriteLine($"Message failed: {counters.MessageFail}");
         Console.WriteLine($"Elapsed: {elapsed}");
     }
 
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: dotnet run --project SocketLoadTest -- [--clients N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--external-server] [--use-control-server]");
+            "Usage: dotnet run --project SocketLoadTest -- [--clients N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--external-server] [--use-control-server] [--message-test] [--message-rounds N]");
     }
 }
 
@@ -225,12 +334,18 @@ internal sealed class LoadTestCounters
     public int ConnectFail;
     public int HealthCheckSuccess;
     public int HealthCheckFail;
+    public int RegisterFail;
+    public int MessageAttempted;
+    public int MessageSuccess;
+    public int MessageFail;
 }
 
-internal sealed record ClientAttemptResult(TcpClient? Client)
+internal sealed record ClientAttemptResult(int ClientId, TcpClient? Client)
 {
-    public static readonly ClientAttemptResult Failed = new((TcpClient?)null);
+    public static readonly ClientAttemptResult Failed = new(0, (TcpClient?)null);
 }
+
+internal sealed record ConnectedLoadClient(int ClientId, TcpClient Client);
 
 internal sealed record LoadTestOptions(
     int Clients,
@@ -239,7 +354,9 @@ internal sealed record LoadTestOptions(
     string Host,
     int Port,
     bool ExternalServer,
-    bool UseControlServer)
+    bool UseControlServer,
+    bool MessageTest,
+    int MessageRounds)
 {
     public static bool TryParse(string[] args, out LoadTestOptions options, out string error)
     {
@@ -250,7 +367,9 @@ internal sealed record LoadTestOptions(
             Host: "127.0.0.1",
             Port: 5000,
             ExternalServer: false,
-            UseControlServer: false);
+            UseControlServer: false,
+            MessageTest: false,
+            MessageRounds: 1);
         error = string.Empty;
 
         for (int index = 0; index < args.Length; index++)
@@ -329,6 +448,25 @@ internal sealed record LoadTestOptions(
                     }
 
                     options = options with { UseControlServer = true, ExternalServer = true };
+                    break;
+
+                case "--message-test":
+                    if (value != null)
+                    {
+                        error = "--message-test does not accept a value.";
+                        return false;
+                    }
+
+                    options = options with { MessageTest = true };
+                    break;
+
+                case "--message-rounds":
+                    if (!TryReadInt(args, ref index, value, arg, 1, int.MaxValue, out int messageRounds, out error))
+                    {
+                        return false;
+                    }
+
+                    options = options with { MessageRounds = messageRounds };
                     break;
 
                 default:

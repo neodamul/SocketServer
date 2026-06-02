@@ -86,6 +86,12 @@ ControlServer route 사용:
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --host 127.0.0.1 --port 5000 --use-control-server
 ```
 
+클라이언트 간 메시지 전송 부하:
+
+```bash
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 1000 --batch-size 100 --hold-seconds 0 --port 5000 --message-test --message-rounds 1
+```
+
 ## 상세 문서
 
 - [Architecture](wiki/Architecture.md)

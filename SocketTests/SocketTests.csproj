@@ -23,6 +23,7 @@
     <ProjectReference Include="..\SocketCommon\SocketCommon.csproj" />
     <ProjectReference Include="..\SocketControl\SocketControl.csproj" />
     <ProjectReference Include="..\SocketDashboard\SocketDashboard.csproj" />
+    <ProjectReference Include="..\SocketLoadTest\SocketLoadTest.csproj" />
     <ProjectReference Include="..\SocketServer\SocketServer.csproj" />
   </ItemGroup>
 
