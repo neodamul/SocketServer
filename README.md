@@ -228,11 +228,13 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --b
 
 이 프로젝트는 다음 NuGet 오픈소스 라이브러리를 사용합니다.
 
-- `log4net` `3.3.1`: 공통 로깅
-- `Google.Protobuf` `3.20.1`: Protocol Buffers 지원
-- `Grpc.Net.Client` `2.46.0`: gRPC 클라이언트 지원
-- `Grpc.Tools` `2.46.1`: gRPC/Protobuf 빌드 도구
-- `Microsoft.NET.Test.Sdk` `17.2.0`: .NET 테스트 실행
-- `MSTest.TestAdapter` `2.2.10`: MSTest 어댑터
-- `MSTest.TestFramework` `2.2.10`: MSTest 프레임워크
-- `coverlet.collector` `3.1.2`: 테스트 커버리지 수집
+| 라이브러리 | 버전 | 용도 | 라이선스 |
+| --- | --- | --- | --- |
+| `log4net` | `3.3.1` | 공통 로깅 | Apache-2.0 |
+| `Google.Protobuf` | `3.20.1` | Protocol Buffers 지원 | BSD-3-Clause |
+| `Grpc.Net.Client` | `2.46.0` | gRPC 클라이언트 지원 | Apache-2.0 |
+| `Grpc.Tools` | `2.46.1` | gRPC/Protobuf 빌드 도구 | Apache-2.0 |
+| `Microsoft.NET.Test.Sdk` | `17.2.0` | .NET 테스트 실행 | Microsoft Software License Terms (.NET Library) |
+| `MSTest.TestAdapter` | `2.2.10` | MSTest 어댑터 | MIT |
+| `MSTest.TestFramework` | `2.2.10` | MSTest 프레임워크 | MIT |
+| `coverlet.collector` | `3.1.2` | 테스트 커버리지 수집 | MIT |
