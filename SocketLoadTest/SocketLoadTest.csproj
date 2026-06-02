@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SocketClient\SocketClient.csproj" />
+    <ProjectReference Include="..\SocketCommon\SocketCommon.csproj" />
+    <ProjectReference Include="..\SocketServer\SocketServer.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="log4net.load-test.config" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\log4net.config" Link="log4net.config" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

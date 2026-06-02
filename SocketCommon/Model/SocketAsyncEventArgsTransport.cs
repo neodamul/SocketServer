@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Buffers;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
@@ -47,7 +48,7 @@ public static class SocketAsyncEventArgsTransport
     public static async Task<string> ReceiveLineAsync(Socket socket, int maxMessageLength)
     {
         using MemoryStream stream = new();
-        byte[] buffer = new byte[BufferSize];
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
 
         try
         {
@@ -81,13 +82,22 @@ public static class SocketAsyncEventArgsTransport
             Logger.Warn("Socket line receive failed because socket is disposed.", exception);
             return null;
         }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
 
         return null;
     }
 
     public static async Task<byte[]> ReceiveExactAsync(Socket socket, int length)
     {
-        byte[] buffer = new byte[length];
+        if (length == 0)
+        {
+            return Array.Empty<byte>();
+        }
+
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(length);
         int offset = 0;
 
         try
@@ -104,7 +114,9 @@ public static class SocketAsyncEventArgsTransport
                 offset += received;
             }
 
-            return buffer;
+            byte[] result = new byte[length];
+            Buffer.BlockCopy(buffer, 0, result, 0, length);
+            return result;
         }
         catch (SocketException exception)
         {
@@ -115,6 +127,10 @@ public static class SocketAsyncEventArgsTransport
         {
             Logger.Warn("Socket receive failed because socket is disposed.", exception);
             return null;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 

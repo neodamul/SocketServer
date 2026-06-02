@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 using SocketCommon;
 using SocketCommon.Interface;
@@ -15,6 +16,8 @@ public class TcpClient : IClient, IDisposable
     protected Socket Socket = null;
 
     private bool disposedValue;
+    private CancellationTokenSource healthCheckCancellation;
+    private Task healthCheckTask;
 
     private int Id { get; set; }
     private string Name { get; set; }
@@ -105,6 +108,7 @@ public class TcpClient : IClient, IDisposable
 
     public bool Disconnect()
     {
+        this.StopHealthCheckLoop();
         if (this.Socket == null)
         {
             return true;
@@ -131,6 +135,38 @@ public class TcpClient : IClient, IDisposable
         }
 
         return true;
+    }
+
+    public bool StartHealthCheckLoop()
+    {
+        return this.StartHealthCheckLoop(TimeSpan.FromSeconds(HealthCheckProtocol.KeepAliveIntervalSeconds));
+    }
+
+    public bool StartHealthCheckLoop(TimeSpan interval)
+    {
+        if (this.Socket == null || interval <= TimeSpan.Zero)
+        {
+            return false;
+        }
+
+        if (this.healthCheckTask != null && !this.healthCheckTask.IsCompleted)
+        {
+            return true;
+        }
+
+        this.healthCheckCancellation?.Dispose();
+        this.healthCheckCancellation = new CancellationTokenSource();
+        this.healthCheckTask = this.RunHealthCheckLoopAsync(interval, this.healthCheckCancellation.Token);
+        Logger.Info($"Healthcheck loop started. clientId={this.ClientId}, intervalSeconds={interval.TotalSeconds}");
+        return true;
+    }
+
+    public void StopHealthCheckLoop()
+    {
+        this.healthCheckCancellation?.Cancel();
+        this.healthCheckCancellation?.Dispose();
+        this.healthCheckCancellation = null;
+        this.healthCheckTask = null;
     }
 
     public bool IsConnected()
@@ -224,6 +260,48 @@ public class TcpClient : IClient, IDisposable
         }
 
         return await HelloWorldProtocol.TryReceiveResponseAsync(this.Socket);
+    }
+
+    private async Task RunHealthCheckLoopAsync(TimeSpan interval, CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(interval, cancellationToken);
+                if (!await this.SendHealthCheckAsync())
+                {
+                    break;
+                }
+
+                Task<(bool Success, HealthCheckMessage Message)> receiveTask = this.TryReceiveHealthCheckAsync();
+                Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(interval, cancellationToken));
+                if (completedTask != receiveTask)
+                {
+                    break;
+                }
+
+                (bool success, HealthCheckMessage message) = await receiveTask;
+                if (!success || message.Type != HealthCheckMessageType.Pong)
+                {
+                    break;
+                }
+            }
+            catch (TaskCanceledException)
+            {
+                break;
+            }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
+        }
+
+        if (!cancellationToken.IsCancellationRequested)
+        {
+            Logger.Warn($"Healthcheck loop failed. clientId={this.ClientId}");
+            this.Disconnect();
+        }
     }
 
     public override string ToString()

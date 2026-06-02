@@ -1,5 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -12,30 +12,74 @@ using SocketCommon.Model;
 namespace SocketServer.Model;
 public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDisposable
 {
+    public const int DefaultMaxConnections = 10000;
+    public const int DefaultPendingAcceptCount = 100;
+    public const int DefaultIdleTimeoutSeconds = 90;
+    public const int DefaultIdleScanIntervalSeconds = 10;
+
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<TcpServer>();
 
-    private readonly object clientLock = new();
-    private readonly HashSet<Socket> connectedClients = new();
+    private readonly ConcurrentDictionary<long, ConnectionSession> connectedClients = new();
+    private readonly int maxConnections;
+    private readonly int pendingAcceptCount;
+    private readonly TimeSpan idleTimeout;
+    private readonly TimeSpan idleScanInterval;
     private CancellationTokenSource acceptLoopCancellation;
     private Task acceptLoopTask;
     private bool isListening;
     private DateTimeOffset? startedAt;
+    private int activeConnectionSlots;
+    private long nextConnectionId;
     private long totalAcceptedClients;
     private long totalClosedClients;
+    private long totalRejectedClients;
+    private long totalIdleTimeoutClients;
     private long totalReceivedMessages;
     private long totalSentMessages;
     private bool disposedValue;
 
-    public TcpServer() : base(0, null)
+    public TcpServer()
+        : this(0, null)
     { }
 
     public TcpServer(int id, string name)
         : base(id, name, null, Constants.LocalHostPort)
-    { }
+    {
+        this.maxConnections = DefaultMaxConnections;
+        this.pendingAcceptCount = DefaultPendingAcceptCount;
+        this.idleTimeout = TimeSpan.FromSeconds(DefaultIdleTimeoutSeconds);
+        this.idleScanInterval = TimeSpan.FromSeconds(DefaultIdleScanIntervalSeconds);
+    }
 
     public TcpServer(int id, string name, string ipAddress, int port)
         : base(id, name, ipAddress, port)
-    { }
+    {
+        this.maxConnections = DefaultMaxConnections;
+        this.pendingAcceptCount = DefaultPendingAcceptCount;
+        this.idleTimeout = TimeSpan.FromSeconds(DefaultIdleTimeoutSeconds);
+        this.idleScanInterval = TimeSpan.FromSeconds(DefaultIdleScanIntervalSeconds);
+    }
+
+    public TcpServer(
+        int id,
+        string name,
+        string ipAddress,
+        int port,
+        int maxConnections,
+        int pendingAcceptCount,
+        TimeSpan idleTimeout,
+        TimeSpan? idleScanInterval = null)
+        : base(id, name, ipAddress, port)
+    {
+        this.maxConnections = Math.Max(1, maxConnections);
+        this.pendingAcceptCount = Math.Max(1, pendingAcceptCount);
+        this.idleTimeout = idleTimeout <= TimeSpan.Zero
+            ? TimeSpan.FromSeconds(DefaultIdleTimeoutSeconds)
+            : idleTimeout;
+        this.idleScanInterval = idleScanInterval.HasValue && idleScanInterval.Value > TimeSpan.Zero
+            ? idleScanInterval.Value
+            : TimeSpan.FromSeconds(DefaultIdleScanIntervalSeconds);
+    }
 
     public bool Start()
     {
@@ -136,10 +180,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     public int GetConnectedClientCount()
     {
-        lock (this.clientLock)
-        {
-            return this.connectedClients.Count;
-        }
+        return this.connectedClients.Count;
     }
 
     public TcpServerStatus GetStatus()
@@ -153,14 +194,23 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             IpAddress = this.GetIpAddress(),
             Port = this.GetPort(),
             ConnectedClientCount = this.GetConnectedClientCount(),
+            MaxConnections = this.maxConnections,
+            PendingAcceptCount = this.pendingAcceptCount,
+            IdleTimeoutSeconds = (int)this.idleTimeout.TotalSeconds,
             TotalAcceptedClients = Interlocked.Read(ref this.totalAcceptedClients),
             TotalClosedClients = Interlocked.Read(ref this.totalClosedClients),
+            TotalRejectedClients = Interlocked.Read(ref this.totalRejectedClients),
+            TotalIdleTimeoutClients = Interlocked.Read(ref this.totalIdleTimeoutClients),
             TotalReceivedMessages = Interlocked.Read(ref this.totalReceivedMessages),
             TotalSentMessages = Interlocked.Read(ref this.totalSentMessages),
             ListenBacklog = SocketFactory.ListenBacklog,
             NoDelay = SocketFactory.NoDelay,
             MaxPayloadLength = SocketMessageFrame.MaxPayloadLength,
             SocketAsyncEventArgsAvailableCount = SocketAsyncEventArgsFactory.AvailableCount,
+            SocketAsyncEventArgsTotalCreatedCount = SocketAsyncEventArgsFactory.TotalCreatedCount,
+            SocketAsyncEventArgsInUseCount = SocketAsyncEventArgsFactory.InUseCount,
+            SocketAsyncEventArgsHighWatermarkInUseCount = SocketAsyncEventArgsFactory.HighWatermarkInUseCount,
+            SocketAsyncEventArgsGrowthCount = SocketAsyncEventArgsFactory.GrowthCount,
             StartedAt = this.startedAt,
             UpdatedAt = DateTimeOffset.UtcNow
         };
@@ -206,6 +256,18 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     private async Task RunClientAcceptLoopAsync(CancellationToken cancellationToken)
     {
+        Task[] tasks = new Task[this.pendingAcceptCount + 1];
+        for (int i = 0; i < this.pendingAcceptCount; i++)
+        {
+            tasks[i] = this.RunAcceptWorkerAsync(cancellationToken);
+        }
+
+        tasks[^1] = this.RunIdleTimeoutLoopAsync(cancellationToken);
+        await Task.WhenAll(tasks);
+    }
+
+    private async Task RunAcceptWorkerAsync(CancellationToken cancellationToken)
+    {
         while (!cancellationToken.IsCancellationRequested)
         {
             Socket client = null;
@@ -222,10 +284,20 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                     continue;
                 }
 
-                this.AddConnectedClient(client);
+                if (!this.TryAcquireConnectionSlot())
+                {
+                    Interlocked.Increment(ref this.totalRejectedClients);
+                    Logger.Warn($"Client rejected because max connections reached. remote={client.RemoteEndPoint}, maxConnections={this.maxConnections}");
+                    CloseClient(client);
+                    continue;
+                }
+
+                long connectionId = Interlocked.Increment(ref this.nextConnectionId);
+                ConnectionSession session = new(connectionId, client);
+                this.AddConnectedClient(session);
                 Interlocked.Increment(ref this.totalAcceptedClients);
-                Logger.Info($"Client accepted. remote={client.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
-                _ = this.HandleClientAsync(client, cancellationToken);
+                Logger.Debug($"Client accepted. connectionId={session.Id}, remote={session.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
+                session.HandlerTask = this.HandleClientAsync(session, cancellationToken);
             }
             catch (SocketException exception)
             {
@@ -245,20 +317,51 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         }
     }
 
-    private async Task HandleClientAsync(Socket client, CancellationToken cancellationToken)
+    private async Task RunIdleTimeoutLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(this.idleScanInterval, cancellationToken);
+            }
+            catch (TaskCanceledException)
+            {
+                break;
+            }
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            foreach (ConnectionSession session in this.connectedClients.Values)
+            {
+                if (now - session.LastReceivedAt <= this.idleTimeout)
+                {
+                    continue;
+                }
+
+                if (this.RemoveConnectedClient(session))
+                {
+                    Interlocked.Increment(ref this.totalIdleTimeoutClients);
+                    Logger.Debug($"Client closed by idle timeout. connectionId={session.Id}, remote={session.RemoteEndPoint}");
+                }
+            }
+        }
+    }
+
+    private async Task HandleClientAsync(ConnectionSession session, CancellationToken cancellationToken)
     {
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(client);
+                (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(session.Socket);
                 if (!success)
                 {
                     break;
                 }
 
+                session.MarkReceived();
                 Interlocked.Increment(ref this.totalReceivedMessages);
-                bool handled = await this.HandleClientMessageAsync(client, frame);
+                bool handled = await this.HandleClientMessageAsync(session, frame);
                 if (!handled)
                 {
                     break;
@@ -267,14 +370,11 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         }
         finally
         {
-            this.RemoveConnectedClient(client);
-            Interlocked.Increment(ref this.totalClosedClients);
-            Logger.Info($"Client closed. remote={client.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
-            CloseClient(client);
+            this.RemoveConnectedClient(session);
         }
     }
 
-    private async Task<bool> HandleClientMessageAsync(Socket client, SocketMessageFrame frame)
+    private async Task<bool> HandleClientMessageAsync(ConnectionSession session, SocketMessageFrame frame)
     {
         bool sent;
         if (HealthCheckProtocol.TryDecode(frame, out HealthCheckMessage healthCheckMessage))
@@ -284,7 +384,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 return true;
             }
 
-            sent = await HealthCheckProtocol.SendAsync(client, HealthCheckProtocol.CreatePong(healthCheckMessage.ClientId));
+            sent = await HealthCheckProtocol.SendAsync(session.Socket, HealthCheckProtocol.CreatePong(healthCheckMessage.ClientId));
             if (sent)
             {
                 Interlocked.Increment(ref this.totalSentMessages);
@@ -295,7 +395,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         if (HelloWorldProtocol.TryDecodeRequest(frame, out HelloWorldRequest helloWorldRequest))
         {
-            sent = await HelloWorldProtocol.SendAsync(client, HelloWorldProtocol.CreateResponse(helloWorldRequest.ClientId));
+            sent = await HelloWorldProtocol.SendAsync(session.Socket, HelloWorldProtocol.CreateResponse(helloWorldRequest.ClientId));
             if (sent)
             {
                 Interlocked.Increment(ref this.totalSentMessages);
@@ -307,35 +407,45 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         return false;
     }
 
-    private void AddConnectedClient(Socket client)
+    private bool TryAcquireConnectionSlot()
     {
-        lock (this.clientLock)
+        int current = Interlocked.Increment(ref this.activeConnectionSlots);
+        if (current <= this.maxConnections)
         {
-            this.connectedClients.Add(client);
+            return true;
         }
+
+        Interlocked.Decrement(ref this.activeConnectionSlots);
+        return false;
     }
 
-    private void RemoveConnectedClient(Socket client)
+    private void AddConnectedClient(ConnectionSession session)
     {
-        lock (this.clientLock)
+        this.connectedClients[session.Id] = session;
+    }
+
+    private bool RemoveConnectedClient(ConnectionSession session)
+    {
+        if (!this.connectedClients.TryRemove(session.Id, out ConnectionSession removedSession))
         {
-            this.connectedClients.Remove(client);
+            return false;
         }
+
+        if (removedSession.Close())
+        {
+            Interlocked.Decrement(ref this.activeConnectionSlots);
+            Interlocked.Increment(ref this.totalClosedClients);
+            Logger.Debug($"Client closed. connectionId={removedSession.Id}, remote={removedSession.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
+        }
+
+        return true;
     }
 
     private void CloseConnectedClients()
     {
-        Socket[] clients;
-        lock (this.clientLock)
+        foreach (ConnectionSession session in this.connectedClients.Values)
         {
-            clients = new Socket[this.connectedClients.Count];
-            this.connectedClients.CopyTo(clients);
-            this.connectedClients.Clear();
-        }
-
-        foreach (Socket client in clients)
-        {
-            CloseClient(client);
+            this.RemoveConnectedClient(session);
         }
     }
 

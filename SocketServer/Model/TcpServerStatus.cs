@@ -18,9 +18,19 @@ public class TcpServerStatus
 
     public int ConnectedClientCount { get; init; }
 
+    public int MaxConnections { get; init; }
+
+    public int PendingAcceptCount { get; init; }
+
+    public int IdleTimeoutSeconds { get; init; }
+
     public long TotalAcceptedClients { get; init; }
 
     public long TotalClosedClients { get; init; }
+
+    public long TotalRejectedClients { get; init; }
+
+    public long TotalIdleTimeoutClients { get; init; }
 
     public long TotalReceivedMessages { get; init; }
 
@@ -33,6 +43,14 @@ public class TcpServerStatus
     public int MaxPayloadLength { get; init; }
 
     public int SocketAsyncEventArgsAvailableCount { get; init; }
+
+    public int SocketAsyncEventArgsTotalCreatedCount { get; init; }
+
+    public int SocketAsyncEventArgsInUseCount { get; init; }
+
+    public int SocketAsyncEventArgsHighWatermarkInUseCount { get; init; }
+
+    public int SocketAsyncEventArgsGrowthCount { get; init; }
 
     public DateTimeOffset? StartedAt { get; init; }
 

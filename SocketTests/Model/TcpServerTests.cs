@@ -1,5 +1,7 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using SocketClient.Model;
@@ -80,9 +82,17 @@ public class TcpServerTests
             Assert.IsTrue(status.IsAcceptLoopRunning);
             Assert.AreEqual("127.0.0.1", status.IpAddress);
             Assert.AreEqual(TestPort, status.Port);
+            Assert.AreEqual(TcpServer.DefaultMaxConnections, status.MaxConnections);
+            Assert.AreEqual(TcpServer.DefaultPendingAcceptCount, status.PendingAcceptCount);
+            Assert.AreEqual(TcpServer.DefaultIdleTimeoutSeconds, status.IdleTimeoutSeconds);
+            Assert.AreEqual(0, status.TotalRejectedClients);
+            Assert.AreEqual(0, status.TotalIdleTimeoutClients);
             Assert.AreEqual(SocketFactory.ListenBacklog, status.ListenBacklog);
             Assert.AreEqual(SocketFactory.NoDelay, status.NoDelay);
             Assert.AreEqual(SocketMessageFrame.MaxPayloadLength, status.MaxPayloadLength);
+            Assert.IsTrue(status.SocketAsyncEventArgsTotalCreatedCount >= SocketAsyncEventArgsFactory.InitialPoolSize);
+            Assert.IsTrue(status.SocketAsyncEventArgsHighWatermarkInUseCount >= 0);
+            Assert.IsTrue(status.SocketAsyncEventArgsGrowthCount >= 1);
             Assert.IsNotNull(status.StartedAt);
         }
         finally
@@ -114,13 +124,11 @@ public class TcpServerTests
     [TestMethod()]
     public async Task ClientAcceptLoopHandlesMultipleClientsTest()
     {
+        const int clientCount = 25;
         TcpServer server = new(1, "testServer", "127.0.0.1", TestPort);
-        List<TcpClient> clients = new()
-        {
-            new TcpClient(1, "testClient1", "127.0.0.1", TestPort),
-            new TcpClient(2, "testClient2", "127.0.0.1", TestPort),
-            new TcpClient(3, "testClient3", "127.0.0.1", TestPort),
-        };
+        List<TcpClient> clients = Enumerable.Range(1, clientCount)
+            .Select(index => new TcpClient(index, $"testClient{index}", "127.0.0.1", TestPort))
+            .ToList();
 
         try
         {
@@ -134,7 +142,11 @@ public class TcpServerTests
                 clientTasks.Add(SendHealthCheckAndHelloWorldAsync(client));
             }
 
-            await Task.WhenAll(clientTasks);
+            await WithTimeoutAsync(Task.WhenAll(clientTasks));
+            TcpServerStatus status = await WaitForStatusAsync(server, s => s.TotalReceivedMessages >= clientCount * 2);
+            Assert.AreEqual(clientCount, status.TotalAcceptedClients);
+            Assert.AreEqual(clientCount * 2, status.TotalReceivedMessages);
+            Assert.AreEqual(clientCount * 2, status.TotalSentMessages);
         }
         finally
         {
@@ -143,6 +155,111 @@ public class TcpServerTests
                 client.Disconnect();
             }
 
+            server.End();
+        }
+    }
+
+    [TestMethod()]
+    public async Task MaxConnectionLimitRejectsExtraClientsTest()
+    {
+        TcpServer server = new(
+            1,
+            "testServer",
+            "127.0.0.1",
+            TestPort,
+            maxConnections: 1,
+            pendingAcceptCount: 2,
+            idleTimeout: TimeSpan.FromSeconds(30));
+        TcpClient firstClient = new(1, "firstClient", "127.0.0.1", TestPort);
+        TcpClient secondClient = new(2, "secondClient", "127.0.0.1", TestPort);
+
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+            Assert.IsTrue(firstClient.Connect());
+            await WaitForStatusAsync(server, s => s.ConnectedClientCount == 1);
+
+            Assert.IsTrue(secondClient.Connect());
+            TcpServerStatus status = await WaitForStatusAsync(server, s => s.TotalRejectedClients >= 1);
+
+            Assert.AreEqual(1, status.ConnectedClientCount);
+            Assert.AreEqual(1, status.MaxConnections);
+            Assert.IsTrue(await firstClient.SendHealthCheckAsync());
+            (bool healthCheckReceived, HealthCheckMessage message) = await WithTimeoutAsync(firstClient.TryReceiveHealthCheckAsync());
+            Assert.IsTrue(healthCheckReceived);
+            Assert.AreEqual(HealthCheckMessageType.Pong, message.Type);
+        }
+        finally
+        {
+            firstClient.Disconnect();
+            secondClient.Disconnect();
+            server.End();
+        }
+    }
+
+    [TestMethod()]
+    public async Task IdleTimeoutClosesInactiveClientTest()
+    {
+        TcpServer server = new(
+            1,
+            "testServer",
+            "127.0.0.1",
+            TestPort,
+            maxConnections: 10,
+            pendingAcceptCount: 2,
+            idleTimeout: TimeSpan.FromMilliseconds(100),
+            idleScanInterval: TimeSpan.FromMilliseconds(50));
+        TcpClient client = new(1, "idleClient", "127.0.0.1", TestPort);
+
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+            Assert.IsTrue(client.Connect());
+
+            TcpServerStatus status = await WaitForStatusAsync(server, s => s.TotalIdleTimeoutClients >= 1);
+            Assert.AreEqual(0, status.ConnectedClientCount);
+            Assert.IsTrue(status.TotalClosedClients >= 1);
+        }
+        finally
+        {
+            client.Disconnect();
+            server.End();
+        }
+    }
+
+    [TestMethod()]
+    public async Task HealthCheckLoopKeepsConnectionAliveTest()
+    {
+        TcpServer server = new(
+            1,
+            "testServer",
+            "127.0.0.1",
+            TestPort,
+            maxConnections: 10,
+            pendingAcceptCount: 2,
+            idleTimeout: TimeSpan.FromMilliseconds(200),
+            idleScanInterval: TimeSpan.FromMilliseconds(50));
+        TcpClient client = new(1, "keepAliveClient", "127.0.0.1", TestPort);
+
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+            Assert.IsTrue(client.Connect());
+            Assert.IsTrue(client.StartHealthCheckLoop(TimeSpan.FromMilliseconds(50)));
+
+            await Task.Delay(450);
+            TcpServerStatus status = server.GetStatus();
+            Assert.AreEqual(1, status.ConnectedClientCount);
+            Assert.AreEqual(0, status.TotalIdleTimeoutClients);
+            Assert.IsTrue(status.TotalReceivedMessages >= 2);
+            Assert.IsTrue(status.TotalSentMessages >= 2);
+        }
+        finally
+        {
+            client.Disconnect();
             server.End();
         }
     }
@@ -159,5 +276,51 @@ public class TcpServerTests
         (bool responseReceived, HelloWorldResponse response) = await client.TryReceiveHelloWorldResponseAsync();
         Assert.IsTrue(responseReceived);
         Assert.AreEqual("Hello, World!", response.Message);
+    }
+
+    private static async Task<TcpServerStatus> WaitForStatusAsync(
+        TcpServer server,
+        Func<TcpServerStatus, bool> predicate,
+        int timeoutMilliseconds = 5000)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddMilliseconds(timeoutMilliseconds);
+        TcpServerStatus status;
+
+        do
+        {
+            status = server.GetStatus();
+            if (predicate(status))
+            {
+                return status;
+            }
+
+            await Task.Delay(25);
+        }
+        while (DateTimeOffset.UtcNow < deadline);
+
+        Assert.Fail("Timed out waiting for expected server status.");
+        return status;
+    }
+
+    private static async Task<T> WithTimeoutAsync<T>(Task<T> task, int timeoutMilliseconds = 5000)
+    {
+        Task completed = await Task.WhenAny(task, Task.Delay(timeoutMilliseconds));
+        if (completed != task)
+        {
+            Assert.Fail("Timed out waiting for task completion.");
+        }
+
+        return await task;
+    }
+
+    private static async Task WithTimeoutAsync(Task task, int timeoutMilliseconds = 5000)
+    {
+        Task completed = await Task.WhenAny(task, Task.Delay(timeoutMilliseconds));
+        if (completed != task)
+        {
+            Assert.Fail("Timed out waiting for task completion.");
+        }
+
+        await task;
     }
 }

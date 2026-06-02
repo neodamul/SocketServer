@@ -10,6 +10,7 @@ SocketServer.sln
 ├── SocketClient      TCP 클라이언트 라이브러리
 ├── SocketServer      TCP 서버 콘솔 프로젝트
 ├── SocketDashboard   서버 상태 API와 웹 대시보드
+├── SocketLoadTest    대량 접속 검증용 콘솔 도구
 └── SocketTests       통합 MSTest 테스트 프로젝트
 ```
 
@@ -22,6 +23,7 @@ SocketServer.sln
 - `SocketAsyncEventArgs` 기반 비동기 송수신과 객체 풀 재사용
 - 다중 클라이언트 accept loop와 연결별 메시지 처리
 - `/api/server/status` 기반 서버 상태 조회와 웹 대시보드 실시간 갱신
+- 최대 10,000개 연결 목표를 위한 연결 제한, idle timeout, 부하 테스트 도구
 - log4net 기반 공통 로깅
 
 ### 소켓 옵션과 객체 풀
@@ -37,6 +39,18 @@ SocketServer.sln
 - 프로세스 로드 시 초기 `1000`개를 생성합니다.
 - 풀이 부족하면 `100`개 단위로 추가 생성합니다.
 - accept, send, receive 작업은 풀에서 객체를 빌려 쓰고 완료 후 반환합니다.
+- 생성 수, 사용 중 수, 최고 사용량, 성장 횟수를 상태 API와 대시보드에서 확인할 수 있습니다.
+
+### 연결 처리 구조
+
+서버의 기본 연결 정책은 다음과 같습니다.
+
+- 최대 연결 수는 `10,000`입니다.
+- accept 작업은 기본 `100`개 worker로 동시에 대기합니다.
+- 연결별 상태는 `ConnectionSession`으로 관리하며, 연결 ID, 원격 주소, 접속 시각, 마지막 수신 시각을 추적합니다.
+- 제한을 초과한 연결은 즉시 닫고 rejected counter를 증가시킵니다.
+- 기본 idle timeout은 `90`초입니다. healthcheck 등 수신이 없는 연결은 idle sweep에서 닫습니다.
+- 클라이언트는 `StartHealthCheckLoop()`로 30초마다 `PING`을 보내고 `PONG OK` 응답을 받아 연결을 유지할 수 있습니다.
 
 ### 로깅
 
@@ -84,11 +98,17 @@ byte[] ping = HealthCheckProtocol.Encode(HealthCheckProtocol.CreatePing());
 bool decoded = HealthCheckProtocol.TryDecode(ping, out HealthCheckMessage message);
 ```
 
-TCP 연결에서 사용할 때:
+TCP 연결에서 한 번 보낼 때:
 
 ```csharp
 await client.SendHealthCheckAsync();
 (bool ok, HealthCheckMessage response) = await client.TryReceiveHealthCheckAsync();
+```
+
+30초 주기로 연결을 유지할 때:
+
+```csharp
+client.StartHealthCheckLoop();
 ```
 
 ### `HelloWorldProtocol`
@@ -177,17 +197,30 @@ dotnet run --project SocketDashboard/SocketDashboard.csproj
 GET /api/server/status
 ```
 
+상태 API와 대시보드는 연결 수, 최대 연결 수, 누적 accept/close/reject 수, idle timeout 종료 수, backlog, pending accept 수, 최대 payload, `SocketAsyncEventArgs` 풀 상태를 표시합니다.
+
+부하 테스트:
+
+```bash
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --port 5000
+```
+
+외부 서버를 대상으로 검증할 때:
+
+```bash
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --host 127.0.0.1 --port 5000 --external-server
+```
+
+10,000개 접속 테스트는 운영체제의 파일 디스크립터 제한, ephemeral port 범위, TCP backlog, 머신 메모리/CPU 상태의 영향을 받습니다. 기본 부하 테스트는 한 번에 10,000개를 만들지 않고 `100`개 단위 배치로 늘려갑니다.
+
 ## 테스트
 
-테스트는 단일 `SocketTests` 프로젝트에 통합되어 있으며 MSTest를 사용합니다. `SocketCommon`, `SocketClient`, `SocketServer`, `SocketDashboard` 프로젝트를 참조해 공통 프로토콜, 클라이언트/서버 송수신, 대시보드 상태 서비스를 함께 검증합니다.
+테스트는 단일 `SocketTests` 프로젝트에 통합되어 있으며 MSTest를 사용합니다. `SocketCommon`, `SocketClient`, `SocketServer`, `SocketDashboard` 프로젝트를 참조해 공통 프로토콜, 클라이언트/서버 송수신, 대시보드 상태 서비스를 함께 검증합니다. 대량 접속 검증은 별도 `SocketLoadTest` 프로젝트로 실행합니다.
 
 테스트 TCP 포트는 `5001`을 사용합니다.
 
-healthcheck를 30초마다 자동 전송하는 주기 실행 스케줄러는 아직 구현되어 있지 않습니다.
-
 ## 향후 개선 방향
 
-- healthcheck 30초 주기 실행 스케줄러 추가
 - 송수신 프로토콜과 예외 처리 정책 정의
 - HelloWorld 외 추가 요청/응답 프로토콜 확장
 
