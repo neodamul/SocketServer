@@ -135,49 +135,79 @@ public class ControlServer : IDisposable
     private async Task HandleConnectionAsync(Socket socket)
     {
         using Socket acceptedSocket = socket;
-        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(acceptedSocket);
-        if (!success)
+        string serverInstanceId = "";
+        try
         {
-            return;
-        }
+            while (true)
+            {
+                (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(acceptedSocket);
+                if (!success)
+                {
+                    break;
+                }
 
-        switch (frame.MessageId)
+                switch (frame.MessageId)
+                {
+                    case ControlMessageIds.ServerRegister:
+                        serverInstanceId = GetServerRegisterInstanceId(frame);
+                        await HandleServerRegisterAsync(acceptedSocket, frame);
+                        break;
+                    case ControlMessageIds.ServerHeartbeat:
+                        serverInstanceId = GetServerHeartbeatInstanceId(frame, serverInstanceId);
+                        await HandleServerHeartbeatAsync(acceptedSocket, frame);
+                        break;
+                    case ControlMessageIds.SessionOpened:
+                    case ControlMessageIds.SessionUpdated:
+                    case ControlMessageIds.SessionClosed:
+                        await HandleSessionEventAsync(acceptedSocket, frame);
+                        break;
+                    case ControlMessageIds.RouteRequest:
+                        await HandleRouteRequestAsync(acceptedSocket, frame);
+                        break;
+                    case ControlMessageIds.ClientLocationRequest:
+                        await HandleClientLocationRequestAsync(acceptedSocket, frame);
+                        break;
+                    case ControlMessageIds.ServerRegistryUpsert:
+                        await HandlePeerServerUpsertAsync(acceptedSocket, frame);
+                        break;
+                    case ControlMessageIds.SessionSummaryUpsert:
+                        await HandlePeerSessionUpsertAsync(acceptedSocket, frame);
+                        break;
+                    case ControlMessageIds.SessionSummaryRemove:
+                        await HandlePeerSessionRemoveAsync(acceptedSocket, frame);
+                        break;
+                    case ControlMessageIds.ClientLocationUpsert:
+                        await HandlePeerClientLocationUpsertAsync(acceptedSocket, frame);
+                        break;
+                    case ControlMessageIds.ClientLocationRemove:
+                        await HandlePeerClientLocationRemoveAsync(acceptedSocket, frame);
+                        break;
+                    case ControlMessageIds.RouteReservationUpsert:
+                        await HandlePeerReservationUpsertAsync(acceptedSocket, frame);
+                        break;
+                    case ControlMessageIds.RouteReservationRelease:
+                        await HandlePeerReservationReleaseAsync(acceptedSocket, frame);
+                        break;
+                    case ControlMessageIds.RegistrySnapshotRequest:
+                        await HandleRegistrySnapshotRequestAsync(acceptedSocket, frame);
+                        break;
+                    default:
+                        Logger.Warn($"ControlServer received unknown message. messageId={frame.MessageId}");
+                        break;
+                }
+            }
+        }
+        finally
         {
-            case ControlMessageIds.ServerRegister:
-                await HandleServerRegisterAsync(acceptedSocket, frame);
-                break;
-            case ControlMessageIds.ServerHeartbeat:
-                await HandleServerHeartbeatAsync(acceptedSocket, frame);
-                break;
-            case ControlMessageIds.SessionOpened:
-            case ControlMessageIds.SessionUpdated:
-            case ControlMessageIds.SessionClosed:
-                await HandleSessionEventAsync(acceptedSocket, frame);
-                break;
-            case ControlMessageIds.RouteRequest:
-                await HandleRouteRequestAsync(acceptedSocket, frame);
-                break;
-            case ControlMessageIds.ServerRegistryUpsert:
-                await HandlePeerServerUpsertAsync(acceptedSocket, frame);
-                break;
-            case ControlMessageIds.SessionSummaryUpsert:
-                await HandlePeerSessionUpsertAsync(acceptedSocket, frame);
-                break;
-            case ControlMessageIds.SessionSummaryRemove:
-                await HandlePeerSessionRemoveAsync(acceptedSocket, frame);
-                break;
-            case ControlMessageIds.RouteReservationUpsert:
-                await HandlePeerReservationUpsertAsync(acceptedSocket, frame);
-                break;
-            case ControlMessageIds.RouteReservationRelease:
-                await HandlePeerReservationReleaseAsync(acceptedSocket, frame);
-                break;
-            case ControlMessageIds.RegistrySnapshotRequest:
-                await HandleRegistrySnapshotRequestAsync(acceptedSocket, frame);
-                break;
-            default:
-                Logger.Warn($"ControlServer received unknown message. messageId={frame.MessageId}");
-                break;
+            if (!string.IsNullOrWhiteSpace(serverInstanceId))
+            {
+                BackendServerSnapshot? snapshot = this.registry.MarkServerDisconnected(serverInstanceId);
+                if (snapshot != null)
+                {
+                    Logger.Warn($"SocketServer control channel disconnected. instanceId={serverInstanceId}");
+                    await PublishServerSnapshotAsync(snapshot);
+                }
+            }
         }
     }
 
@@ -231,12 +261,14 @@ public class ControlServer : IDisposable
         {
             this.registry.UpsertSession(sessionEvent);
             await PublishSessionAsync(sessionEvent, ControlMessageIds.SessionSummaryUpsert);
+            await PublishClientLocationAsync(sessionEvent, ControlMessageIds.ClientLocationUpsert);
         }
         else if (frame.MessageId == ControlMessageIds.SessionUpdated)
         {
             this.registry.UpsertSession(sessionEvent);
             releasedReservation = this.registry.ReleaseReservationFor(sessionEvent.ClientId, sessionEvent.InstanceId);
             await PublishSessionAsync(sessionEvent, ControlMessageIds.SessionSummaryUpsert);
+            await PublishClientLocationAsync(sessionEvent, ControlMessageIds.ClientLocationUpsert);
             if (releasedReservation != null)
             {
                 await PublishReservationReleaseAsync(releasedReservation);
@@ -246,6 +278,7 @@ public class ControlServer : IDisposable
         {
             this.registry.RemoveSession(sessionEvent);
             await PublishSessionAsync(sessionEvent, ControlMessageIds.SessionSummaryRemove);
+            await PublishClientLocationAsync(sessionEvent, ControlMessageIds.ClientLocationRemove);
         }
 
         await ControlProtocol.SendAsync(socket, frame.ClientId, ControlMessageIds.ServerHeartbeatAck, new ServerHeartbeatAck
@@ -256,6 +289,21 @@ public class ControlServer : IDisposable
             InstanceId = sessionEvent.InstanceId,
             ReceivedAt = DateTimeOffset.UtcNow
         });
+    }
+
+    private async Task HandleClientLocationRequestAsync(Socket socket, SocketMessageFrame frame)
+    {
+        if (!ControlProtocol.TryDecode(frame, ControlMessageIds.ClientLocationRequest, out ClientLocationRequest request))
+        {
+            return;
+        }
+
+        ClientLocationResponse response = this.registry.ResolveClientLocation(request);
+        await ControlProtocol.SendAsync(
+            socket,
+            request.SourceClientId,
+            response.Success ? ControlMessageIds.ClientLocationResponse : ControlMessageIds.ClientLocationNotFound,
+            response);
     }
 
     private async Task HandleRouteRequestAsync(Socket socket, SocketMessageFrame frame)
@@ -317,6 +365,26 @@ public class ControlServer : IDisposable
         await SendPeerAckAsync(socket, frame.ClientId);
     }
 
+    private async Task HandlePeerClientLocationUpsertAsync(Socket socket, SocketMessageFrame frame)
+    {
+        if (ControlProtocol.TryDecode(frame, ControlMessageIds.ClientLocationUpsert, out ClientLocationMessage location))
+        {
+            this.registry.UpsertClientLocation(location);
+        }
+
+        await SendPeerAckAsync(socket, frame.ClientId);
+    }
+
+    private async Task HandlePeerClientLocationRemoveAsync(Socket socket, SocketMessageFrame frame)
+    {
+        if (ControlProtocol.TryDecode(frame, ControlMessageIds.ClientLocationRemove, out ClientLocationMessage location))
+        {
+            this.registry.RemoveClientLocation(location);
+        }
+
+        await SendPeerAckAsync(socket, frame.ClientId);
+    }
+
     private async Task HandlePeerReservationUpsertAsync(Socket socket, SocketMessageFrame frame)
     {
         if (ControlProtocol.TryDecode(frame, ControlMessageIds.RouteReservationUpsert, out RouteReservationMessage reservation))
@@ -354,6 +422,34 @@ public class ControlServer : IDisposable
     private async Task PublishSessionAsync(SessionEventMessage session, uint messageId)
     {
         await PublishAsync(messageId, session);
+    }
+
+    private async Task PublishClientLocationAsync(SessionEventMessage session, uint messageId)
+    {
+        if (session.ClientId == 0)
+        {
+            return;
+        }
+
+        BackendServerSnapshot? server = this.registry.Servers.FirstOrDefault(item => item.InstanceId == session.InstanceId);
+        if (server == null)
+        {
+            return;
+        }
+
+        await PublishAsync(messageId, new ClientLocationMessage
+        {
+            ClusterId = session.ClusterId,
+            ClientId = session.ClientId,
+            ServerId = session.ServerId,
+            InstanceId = session.InstanceId,
+            Host = server.Host,
+            Port = server.Port,
+            SessionId = session.SessionId,
+            State = session.State,
+            Version = session.Version,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
     }
 
     private async Task PublishReservationAsync(RouteReservationMessage reservation)
@@ -395,6 +491,20 @@ public class ControlServer : IDisposable
             controlNodeId = this.config.NodeId,
             receivedAt = DateTimeOffset.UtcNow
         });
+    }
+
+    private static string GetServerRegisterInstanceId(SocketMessageFrame frame)
+    {
+        return ControlProtocol.TryDecode(frame, ControlMessageIds.ServerRegister, out ServerRegisterRequest request)
+            ? request.InstanceId
+            : "";
+    }
+
+    private static string GetServerHeartbeatInstanceId(SocketMessageFrame frame, string fallback)
+    {
+        return ControlProtocol.TryDecode(frame, ControlMessageIds.ServerHeartbeat, out ServerHeartbeatRequest request)
+            ? request.InstanceId
+            : fallback;
     }
 
     public void Dispose()

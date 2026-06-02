@@ -33,6 +33,46 @@ payload 최대 길이는 4KB입니다.
 
 `HelloWorldResponse` payload는 기본 `Hello, World!`입니다.
 
+## Client Message
+
+클라이언트 간 메시지는 SocketServer를 통해 전달됩니다. 같은 서버에 target client가 있으면 로컬 delivery로 처리하고, 다른 서버에 있으면 서버 간 relay를 사용합니다.
+
+```text
+2000 CLIENT_REGISTER
+2001 CLIENT_REGISTER_ACK
+2002 CLIENT_MESSAGE_SEND
+2003 CLIENT_MESSAGE_DELIVER
+2004 CLIENT_MESSAGE_ACK
+2005 CLIENT_MESSAGE_ERROR
+```
+
+`CLIENT_MESSAGE_SEND`:
+
+```json
+{
+  "messageToken": "f1f0c3...",
+  "sourceClientId": 10001,
+  "targetClientId": 10002,
+  "content": "hello",
+  "ttlSeconds": 10,
+  "createdAt": "2026-06-03T00:00:00Z"
+}
+```
+
+`CLIENT_MESSAGE_DELIVER`는 source/target/client content를 target client에 전달합니다. Source client는 delivery 결과를 `CLIENT_MESSAGE_ACK` 또는 `CLIENT_MESSAGE_ERROR`로 받습니다.
+
+## Server Relay
+
+SocketServer 간 메시지 전달은 서버 listen endpoint로 직접 TCP 연결해 처리합니다.
+
+```text
+2100 SERVER_RELAY_MESSAGE
+2101 SERVER_RELAY_ACK
+2102 SERVER_RELAY_ERROR
+```
+
+Source 서버는 ControlServer에서 target client 위치를 조회한 뒤 target 서버로 `SERVER_RELAY_MESSAGE`를 보냅니다. Target 서버는 target client가 로컬에 연결되어 있으면 `CLIENT_MESSAGE_DELIVER`를 전송하고 relay ack를 반환합니다.
+
 ## Control Plane
 
 ControlServer, SocketServer, SocketClient는 common frame 위에 JSON payload를 사용합니다.
@@ -56,6 +96,9 @@ Client-Control:
 1200 ROUTE_REQUEST
 1201 ROUTE_RESPONSE
 1202 ROUTE_RESOLVE_FAILED
+1210 CLIENT_LOCATION_REQUEST
+1211 CLIENT_LOCATION_RESPONSE
+1212 CLIENT_LOCATION_NOT_FOUND
 ```
 
 Control-Control:
@@ -68,6 +111,8 @@ Control-Control:
 1411 SERVER_REGISTRY_REMOVE
 1420 SESSION_SUMMARY_UPSERT
 1421 SESSION_SUMMARY_REMOVE
+1422 CLIENT_LOCATION_UPSERT
+1423 CLIENT_LOCATION_REMOVE
 1430 ROUTE_RESERVATION_UPSERT
 1431 ROUTE_RESERVATION_RELEASE
 1440 REGISTRY_SNAPSHOT_REQUEST

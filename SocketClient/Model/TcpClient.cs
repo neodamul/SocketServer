@@ -289,6 +289,108 @@ public class TcpClient : IClient, IDisposable
         return sent;
     }
 
+    public async Task<bool> RegisterClientAsync()
+    {
+        if (this.Socket == null)
+        {
+            Logger.Warn($"Client register skipped because socket is not initialized. clientId={this.ClientId}");
+            return false;
+        }
+
+        if (!await ClientMessageProtocol.SendRegisterAsync(this.Socket, this.ClientId))
+        {
+            return false;
+        }
+
+        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Socket);
+        return success &&
+            ClientMessageProtocol.TryDecodeRegisterAck(frame, out ClientRegisterAck ack) &&
+            ack.Success;
+    }
+
+    public async Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> SendClientMessageAsync(
+        uint targetClientId,
+        string content,
+        int ttlSeconds = 10)
+    {
+        if (this.Socket == null)
+        {
+            Logger.Warn($"Client message send skipped because socket is not initialized. clientId={this.ClientId}");
+            return (false, null, new ClientMessageError
+            {
+                SourceClientId = this.ClientId,
+                TargetClientId = targetClientId,
+                ErrorCode = "SocketNotInitialized",
+                ErrorMessage = "Client socket is not initialized."
+            });
+        }
+
+        ClientMessageSendRequest request = ClientMessageProtocol.CreateSendRequest(
+            this.ClientId,
+            targetClientId,
+            content,
+            ttlSeconds: ttlSeconds);
+        if (!await ClientMessageProtocol.SendClientMessageAsync(this.Socket, request))
+        {
+            return (false, null, new ClientMessageError
+            {
+                MessageToken = request.MessageToken,
+                SourceClientId = request.SourceClientId,
+                TargetClientId = request.TargetClientId,
+                ErrorCode = "SendFailed",
+                ErrorMessage = "Client message send failed."
+            });
+        }
+
+        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Socket);
+        if (!success)
+        {
+            return (false, null, new ClientMessageError
+            {
+                MessageToken = request.MessageToken,
+                SourceClientId = request.SourceClientId,
+                TargetClientId = request.TargetClientId,
+                ErrorCode = "ResponseNotReceived",
+                ErrorMessage = "Client message response was not received."
+            });
+        }
+
+        if (ClientMessageProtocol.TryDecodeAck(frame, out ClientMessageAck ack))
+        {
+            return (ack.Delivered, ack, null);
+        }
+
+        if (ClientMessageProtocol.TryDecodeError(frame, out ClientMessageError error))
+        {
+            return (false, null, error);
+        }
+
+        return (false, null, new ClientMessageError
+        {
+            MessageToken = request.MessageToken,
+            SourceClientId = request.SourceClientId,
+            TargetClientId = request.TargetClientId,
+            ErrorCode = "InvalidResponse",
+            ErrorMessage = "Client message response was invalid."
+        });
+    }
+
+    public async Task<(bool Success, ClientMessageDelivery Delivery)> TryReceiveClientMessageAsync()
+    {
+        if (this.Socket == null)
+        {
+            return (false, null);
+        }
+
+        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Socket);
+        if (!success || !ClientMessageProtocol.TryDecodeDelivery(frame, out ClientMessageDelivery delivery))
+        {
+            return (false, null);
+        }
+
+        return (true, delivery);
+    }
+
     public bool TryReceiveHelloWorldResponse(out HelloWorldResponse response)
     {
         (bool success, HelloWorldResponse receivedResponse) = TryReceiveHelloWorldResponseAsync().GetAwaiter().GetResult();

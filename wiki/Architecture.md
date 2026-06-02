@@ -12,6 +12,17 @@ Client -> SocketServer        direct TCP connection
 
 ControlServer는 TCP payload를 프록시하지 않습니다. 실제 장기 연결은 클라이언트와 SocketServer가 직접 유지합니다.
 
+클라이언트 간 메시지 전송도 ControlServer가 payload를 프록시하지 않습니다. ControlServer는 target client 위치만 알려주고, 실제 payload는 SocketServer 간 relay로 이동합니다.
+
+```text
+SourceClient -> SourceServer       CLIENT_MESSAGE_SEND
+SourceServer -> ControlServer      CLIENT_LOCATION_REQUEST
+SourceServer <- ControlServer      CLIENT_LOCATION_RESPONSE(target server)
+SourceServer -> TargetServer       SERVER_RELAY_MESSAGE
+TargetServer -> TargetClient       CLIENT_MESSAGE_DELIVER
+SourceServer -> SourceClient       CLIENT_MESSAGE_ACK
+```
+
 ## Projects
 
 ```text
@@ -31,6 +42,9 @@ ControlServer 역할:
 - SocketServer `SERVER_REGISTER` 수신
 - SocketServer `SERVER_HEARTBEAT` 수신
 - session opened/updated/closed event 수신
+- client location upsert/remove 수신
+- client location request 처리
+- SocketServer control channel 단절 감지
 - 서버별 max/current/reserved/available 연결 수 관리
 - 서버별 CPU/MEM/STORAGE 사용률 저장
 - 클라이언트 `ROUTE_REQUEST` 처리
@@ -51,6 +65,10 @@ availableConnections = maxConnections - currentConnections - reservedConnections
 ## SocketServer
 
 SocketServer는 설정된 port range에서 사용 가능한 포트를 찾아 바인딩합니다. 바인딩 후 ControlServer에 등록하고, 주기적으로 heartbeat를 전송합니다.
+
+SocketServer는 ControlServer와 persistent control channel을 유지합니다. 이 연결이 끊기면 ControlServer는 해당 서버를 즉시 `Unhealthy`로 표시하고 신규 route 및 client message location 후보에서 제외합니다. SocketServer가 재연결하면 register, heartbeat, session update로 상태를 다시 보정합니다.
+
+클라이언트가 `CLIENT_REGISTER` 또는 다른 메시지를 보내면 SocketServer는 `clientId -> session` 인덱스를 갱신하고 ControlServer에 session/client location을 전파합니다. 연결 종료, read 실패, idle timeout, delivery send 실패는 session close로 정규화되어 location 제거 이벤트로 이어집니다.
 
 서버 기본 정책:
 

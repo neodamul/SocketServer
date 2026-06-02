@@ -11,7 +11,8 @@ public class BackendServerRegistry
 {
     private readonly ConcurrentDictionary<string, BackendServerSnapshot> servers = new();
     private readonly ConcurrentDictionary<string, RouteReservationMessage> reservations = new();
-    private readonly ConcurrentDictionary<long, SessionEventMessage> sessions = new();
+    private readonly ConcurrentDictionary<string, SessionEventMessage> sessions = new();
+    private readonly ConcurrentDictionary<uint, ClientLocationMessage> clientLocations = new();
     private readonly TimeSpan heartbeatTimeout;
     private long version;
 
@@ -32,6 +33,8 @@ public class BackendServerRegistry
     public IReadOnlyCollection<RouteReservationMessage> Reservations => this.reservations.Values.ToArray();
 
     public IReadOnlyCollection<SessionEventMessage> Sessions => this.sessions.Values.ToArray();
+
+    public IReadOnlyCollection<ClientLocationMessage> ClientLocations => this.clientLocations.Values.ToArray();
 
     public BackendServerSnapshot Upsert(ServerRegisterRequest request, string controlNodeId)
     {
@@ -223,12 +226,147 @@ public class BackendServerRegistry
 
     public void UpsertSession(SessionEventMessage session)
     {
-        this.sessions[session.SessionId] = session;
+        this.sessions[CreateSessionKey(session)] = session;
+        if (session.ClientId == 0 || !this.servers.TryGetValue(session.InstanceId, out BackendServerSnapshot? server))
+        {
+            return;
+        }
+
+        UpsertClientLocation(new ClientLocationMessage
+        {
+            ClusterId = session.ClusterId,
+            ClientId = session.ClientId,
+            ServerId = session.ServerId,
+            InstanceId = session.InstanceId,
+            Host = server.Host,
+            Port = server.Port,
+            SessionId = session.SessionId,
+            State = session.State,
+            Version = session.Version,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
     }
 
     public void RemoveSession(SessionEventMessage session)
     {
-        this.sessions.TryRemove(session.SessionId, out _);
+        this.sessions.TryRemove(CreateSessionKey(session), out _);
+        if (session.ClientId > 0)
+        {
+            RemoveClientLocation(session);
+        }
+    }
+
+    public void UpsertClientLocation(ClientLocationMessage location)
+    {
+        if (location.ClientId == 0)
+        {
+            return;
+        }
+
+        this.clientLocations.AddOrUpdate(
+            location.ClientId,
+            location,
+            (_, existing) => IsNewer(location, existing) ? location : existing);
+    }
+
+    public void RemoveClientLocation(SessionEventMessage session)
+    {
+        if (session.ClientId == 0)
+        {
+            return;
+        }
+
+        if (!this.clientLocations.TryGetValue(session.ClientId, out ClientLocationMessage? existing))
+        {
+            return;
+        }
+
+        if (existing.InstanceId == session.InstanceId &&
+            existing.SessionId == session.SessionId &&
+            session.Version >= existing.Version)
+        {
+            this.clientLocations.TryRemove(session.ClientId, out _);
+        }
+    }
+
+    public void RemoveClientLocation(ClientLocationMessage location)
+    {
+        if (location.ClientId == 0)
+        {
+            return;
+        }
+
+        if (!this.clientLocations.TryGetValue(location.ClientId, out ClientLocationMessage? existing))
+        {
+            return;
+        }
+
+        if (existing.InstanceId == location.InstanceId &&
+            existing.SessionId == location.SessionId &&
+            location.Version >= existing.Version)
+        {
+            this.clientLocations.TryRemove(location.ClientId, out _);
+        }
+    }
+
+    public ClientLocationResponse ResolveClientLocation(ClientLocationRequest request)
+    {
+        if (!this.clientLocations.TryGetValue(request.TargetClientId, out ClientLocationMessage? location) ||
+            !this.servers.TryGetValue(location.InstanceId, out BackendServerSnapshot? server) ||
+            server.Health != ServerHealthState.Healthy ||
+            IsHeartbeatExpired(server))
+        {
+            return new ClientLocationResponse
+            {
+                Success = false,
+                TargetClientId = request.TargetClientId,
+                ErrorMessage = "Target client is not connected to an available SocketServer."
+            };
+        }
+
+        return new ClientLocationResponse
+        {
+            Success = true,
+            TargetClientId = request.TargetClientId,
+            ServerId = location.ServerId,
+            InstanceId = location.InstanceId,
+            Host = location.Host,
+            Port = location.Port,
+            SessionId = location.SessionId,
+            State = location.State,
+            UpdatedAt = location.UpdatedAt
+        };
+    }
+
+    public BackendServerSnapshot? MarkServerDisconnected(string instanceId)
+    {
+        if (!this.servers.TryGetValue(instanceId, out BackendServerSnapshot? server))
+        {
+            return null;
+        }
+
+        server.Health = ServerHealthState.Unhealthy;
+        server.CurrentConnections = 0;
+        server.ReservedConnections = 0;
+        server.AvailableConnections = 0;
+        server.UpdatedAt = DateTimeOffset.UtcNow;
+        server.LastHeartbeatAt = DateTimeOffset.UtcNow - this.heartbeatTimeout - TimeSpan.FromSeconds(1);
+        server.Version = Interlocked.Increment(ref this.version);
+
+        foreach (SessionEventMessage session in this.sessions.Values.Where(item => item.InstanceId == instanceId))
+        {
+            session.State = "ServerDisconnected";
+            session.Version = Math.Max(session.Version, server.Version);
+        }
+
+        foreach (ClientLocationMessage location in this.clientLocations.Values.Where(item => item.InstanceId == instanceId))
+        {
+            location.State = "ServerDisconnected";
+            location.Version = Math.Max(location.Version, server.Version);
+            location.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+
+        return server;
     }
 
     public ClusterStatusSnapshot GetStatus()
@@ -288,6 +426,17 @@ public class BackendServerRegistry
         snapshot.AvailableConnections = Math.Max(
             0,
             snapshot.MaxConnections - snapshot.CurrentConnections - snapshot.ReservedConnections);
+    }
+
+    private static bool IsNewer(ClientLocationMessage candidate, ClientLocationMessage existing)
+    {
+        return candidate.Version > existing.Version ||
+            (candidate.Version == existing.Version && candidate.UpdatedAt >= existing.UpdatedAt);
+    }
+
+    private static string CreateSessionKey(SessionEventMessage session)
+    {
+        return $"{session.InstanceId}:{session.SessionId}";
     }
 }
 

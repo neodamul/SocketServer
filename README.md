@@ -19,9 +19,11 @@ SocketServer.sln
 
 - 12바이트 헤더 기반 메시지 프레임과 4KB payload 제한
 - healthcheck, HelloWorld, ControlServer route 프로토콜
+- 클라이언트 간 메시지 전송과 SocketServer 간 relay
 - `SocketAsyncEventArgs` 기반 비동기 송수신과 객체 풀
 - SocketServer port range 바인딩과 서버별 최대/현재/접속가능 수 관리
 - ControlServer 브로커 기반 서버 등록, heartbeat, route 응답
+- ControlServer client location 조회와 서버-control 연결 단절 감지
 - 서버별 CPU/MEM/STORAGE 사용률 수집 및 대시보드 표시
 - 프로젝트별 log4net 로깅 설정
 

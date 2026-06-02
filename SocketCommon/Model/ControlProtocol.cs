@@ -19,6 +19,9 @@ public static class ControlMessageIds
     public const uint RouteRequest = 1200;
     public const uint RouteResponse = 1201;
     public const uint RouteResolveFailed = 1202;
+    public const uint ClientLocationRequest = 1210;
+    public const uint ClientLocationResponse = 1211;
+    public const uint ClientLocationNotFound = 1212;
     public const uint ControlRegister = 1400;
     public const uint ControlRegisterAck = 1401;
     public const uint ControlHeartbeat = 1402;
@@ -26,6 +29,8 @@ public static class ControlMessageIds
     public const uint ServerRegistryRemove = 1411;
     public const uint SessionSummaryUpsert = 1420;
     public const uint SessionSummaryRemove = 1421;
+    public const uint ClientLocationUpsert = 1422;
+    public const uint ClientLocationRemove = 1423;
     public const uint RouteReservationUpsert = 1430;
     public const uint RouteReservationRelease = 1431;
     public const uint RegistrySnapshotRequest = 1440;
@@ -190,6 +195,36 @@ public class RouteResponse
     public string ErrorMessage { get; set; } = "";
 }
 
+public class ClientLocationRequest
+{
+    public uint SourceClientId { get; set; }
+
+    public uint TargetClientId { get; set; }
+}
+
+public class ClientLocationResponse
+{
+    public bool Success { get; set; }
+
+    public uint TargetClientId { get; set; }
+
+    public int ServerId { get; set; }
+
+    public string InstanceId { get; set; } = "";
+
+    public string Host { get; set; } = "";
+
+    public int Port { get; set; }
+
+    public long SessionId { get; set; }
+
+    public string State { get; set; } = "";
+
+    public string ErrorMessage { get; set; } = "";
+
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
 public class BackendServerSnapshot
 {
     public string ClusterId { get; set; } = "";
@@ -244,6 +279,29 @@ public class RouteReservationMessage
     public DateTimeOffset ExpiresAt { get; set; }
 
     public string SourceControlNodeId { get; set; } = "";
+}
+
+public class ClientLocationMessage
+{
+    public string ClusterId { get; set; } = "";
+
+    public uint ClientId { get; set; }
+
+    public int ServerId { get; set; }
+
+    public string InstanceId { get; set; } = "";
+
+    public string Host { get; set; } = "";
+
+    public int Port { get; set; }
+
+    public long SessionId { get; set; }
+
+    public string State { get; set; } = "";
+
+    public long Version { get; set; }
+
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 public static class ControlProtocol

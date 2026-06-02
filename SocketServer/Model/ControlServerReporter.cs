@@ -21,6 +21,7 @@ public class ControlServerReporter : IDisposable
     private readonly int portRangeStart;
     private readonly int portRangeEnd;
     private readonly ResourceUsageProvider resourceUsageProvider = new();
+    private readonly IReadOnlyCollection<ControlEndpointConnection> connections;
     private CancellationTokenSource cancellation;
     private Task heartbeatTask;
     private bool disposedValue;
@@ -37,6 +38,8 @@ public class ControlServerReporter : IDisposable
         this.clusterId = string.IsNullOrWhiteSpace(clusterId) ? "socket-cluster-1" : clusterId;
         this.portRangeStart = portRangeStart;
         this.portRangeEnd = portRangeEnd;
+        this.connections = CreateConnections(controlServers);
+        this.server.ConfigureControlRouting(this.controlServers, this.clusterId);
         this.server.SessionOpenedAsync += this.SendSessionOpenedAsync;
         this.server.SessionUpdatedAsync += this.SendSessionUpdatedAsync;
         this.server.SessionClosedAsync += this.SendSessionClosedAsync;
@@ -82,6 +85,10 @@ public class ControlServerReporter : IDisposable
         this.cancellation?.Dispose();
         this.cancellation = null;
         this.heartbeatTask = null;
+        foreach (ControlEndpointConnection connection in this.connections)
+        {
+            connection.Close();
+        }
     }
 
     private async Task RunHeartbeatLoopAsync(TimeSpan interval, CancellationToken cancellationToken)
@@ -162,17 +169,19 @@ public class ControlServerReporter : IDisposable
 
     private async Task BroadcastAsync<T>(uint clientId, uint messageId, T payload)
     {
-        foreach (EndpointConfig endpoint in this.controlServers)
+        foreach (ControlEndpointConnection connection in this.connections)
         {
             try
             {
-                using Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-                await socket.ConnectAsync(IPAddress.Parse(endpoint.Host), endpoint.Port);
-                await ControlProtocol.SendAndReceiveAsync(socket, clientId, messageId, payload);
+                await connection.SendAndReceiveAsync(clientId, messageId, payload);
             }
             catch (SocketException exception)
             {
-                Logger.Warn($"ControlServer report failed. endpoint={endpoint.Host}:{endpoint.Port}, messageId={messageId}", exception);
+                Logger.Warn($"ControlServer report failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}", exception);
+            }
+            catch (ObjectDisposedException exception)
+            {
+                Logger.Warn($"ControlServer report failed because socket is disposed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}", exception);
             }
         }
     }
@@ -185,8 +194,100 @@ public class ControlServerReporter : IDisposable
             this.server.SessionOpenedAsync -= this.SendSessionOpenedAsync;
             this.server.SessionUpdatedAsync -= this.SendSessionUpdatedAsync;
             this.server.SessionClosedAsync -= this.SendSessionClosedAsync;
+            foreach (ControlEndpointConnection connection in this.connections)
+            {
+                connection.Dispose();
+            }
+
             this.disposedValue = true;
             GC.SuppressFinalize(this);
+        }
+    }
+
+    private static IReadOnlyCollection<ControlEndpointConnection> CreateConnections(IReadOnlyCollection<EndpointConfig> endpoints)
+    {
+        List<ControlEndpointConnection> connections = new();
+        foreach (EndpointConfig endpoint in endpoints)
+        {
+            connections.Add(new ControlEndpointConnection(endpoint));
+        }
+
+        return connections;
+    }
+
+    private sealed class ControlEndpointConnection : IDisposable
+    {
+        private readonly SemaphoreSlim sendLock = new(1, 1);
+        private Socket socket;
+
+        public ControlEndpointConnection(EndpointConfig endpoint)
+        {
+            this.Endpoint = endpoint;
+        }
+
+        public EndpointConfig Endpoint { get; }
+
+        public async Task<(bool Success, SocketMessageFrame Frame)> SendAndReceiveAsync<T>(
+            uint clientId,
+            uint messageId,
+            T payload)
+        {
+            await this.sendLock.WaitAsync();
+            try
+            {
+                await this.EnsureConnectedAsync();
+                (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
+                    this.socket,
+                    clientId,
+                    messageId,
+                    payload);
+                if (!success)
+                {
+                    this.Close();
+                }
+
+                return (success, frame);
+            }
+            finally
+            {
+                this.sendLock.Release();
+            }
+        }
+
+        public void Close()
+        {
+            try
+            {
+                this.socket?.Shutdown(SocketShutdown.Both);
+            }
+            catch (SocketException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            finally
+            {
+                this.socket?.Dispose();
+                this.socket = null;
+            }
+        }
+
+        public void Dispose()
+        {
+            this.Close();
+        }
+
+        private async Task EnsureConnectedAsync()
+        {
+            if (this.socket != null && this.socket.Connected)
+            {
+                return;
+            }
+
+            this.Close();
+            this.socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+            await this.socket.ConnectAsync(IPAddress.Parse(this.Endpoint.Host), this.Endpoint.Port);
         }
     }
 }
