@@ -4,6 +4,10 @@ namespace SocketServer.Model;
 
 public class TcpServerStatus
 {
+    public int ServerId { get; init; }
+
+    public string InstanceId { get; init; }
+
     public bool IsSocketInitialized { get; init; }
 
     public bool IsBound { get; init; }
@@ -19,6 +23,8 @@ public class TcpServerStatus
     public int ConnectedClientCount { get; init; }
 
     public int MaxConnections { get; init; }
+
+    public int AvailableConnections { get; init; }
 
     public int PendingAcceptCount { get; init; }
 

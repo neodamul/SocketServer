@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using SocketClient.Model;
@@ -94,6 +95,49 @@ public class TcpServerTests
             Assert.IsTrue(status.SocketAsyncEventArgsHighWatermarkInUseCount >= 0);
             Assert.IsTrue(status.SocketAsyncEventArgsGrowthCount >= 1);
             Assert.IsNotNull(status.StartedAt);
+        }
+        finally
+        {
+            server.End();
+        }
+    }
+
+    [TestMethod()]
+    public void BindInPortRangeSkipsUsedPortTest()
+    {
+        using System.Net.Sockets.Socket occupied = new(
+            System.Net.Sockets.AddressFamily.InterNetwork,
+            System.Net.Sockets.SocketType.Stream,
+            System.Net.Sockets.ProtocolType.Tcp);
+        occupied.Bind(new IPEndPoint(IPAddress.Loopback, TestPort));
+        occupied.Listen(1);
+
+        TcpServer server = new(1, "testServer", "127.0.0.1", 0);
+        try
+        {
+            Assert.IsTrue(server.BindInPortRange(TestPort, TestPort + 1));
+            Assert.AreEqual(TestPort + 1, server.GetPort());
+        }
+        finally
+        {
+            server.End();
+        }
+    }
+
+    [TestMethod()]
+    public void BindInPortRangeFailsWhenRangeIsExhaustedTest()
+    {
+        using System.Net.Sockets.Socket occupied = new(
+            System.Net.Sockets.AddressFamily.InterNetwork,
+            System.Net.Sockets.SocketType.Stream,
+            System.Net.Sockets.ProtocolType.Tcp);
+        occupied.Bind(new IPEndPoint(IPAddress.Loopback, TestPort));
+        occupied.Listen(1);
+
+        TcpServer server = new(1, "testServer", "127.0.0.1", 0);
+        try
+        {
+            Assert.IsFalse(server.BindInPortRange(TestPort, TestPort));
         }
         finally
         {

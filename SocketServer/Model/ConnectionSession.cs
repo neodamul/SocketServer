@@ -28,12 +28,19 @@ public class ConnectionSession
 
     public DateTimeOffset LastReceivedAt { get; private set; }
 
+    public uint ClientId { get; private set; }
+
     public Task HandlerTask { get; set; }
 
     public bool IsClosed => this.closed != 0;
 
-    public void MarkReceived()
+    public void MarkReceived(uint clientId = 0)
     {
+        if (clientId > 0)
+        {
+            this.ClientId = clientId;
+        }
+
         this.LastReceivedAt = DateTimeOffset.UtcNow;
     }
 

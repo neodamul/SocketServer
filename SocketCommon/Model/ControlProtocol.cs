@@ -1,0 +1,307 @@
+﻿using System;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Tasks;
+
+namespace SocketCommon.Model;
+
+public static class ControlMessageIds
+{
+    public const uint ServerRegister = 1000;
+    public const uint ServerRegisterAck = 1001;
+    public const uint ServerHeartbeat = 1002;
+    public const uint ServerUnregister = 1003;
+    public const uint ServerHeartbeatAck = 1004;
+    public const uint SessionOpened = 1100;
+    public const uint SessionUpdated = 1101;
+    public const uint SessionClosed = 1102;
+    public const uint RouteRequest = 1200;
+    public const uint RouteResponse = 1201;
+    public const uint RouteResolveFailed = 1202;
+    public const uint ControlRegister = 1400;
+    public const uint ControlRegisterAck = 1401;
+    public const uint ControlHeartbeat = 1402;
+    public const uint ServerRegistryUpsert = 1410;
+    public const uint ServerRegistryRemove = 1411;
+    public const uint SessionSummaryUpsert = 1420;
+    public const uint SessionSummaryRemove = 1421;
+    public const uint RouteReservationUpsert = 1430;
+    public const uint RouteReservationRelease = 1431;
+    public const uint RegistrySnapshotRequest = 1440;
+    public const uint RegistrySnapshotResponse = 1441;
+}
+
+public enum ServerHealthState
+{
+    Unknown,
+    Healthy,
+    Degraded,
+    Unhealthy
+}
+
+public class ResourceUsageSnapshot
+{
+    public double CpuUsagePercent { get; set; }
+
+    public double MemoryUsagePercent { get; set; }
+
+    public double StorageUsagePercent { get; set; }
+
+    public DateTimeOffset CapturedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class ServerRegisterRequest
+{
+    public string ClusterId { get; set; } = "";
+
+    public int ServerId { get; set; }
+
+    public string InstanceId { get; set; } = "";
+
+    public string Name { get; set; } = "";
+
+    public string Host { get; set; } = "";
+
+    public int Port { get; set; }
+
+    public int PortRangeStart { get; set; }
+
+    public int PortRangeEnd { get; set; }
+
+    public int MaxConnections { get; set; }
+
+    public int PendingAcceptCount { get; set; }
+
+    public int IdleTimeoutSeconds { get; set; }
+
+    public DateTimeOffset StartedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class ServerRegisterAck
+{
+    public string ClusterId { get; set; } = "";
+
+    public string ControlNodeId { get; set; } = "";
+
+    public int ServerId { get; set; }
+
+    public string InstanceId { get; set; } = "";
+
+    public DateTimeOffset ReceivedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class ServerHeartbeatRequest
+{
+    public string ClusterId { get; set; } = "";
+
+    public int ServerId { get; set; }
+
+    public string InstanceId { get; set; } = "";
+
+    public string Host { get; set; } = "";
+
+    public int Port { get; set; }
+
+    public ServerHealthState Health { get; set; } = ServerHealthState.Healthy;
+
+    public int MaxConnections { get; set; }
+
+    public int CurrentConnections { get; set; }
+
+    public int ReservedConnections { get; set; }
+
+    public int AvailableConnections { get; set; }
+
+    public ResourceUsageSnapshot ResourceUsage { get; set; } = new();
+
+    public long TotalAcceptedClients { get; set; }
+
+    public long TotalClosedClients { get; set; }
+
+    public long TotalRejectedClients { get; set; }
+
+    public long TotalIdleTimeoutClients { get; set; }
+
+    public DateTimeOffset SentAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class ServerHeartbeatAck
+{
+    public string ClusterId { get; set; } = "";
+
+    public string ControlNodeId { get; set; } = "";
+
+    public int ServerId { get; set; }
+
+    public string InstanceId { get; set; } = "";
+
+    public DateTimeOffset ReceivedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class SessionEventMessage
+{
+    public string ClusterId { get; set; } = "";
+
+    public long SessionId { get; set; }
+
+    public uint ClientId { get; set; }
+
+    public int ServerId { get; set; }
+
+    public string InstanceId { get; set; } = "";
+
+    public string RemoteEndPoint { get; set; } = "";
+
+    public DateTimeOffset ConnectedAt { get; set; }
+
+    public DateTimeOffset LastReceivedAt { get; set; }
+
+    public string State { get; set; } = "";
+
+    public long Version { get; set; }
+}
+
+public class RouteRequest
+{
+    public uint ClientId { get; set; }
+
+    public int? PreferredServerId { get; set; }
+
+    public string RoutingPolicy { get; set; } = "MostAvailableConnections";
+}
+
+public class RouteResponse
+{
+    public bool Success { get; set; }
+
+    public string ReservationId { get; set; } = "";
+
+    public int ServerId { get; set; }
+
+    public string InstanceId { get; set; } = "";
+
+    public string Host { get; set; } = "";
+
+    public int Port { get; set; }
+
+    public DateTimeOffset ExpiresAt { get; set; }
+
+    public string ErrorMessage { get; set; } = "";
+}
+
+public class BackendServerSnapshot
+{
+    public string ClusterId { get; set; } = "";
+
+    public string SourceControlNodeId { get; set; } = "";
+
+    public int ServerId { get; set; }
+
+    public string InstanceId { get; set; } = "";
+
+    public string Name { get; set; } = "";
+
+    public string Host { get; set; } = "";
+
+    public int Port { get; set; }
+
+    public int PortRangeStart { get; set; }
+
+    public int PortRangeEnd { get; set; }
+
+    public int MaxConnections { get; set; }
+
+    public int CurrentConnections { get; set; }
+
+    public int ReservedConnections { get; set; }
+
+    public int AvailableConnections { get; set; }
+
+    public ServerHealthState Health { get; set; }
+
+    public ResourceUsageSnapshot ResourceUsage { get; set; } = new();
+
+    public long Version { get; set; }
+
+    public DateTimeOffset StartedAt { get; set; }
+
+    public DateTimeOffset LastHeartbeatAt { get; set; }
+
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class RouteReservationMessage
+{
+    public string ReservationId { get; set; } = "";
+
+    public uint ClientId { get; set; }
+
+    public int ServerId { get; set; }
+
+    public string InstanceId { get; set; } = "";
+
+    public DateTimeOffset ExpiresAt { get; set; }
+
+    public string SourceControlNodeId { get; set; } = "";
+}
+
+public static class ControlProtocol
+{
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    public static SocketMessageFrame CreateFrame<T>(uint clientId, uint messageId, T payload)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, JsonOptions));
+        return new SocketMessageFrame(clientId, messageId, bytes);
+    }
+
+    public static bool TryDecode<T>(SocketMessageFrame frame, uint expectedMessageId, out T payload)
+    {
+        payload = default;
+        if (frame == null || frame.MessageId != expectedMessageId)
+        {
+            return false;
+        }
+
+        try
+        {
+            payload = JsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(frame.Payload), JsonOptions);
+            return payload != null;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    public static Task<bool> SendAsync<T>(Socket socket, uint clientId, uint messageId, T payload)
+    {
+        return SocketMessageFrame.SendAsync(socket, CreateFrame(clientId, messageId, payload));
+    }
+
+    public static async Task<(bool Success, SocketMessageFrame Frame)> SendAndReceiveAsync<T>(
+        Socket socket,
+        uint clientId,
+        uint messageId,
+        T payload,
+        int timeoutMilliseconds = 5000)
+    {
+        if (!await SendAsync(socket, clientId, messageId, payload))
+        {
+            return (false, null);
+        }
+
+        Task<(bool Success, SocketMessageFrame Frame)> receiveTask = SocketMessageFrame.TryReceiveAsync(socket);
+        Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(timeoutMilliseconds));
+        if (completedTask != receiveTask)
+        {
+            return (false, null);
+        }
+
+        return await receiveTask;
+    }
+}

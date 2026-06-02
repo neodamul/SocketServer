@@ -1,0 +1,13 @@
+{
+  "client": {
+    "clientId": 1,
+    "name": "socket-client-1",
+    "controlEndpoints": [
+      {
+        "host": "127.0.0.1",
+        "port": 5000
+      }
+    ],
+    "healthCheckIntervalSeconds": 30
+  }
+}

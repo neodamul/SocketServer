@@ -1,6 +1,7 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <OutputType>Exe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
   </PropertyGroup>
@@ -10,13 +11,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\SocketControl\SocketControl.csproj" />
     <ProjectReference Include="..\SocketCommon\SocketCommon.csproj" />
-    <ProjectReference Include="..\SocketServer\SocketServer.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <None Include="..\log4net.config" Link="log4net.config" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="controlserver.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
-
 </Project>

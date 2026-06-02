@@ -1,0 +1,21 @@
+{
+  "controlServer": {
+    "clusterId": "socket-cluster-1",
+    "nodeId": "control-1",
+    "host": "127.0.0.1",
+    "port": 5000,
+    "peerSyncPort": 5020,
+    "heartbeatTimeoutSeconds": 90,
+    "routeReservationSeconds": 10,
+    "routingPolicy": "MostAvailableConnections",
+    "degradedCpuPercent": 85,
+    "degradedMemoryPercent": 85,
+    "degradedStoragePercent": 90
+  },
+  "peers": [],
+  "registry": {
+    "provider": "InMemory",
+    "syncMode": "ActiveActive",
+    "connectionString": ""
+  }
+}

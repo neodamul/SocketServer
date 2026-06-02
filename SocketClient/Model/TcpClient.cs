@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -104,6 +105,49 @@ public class TcpClient : IClient, IDisposable
             Logger.Warn($"Client connect failed because socket is disposed. clientId={this.ClientId}", exception);
             return false;
         }
+    }
+
+    public async Task<bool> ConnectViaControlServerAsync(string controlHost, int controlPort)
+    {
+        return await this.ConnectViaControlServersAsync(new[] { new IPEndPoint(IPAddress.Parse(controlHost), controlPort) });
+    }
+
+    public async Task<bool> ConnectViaControlServersAsync(IEnumerable<IPEndPoint> controlEndpoints)
+    {
+        foreach (IPEndPoint endpoint in controlEndpoints)
+        {
+            try
+            {
+                using Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family);
+                await controlSocket.ConnectAsync(endpoint.Address, endpoint.Port);
+                (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
+                    controlSocket,
+                    this.ClientId,
+                    ControlMessageIds.RouteRequest,
+                    new RouteRequest
+                    {
+                        ClientId = this.ClientId,
+                        RoutingPolicy = "MostAvailableConnections"
+                    });
+
+                if (!success ||
+                    !ControlProtocol.TryDecode(frame, ControlMessageIds.RouteResponse, out RouteResponse response) ||
+                    !response.Success)
+                {
+                    continue;
+                }
+
+                this.SetIpAddress(response.Host);
+                this.SetPort(response.Port);
+                return this.Connect();
+            }
+            catch (SocketException exception)
+            {
+                Logger.Warn($"ControlServer route request failed. clientId={this.ClientId}, endpoint={endpoint}", exception);
+            }
+        }
+
+        return false;
     }
 
     public bool Disconnect()

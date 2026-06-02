@@ -20,11 +20,11 @@ internal static class Program
 
         LogConfigurator.Configure(ResolveLogConfigFileName());
 
-        using TcpServer? server = options.ExternalServer
+        using TcpServer? server = options.ExternalServer || options.UseControlServer
             ? null
             : StartInProcessServer(options);
 
-        if (!options.ExternalServer && server == null)
+        if (!options.ExternalServer && !options.UseControlServer && server == null)
         {
             return 1;
         }
@@ -35,7 +35,7 @@ internal static class Program
         }
 
         Console.WriteLine(
-            $"Starting load test: clients={options.Clients}, batch-size={options.BatchSize}, hold-seconds={options.HoldSeconds}, endpoint={options.Host}:{options.Port}, external-server={options.ExternalServer}");
+            $"Starting load test: clients={options.Clients}, batch-size={options.BatchSize}, hold-seconds={options.HoldSeconds}, endpoint={options.Host}:{options.Port}, external-server={options.ExternalServer}, use-control-server={options.UseControlServer}");
 
         Stopwatch stopwatch = Stopwatch.StartNew();
         LoadTestCounters counters = new();
@@ -120,7 +120,10 @@ internal static class Program
         TcpClient client = new(clientId, $"load-client-{clientId}", options.Host, options.Port);
         try
         {
-            if (!client.Connect())
+            bool connected = options.UseControlServer
+                ? await client.ConnectViaControlServerAsync(options.Host, options.Port)
+                : client.Connect();
+            if (!connected)
             {
                 Interlocked.Increment(ref counters.ConnectFail);
                 Interlocked.Increment(ref counters.HealthCheckFail);
@@ -211,7 +214,7 @@ internal static class Program
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: dotnet run --project SocketLoadTest -- [--clients N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--external-server]");
+            "Usage: dotnet run --project SocketLoadTest -- [--clients N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--external-server] [--use-control-server]");
     }
 }
 
@@ -235,7 +238,8 @@ internal sealed record LoadTestOptions(
     int HoldSeconds,
     string Host,
     int Port,
-    bool ExternalServer)
+    bool ExternalServer,
+    bool UseControlServer)
 {
     public static bool TryParse(string[] args, out LoadTestOptions options, out string error)
     {
@@ -245,7 +249,8 @@ internal sealed record LoadTestOptions(
             HoldSeconds: 60,
             Host: "127.0.0.1",
             Port: 5000,
-            ExternalServer: false);
+            ExternalServer: false,
+            UseControlServer: false);
         error = string.Empty;
 
         for (int index = 0; index < args.Length; index++)
@@ -314,6 +319,16 @@ internal sealed record LoadTestOptions(
                     }
 
                     options = options with { ExternalServer = true };
+                    break;
+
+                case "--use-control-server":
+                    if (value != null)
+                    {
+                        error = "--use-control-server does not accept a value.";
+                        return false;
+                    }
+
+                    options = options with { UseControlServer = true, ExternalServer = true };
                     break;
 
                 default:

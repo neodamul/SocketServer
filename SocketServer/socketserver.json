@@ -1,0 +1,22 @@
+{
+  "controlServers": [
+    {
+      "host": "127.0.0.1",
+      "port": 5000
+    }
+  ],
+  "servers": [
+    {
+      "serverId": 1,
+      "instanceId": "server-1-a",
+      "name": "socket-server-1",
+      "bindHost": "127.0.0.1",
+      "portRangeStart": 5100,
+      "portRangeEnd": 5199,
+      "maxConnections": 10000,
+      "pendingAcceptCount": 100,
+      "idleTimeoutSeconds": 90,
+      "heartbeatIntervalSeconds": 30
+    }
+  ]
+}

@@ -24,6 +24,8 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     private readonly int pendingAcceptCount;
     private readonly TimeSpan idleTimeout;
     private readonly TimeSpan idleScanInterval;
+    private readonly int serverId;
+    private readonly string instanceId;
     private CancellationTokenSource acceptLoopCancellation;
     private Task acceptLoopTask;
     private bool isListening;
@@ -38,6 +40,12 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     private long totalSentMessages;
     private bool disposedValue;
 
+    public event Func<ConnectionSession, Task> SessionOpenedAsync;
+
+    public event Func<ConnectionSession, Task> SessionUpdatedAsync;
+
+    public event Func<ConnectionSession, Task> SessionClosedAsync;
+
     public TcpServer()
         : this(0, null)
     { }
@@ -49,6 +57,8 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         this.pendingAcceptCount = DefaultPendingAcceptCount;
         this.idleTimeout = TimeSpan.FromSeconds(DefaultIdleTimeoutSeconds);
         this.idleScanInterval = TimeSpan.FromSeconds(DefaultIdleScanIntervalSeconds);
+        this.serverId = id;
+        this.instanceId = CreateInstanceId(id, name);
     }
 
     public TcpServer(int id, string name, string ipAddress, int port)
@@ -58,6 +68,8 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         this.pendingAcceptCount = DefaultPendingAcceptCount;
         this.idleTimeout = TimeSpan.FromSeconds(DefaultIdleTimeoutSeconds);
         this.idleScanInterval = TimeSpan.FromSeconds(DefaultIdleScanIntervalSeconds);
+        this.serverId = id;
+        this.instanceId = CreateInstanceId(id, name);
     }
 
     public TcpServer(
@@ -68,7 +80,8 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         int maxConnections,
         int pendingAcceptCount,
         TimeSpan idleTimeout,
-        TimeSpan? idleScanInterval = null)
+        TimeSpan? idleScanInterval = null,
+        string instanceId = null)
         : base(id, name, ipAddress, port)
     {
         this.maxConnections = Math.Max(1, maxConnections);
@@ -79,7 +92,15 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         this.idleScanInterval = idleScanInterval.HasValue && idleScanInterval.Value > TimeSpan.Zero
             ? idleScanInterval.Value
             : TimeSpan.FromSeconds(DefaultIdleScanIntervalSeconds);
+        this.serverId = id;
+        this.instanceId = string.IsNullOrWhiteSpace(instanceId)
+            ? CreateInstanceId(id, name)
+            : instanceId;
     }
+
+    public int ServerId => this.serverId;
+
+    public string InstanceId => this.instanceId;
 
     public bool Start()
     {
@@ -116,6 +137,34 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             Logger.Warn("Server bind failed because socket is disposed.", exception);
             return false;
         }
+    }
+
+    public bool BindInPortRange(int portRangeStart, int portRangeEnd)
+    {
+        if (portRangeStart == 0 && portRangeEnd == 0)
+        {
+            this.SetPort(0);
+            return this.Bind();
+        }
+
+        if (portRangeStart <= 0 || portRangeEnd < portRangeStart)
+        {
+            return false;
+        }
+
+        for (int port = portRangeStart; port <= portRangeEnd; port++)
+        {
+            this.SetPort(port);
+            if (this.Bind())
+            {
+                return true;
+            }
+
+            this.Socket?.Dispose();
+            this.Socket = null;
+        }
+
+        return false;
     }
 
     public bool Listen()
@@ -187,6 +236,8 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     {
         return new TcpServerStatus
         {
+            ServerId = this.serverId,
+            InstanceId = this.instanceId,
             IsSocketInitialized = this.Socket != null,
             IsBound = this.Socket?.IsBound ?? false,
             IsListening = this.isListening,
@@ -195,6 +246,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             Port = this.GetPort(),
             ConnectedClientCount = this.GetConnectedClientCount(),
             MaxConnections = this.maxConnections,
+            AvailableConnections = Math.Max(0, this.maxConnections - this.GetConnectedClientCount()),
             PendingAcceptCount = this.pendingAcceptCount,
             IdleTimeoutSeconds = (int)this.idleTimeout.TotalSeconds,
             TotalAcceptedClients = Interlocked.Read(ref this.totalAcceptedClients),
@@ -297,6 +349,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 this.AddConnectedClient(session);
                 Interlocked.Increment(ref this.totalAcceptedClients);
                 Logger.Debug($"Client accepted. connectionId={session.Id}, remote={session.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
+                this.NotifySessionOpened(session);
                 session.HandlerTask = this.HandleClientAsync(session, cancellationToken);
             }
             catch (SocketException exception)
@@ -359,8 +412,9 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                     break;
                 }
 
-                session.MarkReceived();
+                session.MarkReceived(frame.ClientId);
                 Interlocked.Increment(ref this.totalReceivedMessages);
+                this.NotifySessionUpdated(session);
                 bool handled = await this.HandleClientMessageAsync(session, frame);
                 if (!handled)
                 {
@@ -436,9 +490,44 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             Interlocked.Decrement(ref this.activeConnectionSlots);
             Interlocked.Increment(ref this.totalClosedClients);
             Logger.Debug($"Client closed. connectionId={removedSession.Id}, remote={removedSession.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
+            this.NotifySessionClosed(removedSession);
         }
 
         return true;
+    }
+
+    private void NotifySessionOpened(ConnectionSession session)
+    {
+        Func<ConnectionSession, Task> handler = this.SessionOpenedAsync;
+        if (handler != null)
+        {
+            _ = Task.Run(() => handler(session));
+        }
+    }
+
+    private void NotifySessionClosed(ConnectionSession session)
+    {
+        Func<ConnectionSession, Task> handler = this.SessionClosedAsync;
+        if (handler != null)
+        {
+            _ = Task.Run(() => handler(session));
+        }
+    }
+
+    private void NotifySessionUpdated(ConnectionSession session)
+    {
+        Func<ConnectionSession, Task> handler = this.SessionUpdatedAsync;
+        if (handler != null)
+        {
+            _ = Task.Run(() => handler(session));
+        }
+    }
+
+    private static string CreateInstanceId(int id, string name)
+    {
+        return string.IsNullOrWhiteSpace(name)
+            ? $"server-{id}"
+            : name;
     }
 
     private void CloseConnectedClients()

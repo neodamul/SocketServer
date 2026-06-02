@@ -11,6 +11,10 @@ const fields = {
   receivedMessages: document.getElementById("receivedMessages"),
   sentMessages: document.getElementById("sentMessages"),
   saeaPool: document.getElementById("saeaPool"),
+  totalMaxConnections: document.getElementById("totalMaxConnections"),
+  totalCurrentConnections: document.getElementById("totalCurrentConnections"),
+  totalAvailableConnections: document.getElementById("totalAvailableConnections"),
+  clusterServers: document.getElementById("clusterServers"),
   address: document.getElementById("address"),
   backlog: document.getElementById("backlog"),
   pendingAcceptCount: document.getElementById("pendingAcceptCount"),
@@ -39,6 +43,31 @@ function setHealth(ok) {
   fields.health.classList.toggle("bad", !ok);
 }
 
+function percent(value) {
+  return `${Math.round((value || 0) * 10) / 10}%`;
+}
+
+function renderServers(servers) {
+  if (!servers || servers.length === 0) {
+    fields.clusterServers.innerHTML = "<tr><td colspan=\"9\">-</td></tr>";
+    return;
+  }
+
+  fields.clusterServers.innerHTML = servers.map(server => `
+    <tr>
+      <td>${server.instanceId}</td>
+      <td>${server.health}</td>
+      <td>${server.host}:${server.port}</td>
+      <td>${server.maxConnections}</td>
+      <td>${server.currentConnections}</td>
+      <td>${server.availableConnections}</td>
+      <td>${percent(server.resourceUsage?.cpuUsagePercent)}</td>
+      <td>${percent(server.resourceUsage?.memoryUsagePercent)}</td>
+      <td>${percent(server.resourceUsage?.storageUsagePercent)}</td>
+    </tr>
+  `).join("");
+}
+
 async function refresh() {
   try {
     const response = await fetch("/api/server/status", { cache: "no-store" });
@@ -62,6 +91,10 @@ async function refresh() {
     fields.receivedMessages.textContent = server.totalReceivedMessages;
     fields.sentMessages.textContent = server.totalSentMessages;
     fields.saeaPool.textContent = server.socketAsyncEventArgsAvailableCount;
+    fields.totalMaxConnections.textContent = status.cluster.totalMaxConnections;
+    fields.totalCurrentConnections.textContent = status.cluster.totalCurrentConnections;
+    fields.totalAvailableConnections.textContent = status.cluster.totalAvailableConnections;
+    renderServers(status.cluster.servers);
     fields.address.textContent = `${server.ipAddress}:${server.port}`;
     fields.backlog.textContent = server.listenBacklog;
     fields.pendingAcceptCount.textContent = server.pendingAcceptCount;

@@ -1,5 +1,8 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System.Linq;
+using SocketCommon.Configuration;
 using SocketCommon.Model;
+using SocketControl.Model;
 using SocketDashboard.Model;
 using SocketServer.Model;
 
@@ -31,5 +34,47 @@ public class DashboardServerServiceTests
         Assert.IsTrue(status.Server.SocketAsyncEventArgsTotalCreatedCount >= SocketAsyncEventArgsFactory.InitialPoolSize);
         Assert.IsTrue(status.Server.SocketAsyncEventArgsHighWatermarkInUseCount >= 0);
         Assert.IsTrue(status.Server.Port > 0);
+        Assert.AreEqual(1, status.Cluster.ServerCount);
+    }
+
+    [TestMethod]
+    public void GetStatusUsesControlServerClusterStatusWhenAvailableTest()
+    {
+        using ControlServer controlServer = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-dashboard",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0
+            }
+        });
+        Assert.IsTrue(controlServer.Start());
+        controlServer.Registry.Upsert(new ServerRegisterRequest
+        {
+            ClusterId = "socket-cluster-1",
+            ServerId = 7,
+            InstanceId = "server-dashboard",
+            Name = "server-dashboard",
+            Host = "127.0.0.1",
+            Port = 5107,
+            PortRangeStart = 5100,
+            PortRangeEnd = 5199,
+            MaxConnections = 123,
+            PendingAcceptCount = 10,
+            IdleTimeoutSeconds = 90
+        }, "control-dashboard");
+
+        using DashboardServerService service = new(
+            0,
+            new EndpointConfig { Host = "127.0.0.1", Port = controlServer.Port });
+
+        DashboardServerStatus status = service.GetStatus();
+
+        Assert.AreEqual(1, status.Cluster.ServerCount);
+        Assert.AreEqual(123, status.Cluster.TotalMaxConnections);
+        Assert.AreEqual("server-dashboard", status.Cluster.Servers.First().InstanceId);
     }
 }

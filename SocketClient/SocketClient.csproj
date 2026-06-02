@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <None Include="..\log4net.config" Link="log4net.config" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="socketclient.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
