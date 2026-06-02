@@ -33,9 +33,9 @@ SocketServer.sln
 ## 설정 파일
 
 ```text
-SocketControl/controlserver.json
-SocketServer/socketserver.json
-SocketClient/socketclient.json
+SocketControl/config.json
+SocketServer/config.json
+SocketClient/config.json
 ```
 
 SocketServer는 설정된 port range 안에서 사용 가능한 포트를 찾아 바인딩하고, ControlServer에 등록합니다. 클라이언트는 ControlServer에 route를 요청한 뒤 응답받은 SocketServer endpoint로 직접 접속합니다.

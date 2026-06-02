@@ -10,7 +10,7 @@ internal static class Program
     private static void Main(string[] args)
     {
         LogConfigurator.Configure();
-        string configPath = args.Length > 0 ? args[0] : "controlserver.json";
+        string configPath = args.Length > 0 ? args[0] : "config.json";
         ControlServerConfigFile config = SocketConfigLoader.Load<ControlServerConfigFile>(configPath);
 
         using ControlServer server = new(config);

@@ -15,7 +15,7 @@ class Program
         SocketLogger logger = SocketLogManager.GetLogger<Program>();
         logger.Info("SocketServer console starting.");
 
-        string configPath = args.FirstOrDefault(arg => arg.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) ?? "socketserver.json";
+        string configPath = args.FirstOrDefault(arg => arg.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) ?? "config.json";
         SocketServerConfigFile config = SocketConfigLoader.Load<SocketServerConfigFile>(configPath);
         int? selectedServerId = ReadServerId(args);
         bool runAll = args.Contains("--all", StringComparer.OrdinalIgnoreCase) || !selectedServerId.HasValue;

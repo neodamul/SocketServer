@@ -3,9 +3,9 @@
 각 실행 프로젝트는 JSON 설정 파일을 사용합니다.
 
 ```text
-SocketControl/controlserver.json
-SocketServer/socketserver.json
-SocketClient/socketclient.json
+SocketControl/config.json
+SocketServer/config.json
+SocketClient/config.json
 ```
 
 ## ControlServer
