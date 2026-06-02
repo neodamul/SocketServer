@@ -39,11 +39,11 @@ public class TcpClientTests
     public async Task ClientConnectTest()
     {
         using Socket listener = CreateListener();
-        Task<Socket> acceptTask = listener.AcceptAsync();
+        Task<SecureSocketConnection> acceptTask = AcceptSecureAsync(listener);
 
         SocketClientTcpClient client = new(1, "testClient", "127.0.0.1", TestPort);
         Assert.IsTrue(client.Connect());
-        using Socket accepted = await acceptTask;
+        using SecureSocketConnection accepted = await acceptTask;
         Assert.IsTrue(client.IsConnected());
 
         client.Disconnect();
@@ -84,11 +84,11 @@ public class TcpClientTests
     public async Task ClientHelloWorldRequestTest()
     {
         using Socket listener = CreateListener();
-        Task<Socket> acceptTask = listener.AcceptAsync();
+        Task<SecureSocketConnection> acceptTask = AcceptSecureAsync(listener);
 
         SocketClientTcpClient client = new(1, "testClient", "127.0.0.1", TestPort);
         Assert.IsTrue(client.Connect());
-        using Socket accepted = await acceptTask;
+        using SecureSocketConnection accepted = await acceptTask;
 
         Assert.IsTrue(await client.SendHelloWorldRequestAsync());
         (bool requestReceived, HelloWorldRequest request) = await HelloWorldProtocol.TryReceiveRequestAsync(accepted);
@@ -111,5 +111,11 @@ public class TcpClientTests
         listener.Bind(new IPEndPoint(IPAddress.Loopback, TestPort));
         listener.Listen(SocketFactory.ListenBacklog);
         return listener;
+    }
+
+    private static async Task<SecureSocketConnection> AcceptSecureAsync(Socket listener)
+    {
+        Socket accepted = await listener.AcceptAsync();
+        return await SecureSocketConnection.AuthenticateServerAsync(accepted, "SocketTests");
     }
 }

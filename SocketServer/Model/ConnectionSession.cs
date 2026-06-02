@@ -11,11 +11,12 @@ public class ConnectionSession
     private int closed;
     private readonly SemaphoreSlim sendLock = new(1, 1);
 
-    public ConnectionSession(long id, Socket socket)
+    public ConnectionSession(long id, SecureSocketConnection connection)
     {
         this.Id = id;
-        this.Socket = socket;
-        this.RemoteEndPoint = socket.RemoteEndPoint?.ToString() ?? "";
+        this.Connection = connection;
+        this.Socket = connection.Socket;
+        this.RemoteEndPoint = connection.Socket.RemoteEndPoint?.ToString() ?? "";
         this.ConnectedAt = DateTimeOffset.UtcNow;
         this.LastReceivedAt = this.ConnectedAt;
     }
@@ -23,6 +24,8 @@ public class ConnectionSession
     public long Id { get; }
 
     public Socket Socket { get; }
+
+    public SecureSocketConnection Connection { get; }
 
     public string RemoteEndPoint { get; }
 
@@ -51,7 +54,7 @@ public class ConnectionSession
                 return false;
             }
 
-            return await SocketCommon.Model.SocketAsyncEventArgsTransport.SendAsync(this.Socket, bytes);
+            return await this.Connection.SendAsync(bytes);
         }
         finally
         {
@@ -91,7 +94,7 @@ public class ConnectionSession
         }
         finally
         {
-            this.Socket.Dispose();
+            this.Connection.Dispose();
         }
 
         return true;

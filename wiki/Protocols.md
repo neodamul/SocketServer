@@ -2,7 +2,7 @@
 
 ## Common Frame
 
-모든 프로토콜 메시지는 12바이트 고정 헤더를 사용합니다. 정수는 big-endian(network byte order)입니다.
+모든 프로토콜 메시지는 TLS로 보호되는 소켓 연결 위에서 12바이트 고정 헤더를 사용합니다. 정수는 big-endian(network byte order)입니다.
 
 ```text
 0..3   clientId      uint32
@@ -12,6 +12,8 @@
 ```
 
 payload 최대 길이는 4KB입니다.
+
+`SocketClient`, `SocketServer`, `SocketControl`, `SocketDashboard` 간 연결은 `SecureSocketConnection`을 통해 인증된 뒤 common frame을 송수신합니다. 기본 모드는 런타임/OS가 지원하는 가장 적절한 TLS 버전을 협상하고, `SOCKET_REQUIRE_TLS13=true` 환경 변수를 설정하면 TLS 1.3이 아닌 협상 결과를 연결 실패로 처리합니다.
 
 ## HealthCheck
 
@@ -63,7 +65,7 @@ payload 최대 길이는 4KB입니다.
 
 ## Server Relay
 
-SocketServer 간 메시지 전달은 서버 listen endpoint로 직접 TCP 연결해 처리합니다.
+SocketServer 간 메시지 전달은 서버 listen endpoint로 직접 TLS 소켓 연결해 처리합니다.
 
 ```text
 2100 SERVER_RELAY_MESSAGE

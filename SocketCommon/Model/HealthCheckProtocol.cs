@@ -65,6 +65,11 @@ public static class HealthCheckProtocol
         return SocketMessageFrame.SendAsync(socket, CreateFrame(message));
     }
 
+    public static Task<bool> SendAsync(SecureSocketConnection connection, HealthCheckMessage message)
+    {
+        return SocketMessageFrame.SendAsync(connection, CreateFrame(message));
+    }
+
     public static bool TryReceive(Socket socket, out HealthCheckMessage message)
     {
         (bool success, HealthCheckMessage receivedMessage) = TryReceiveAsync(socket).GetAwaiter().GetResult();
@@ -75,6 +80,17 @@ public static class HealthCheckProtocol
     public static async Task<(bool Success, HealthCheckMessage Message)> TryReceiveAsync(Socket socket)
     {
         (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(socket);
+        if (!success || !TryDecode(frame, out HealthCheckMessage message))
+        {
+            return (false, null);
+        }
+
+        return (true, message);
+    }
+
+    public static async Task<(bool Success, HealthCheckMessage Message)> TryReceiveAsync(SecureSocketConnection connection)
+    {
+        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(connection);
         if (!success || !TryDecode(frame, out HealthCheckMessage message))
         {
             return (false, null);

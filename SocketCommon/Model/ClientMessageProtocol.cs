@@ -187,9 +187,22 @@ public static class ClientMessageProtocol
         });
     }
 
+    public static Task<bool> SendRegisterAsync(SecureSocketConnection connection, uint clientId)
+    {
+        return SendAsync(connection, clientId, ClientMessageIds.ClientRegister, new ClientRegisterRequest
+        {
+            ClientId = clientId
+        });
+    }
+
     public static Task<bool> SendClientMessageAsync(Socket socket, ClientMessageSendRequest request)
     {
         return SendAsync(socket, request.SourceClientId, ClientMessageIds.ClientMessageSend, request);
+    }
+
+    public static Task<bool> SendClientMessageAsync(SecureSocketConnection connection, ClientMessageSendRequest request)
+    {
+        return SendAsync(connection, request.SourceClientId, ClientMessageIds.ClientMessageSend, request);
     }
 
     public static Task<bool> SendDeliveryAsync(Socket socket, ClientMessageDelivery delivery)
@@ -210,6 +223,11 @@ public static class ClientMessageProtocol
     public static Task<bool> SendRelayAsync(Socket socket, ServerRelayMessage relay)
     {
         return SendAsync(socket, relay.SourceClientId, ServerRelayMessageIds.ServerRelayMessage, relay);
+    }
+
+    public static Task<bool> SendRelayAsync(SecureSocketConnection connection, ServerRelayMessage relay)
+    {
+        return SendAsync(connection, relay.SourceClientId, ServerRelayMessageIds.ServerRelayMessage, relay);
     }
 
     public static bool TryDecodeRegister(SocketMessageFrame frame, out ClientRegisterRequest request)
@@ -267,6 +285,26 @@ public static class ClientMessageProtocol
         return await receiveTask;
     }
 
+    public static async Task<(bool Success, SocketMessageFrame Frame)> SendRelayAndReceiveAsync(
+        SecureSocketConnection connection,
+        ServerRelayMessage relay,
+        int timeoutMilliseconds = 5000)
+    {
+        if (!await SendRelayAsync(connection, relay))
+        {
+            return (false, null);
+        }
+
+        Task<(bool Success, SocketMessageFrame Frame)> receiveTask = SocketMessageFrame.TryReceiveAsync(connection);
+        Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(timeoutMilliseconds));
+        if (completedTask != receiveTask)
+        {
+            return (false, null);
+        }
+
+        return await receiveTask;
+    }
+
     public static bool TryDecode<T>(SocketMessageFrame frame, uint expectedMessageId, out T payload)
     {
         payload = default;
@@ -289,5 +327,10 @@ public static class ClientMessageProtocol
     private static Task<bool> SendAsync<T>(Socket socket, uint clientId, uint messageId, T payload)
     {
         return SocketMessageFrame.SendAsync(socket, CreateFrame(clientId, messageId, payload));
+    }
+
+    private static Task<bool> SendAsync<T>(SecureSocketConnection connection, uint clientId, uint messageId, T payload)
+    {
+        return SocketMessageFrame.SendAsync(connection, CreateFrame(clientId, messageId, payload));
     }
 }

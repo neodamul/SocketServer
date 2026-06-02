@@ -64,6 +64,11 @@ public class SocketMessageFrame
         return SocketAsyncEventArgsTransport.SendAsync(socket, frame.Encode());
     }
 
+    public static Task<bool> SendAsync(SecureSocketConnection connection, SocketMessageFrame frame)
+    {
+        return connection.SendAsync(frame.Encode());
+    }
+
     public static async Task<(bool Success, SocketMessageFrame Frame)> TryReceiveAsync(Socket socket)
     {
         byte[] header = await SocketAsyncEventArgsTransport.ReceiveExactAsync(socket, HeaderLength);
@@ -81,6 +86,34 @@ public class SocketMessageFrame
         byte[] payload = payloadLength == 0
             ? Array.Empty<byte>()
             : await SocketAsyncEventArgsTransport.ReceiveExactAsync(socket, (int)payloadLength);
+        if (payload == null)
+        {
+            return (false, null);
+        }
+
+        return (true, new SocketMessageFrame(
+            BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(0, 4)),
+            BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(4, 4)),
+            payload));
+    }
+
+    public static async Task<(bool Success, SocketMessageFrame Frame)> TryReceiveAsync(SecureSocketConnection connection)
+    {
+        byte[] header = await connection.ReceiveExactAsync(HeaderLength);
+        if (header == null)
+        {
+            return (false, null);
+        }
+
+        uint payloadLength = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(8, 4));
+        if (payloadLength > MaxPayloadLength)
+        {
+            return (false, null);
+        }
+
+        byte[] payload = payloadLength == 0
+            ? Array.Empty<byte>()
+            : await connection.ReceiveExactAsync((int)payloadLength);
         if (payload == null)
         {
             return (false, null);

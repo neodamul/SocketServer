@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Threading;
 using System.Threading.Tasks;
 using SocketCommon;
@@ -136,6 +138,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             }
 
             Logger.Info($"Server socket bound. endpoint={this.IpAddress}:{this.Port}");
+            LocalCertificateStore.GetOrCreate("SocketServer");
             return true;
         }
         catch (SocketException exception)
@@ -293,21 +296,31 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         try
         {
-            using Socket client = await SocketAsyncEventArgsTransport.AcceptAsync(this.Socket);
+            Socket client = await SocketAsyncEventArgsTransport.AcceptAsync(this.Socket);
             if (client == null)
             {
                 return false;
             }
 
-            (bool success, HelloWorldRequest request) = await HelloWorldProtocol.TryReceiveRequestAsync(client);
+            using SecureSocketConnection connection =
+                await SecureSocketConnection.AuthenticateServerAsync(client, "SocketServer");
+            (bool success, HelloWorldRequest request) = await HelloWorldProtocol.TryReceiveRequestAsync(connection);
             if (!success)
             {
                 return false;
             }
 
-            return await HelloWorldProtocol.SendAsync(client, HelloWorldProtocol.CreateResponse(request.ClientId));
+            return await HelloWorldProtocol.SendAsync(connection, HelloWorldProtocol.CreateResponse(request.ClientId));
         }
         catch (SocketException)
+        {
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (AuthenticationException)
         {
             return false;
         }
@@ -355,8 +368,10 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                     continue;
                 }
 
+                SecureSocketConnection connection =
+                    await SecureSocketConnection.AuthenticateServerAsync(client, "SocketServer");
                 long connectionId = Interlocked.Increment(ref this.nextConnectionId);
-                ConnectionSession session = new(connectionId, client);
+                ConnectionSession session = new(connectionId, connection);
                 this.AddConnectedClient(session);
                 Interlocked.Increment(ref this.totalAcceptedClients);
                 Logger.Debug($"Client accepted. connectionId={session.Id}, remote={session.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
@@ -372,6 +387,26 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 }
 
                 Logger.Warn("Client accept failed.", exception);
+            }
+            catch (IOException exception)
+            {
+                CloseClient(client);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                Logger.Warn("Client TLS connection failed during accept.", exception);
+            }
+            catch (AuthenticationException exception)
+            {
+                CloseClient(client);
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                Logger.Warn("Client TLS authentication failed during accept.", exception);
             }
             catch (ObjectDisposedException)
             {
@@ -417,7 +452,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(session.Socket);
+                (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(session.Connection);
                 if (!success)
                 {
                     break;
@@ -604,10 +639,12 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         {
             try
             {
-                using Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+                Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
                 await socket.ConnectAsync(IPAddress.Parse(endpoint.Host), endpoint.Port);
+                using SecureSocketConnection connection =
+                    await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
                 (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
-                    socket,
+                    connection,
                     sourceClientId,
                     ControlMessageIds.ClientLocationRequest,
                     new ClientLocationRequest
@@ -644,10 +681,12 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     {
         try
         {
-            using Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+            Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
             await socket.ConnectAsync(IPAddress.Parse(location.Host), location.Port);
+            using SecureSocketConnection connection =
+                await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
             (bool success, SocketMessageFrame frame) = await ClientMessageProtocol.SendRelayAndReceiveAsync(
-                socket,
+                connection,
                 ClientMessageProtocol.CreateRelay(this.clusterId, this.instanceId, request));
             if (!success)
             {

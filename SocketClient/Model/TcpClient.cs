@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Threading;
 using System.Threading.Tasks;
 using SocketCommon;
@@ -15,6 +17,7 @@ public class TcpClient : IClient, IDisposable
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<TcpClient>();
 
     protected Socket Socket = null;
+    protected SecureSocketConnection Connection = null;
 
     private bool disposedValue;
     private CancellationTokenSource healthCheckCancellation;
@@ -45,6 +48,8 @@ public class TcpClient : IClient, IDisposable
 
     public void Initialize()
     {
+        LocalCertificateStore.GetOrCreate("SocketClient");
+        this.Connection?.Dispose();
         this.Socket?.Dispose();
         this.Socket = SocketFactory.CreateTcpSocket(this.Family);
         Logger.Info($"Client socket initialized. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}");
@@ -92,6 +97,7 @@ public class TcpClient : IClient, IDisposable
             }
 
             this.Socket.Connect(new IPEndPoint(this.IpAddress, this.Port));
+            this.Connection = SecureSocketConnection.AuthenticateClientAsync(this.Socket, "SocketClient").GetAwaiter().GetResult();
             Logger.Info($"Client connected. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}");
             return true;
         }
@@ -103,6 +109,16 @@ public class TcpClient : IClient, IDisposable
         catch (ObjectDisposedException exception)
         {
             Logger.Warn($"Client connect failed because socket is disposed. clientId={this.ClientId}", exception);
+            return false;
+        }
+        catch (AuthenticationException exception)
+        {
+            Logger.Warn($"Client TLS handshake failed. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}", exception);
+            return false;
+        }
+        catch (IOException exception)
+        {
+            Logger.Warn($"Client TLS connection failed. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}", exception);
             return false;
         }
     }
@@ -118,10 +134,12 @@ public class TcpClient : IClient, IDisposable
         {
             try
             {
-                using Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family);
+                Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family);
                 await controlSocket.ConnectAsync(endpoint.Address, endpoint.Port);
+                using SecureSocketConnection controlConnection =
+                    await SecureSocketConnection.AuthenticateClientAsync(controlSocket, "SocketClient");
                 (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
-                    controlSocket,
+                    controlConnection,
                     this.ClientId,
                     ControlMessageIds.RouteRequest,
                     new RouteRequest
@@ -153,14 +171,18 @@ public class TcpClient : IClient, IDisposable
     public bool Disconnect()
     {
         this.StopHealthCheckLoop();
-        if (this.Socket == null)
+        if (this.Connection == null)
         {
             return true;
         }
 
         try
         {
-            if (this.Socket.Connected)
+            if (this.Connection != null)
+            {
+                this.Connection.Dispose();
+            }
+            else if (this.Socket.Connected)
             {
                 this.Socket.Shutdown(SocketShutdown.Both);
             }
@@ -173,7 +195,8 @@ public class TcpClient : IClient, IDisposable
         }
         finally
         {
-            this.Socket.Dispose();
+            this.Connection = null;
+            this.Socket?.Dispose();
             this.Socket = null;
             Logger.Info($"Client disconnected. clientId={this.ClientId}");
         }
@@ -188,7 +211,7 @@ public class TcpClient : IClient, IDisposable
 
     public bool StartHealthCheckLoop(TimeSpan interval)
     {
-        if (this.Socket == null || interval <= TimeSpan.Zero)
+        if (this.Connection == null || interval <= TimeSpan.Zero)
         {
             return false;
         }
@@ -215,7 +238,7 @@ public class TcpClient : IClient, IDisposable
 
     public bool IsConnected()
     {
-        return this.Socket?.Connected ?? false;
+        return this.Connection?.IsConnected ?? false;
     }
 
     public bool SendHealthCheck()
@@ -225,13 +248,13 @@ public class TcpClient : IClient, IDisposable
 
     public async Task<bool> SendHealthCheckAsync()
     {
-        if (this.Socket == null)
+        if (this.Connection == null)
         {
             Logger.Warn($"Healthcheck send skipped because socket is not initialized. clientId={this.ClientId}");
             return false;
         }
 
-        bool sent = await HealthCheckProtocol.SendAsync(this.Socket, HealthCheckProtocol.CreatePing(this.ClientId));
+        bool sent = await HealthCheckProtocol.SendAsync(this.Connection, HealthCheckProtocol.CreatePing(this.ClientId));
         Logger.Debug($"Healthcheck ping sent. clientId={this.ClientId}, success={sent}");
         return sent;
     }
@@ -243,13 +266,13 @@ public class TcpClient : IClient, IDisposable
 
     public async Task<bool> SendHealthCheckResponseAsync()
     {
-        if (this.Socket == null)
+        if (this.Connection == null)
         {
             Logger.Warn($"Healthcheck response send skipped because socket is not initialized. clientId={this.ClientId}");
             return false;
         }
 
-        bool sent = await HealthCheckProtocol.SendAsync(this.Socket, HealthCheckProtocol.CreatePong(this.ClientId));
+        bool sent = await HealthCheckProtocol.SendAsync(this.Connection, HealthCheckProtocol.CreatePong(this.ClientId));
         Logger.Debug($"Healthcheck pong sent. clientId={this.ClientId}, success={sent}");
         return sent;
     }
@@ -263,12 +286,12 @@ public class TcpClient : IClient, IDisposable
 
     public async Task<(bool Success, HealthCheckMessage Message)> TryReceiveHealthCheckAsync()
     {
-        if (this.Socket == null)
+        if (this.Connection == null)
         {
             return (false, null);
         }
 
-        return await HealthCheckProtocol.TryReceiveAsync(this.Socket);
+        return await HealthCheckProtocol.TryReceiveAsync(this.Connection);
     }
 
     public bool SendHelloWorldRequest()
@@ -278,13 +301,13 @@ public class TcpClient : IClient, IDisposable
 
     public async Task<bool> SendHelloWorldRequestAsync()
     {
-        if (this.Socket == null)
+        if (this.Connection == null)
         {
             Logger.Warn($"HelloWorld request send skipped because socket is not initialized. clientId={this.ClientId}");
             return false;
         }
 
-        bool sent = await HelloWorldProtocol.SendAsync(this.Socket, HelloWorldProtocol.CreateRequest(this.ClientId));
+        bool sent = await HelloWorldProtocol.SendAsync(this.Connection, HelloWorldProtocol.CreateRequest(this.ClientId));
         Logger.Debug($"HelloWorld request sent. clientId={this.ClientId}, success={sent}");
         return sent;
     }
@@ -297,12 +320,12 @@ public class TcpClient : IClient, IDisposable
             return false;
         }
 
-        if (!await ClientMessageProtocol.SendRegisterAsync(this.Socket, this.ClientId))
+        if (!await ClientMessageProtocol.SendRegisterAsync(this.Connection, this.ClientId))
         {
             return false;
         }
 
-        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Socket);
+        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Connection);
         return success &&
             ClientMessageProtocol.TryDecodeRegisterAck(frame, out ClientRegisterAck ack) &&
             ack.Success;
@@ -313,7 +336,7 @@ public class TcpClient : IClient, IDisposable
         string content,
         int ttlSeconds = 10)
     {
-        if (this.Socket == null)
+        if (this.Connection == null)
         {
             Logger.Warn($"Client message send skipped because socket is not initialized. clientId={this.ClientId}");
             return (false, null, new ClientMessageError
@@ -330,7 +353,7 @@ public class TcpClient : IClient, IDisposable
             targetClientId,
             content,
             ttlSeconds: ttlSeconds);
-        if (!await ClientMessageProtocol.SendClientMessageAsync(this.Socket, request))
+        if (!await ClientMessageProtocol.SendClientMessageAsync(this.Connection, request))
         {
             return (false, null, new ClientMessageError
             {
@@ -342,7 +365,7 @@ public class TcpClient : IClient, IDisposable
             });
         }
 
-        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Socket);
+        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Connection);
         if (!success)
         {
             return (false, null, new ClientMessageError
@@ -377,12 +400,12 @@ public class TcpClient : IClient, IDisposable
 
     public async Task<(bool Success, ClientMessageDelivery Delivery)> TryReceiveClientMessageAsync()
     {
-        if (this.Socket == null)
+        if (this.Connection == null)
         {
             return (false, null);
         }
 
-        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Socket);
+        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Connection);
         if (!success || !ClientMessageProtocol.TryDecodeDelivery(frame, out ClientMessageDelivery delivery))
         {
             return (false, null);
@@ -400,12 +423,12 @@ public class TcpClient : IClient, IDisposable
 
     public async Task<(bool Success, HelloWorldResponse Response)> TryReceiveHelloWorldResponseAsync()
     {
-        if (this.Socket == null)
+        if (this.Connection == null)
         {
             return (false, null);
         }
 
-        return await HelloWorldProtocol.TryReceiveResponseAsync(this.Socket);
+        return await HelloWorldProtocol.TryReceiveResponseAsync(this.Connection);
     }
 
     private async Task RunHealthCheckLoopAsync(TimeSpan interval, CancellationToken cancellationToken)

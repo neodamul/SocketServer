@@ -55,6 +55,7 @@ public class ControlServer : IDisposable
             this.listener = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
             this.listener.Bind(new IPEndPoint(IPAddress.Parse(this.config.Host), this.config.Port));
             this.listener.Listen(SocketFactory.ListenBacklog);
+            LocalCertificateStore.GetOrCreate("SocketControl");
             this.cancellation = new CancellationTokenSource();
             this.acceptTask = this.RunAcceptLoopAsync(this.cancellation.Token);
             if (this.config.PeerSyncPort > 0 && this.config.PeerSyncPort != this.config.Port)
@@ -134,13 +135,14 @@ public class ControlServer : IDisposable
 
     private async Task HandleConnectionAsync(Socket socket)
     {
-        using Socket acceptedSocket = socket;
+        using SecureSocketConnection acceptedConnection =
+            await SecureSocketConnection.AuthenticateServerAsync(socket, "SocketControl");
         string serverInstanceId = "";
         try
         {
             while (true)
             {
-                (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(acceptedSocket);
+                (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(acceptedConnection);
                 if (!success)
                 {
                     break;
@@ -150,46 +152,46 @@ public class ControlServer : IDisposable
                 {
                     case ControlMessageIds.ServerRegister:
                         serverInstanceId = GetServerRegisterInstanceId(frame);
-                        await HandleServerRegisterAsync(acceptedSocket, frame);
+                        await HandleServerRegisterAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.ServerHeartbeat:
                         serverInstanceId = GetServerHeartbeatInstanceId(frame, serverInstanceId);
-                        await HandleServerHeartbeatAsync(acceptedSocket, frame);
+                        await HandleServerHeartbeatAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.SessionOpened:
                     case ControlMessageIds.SessionUpdated:
                     case ControlMessageIds.SessionClosed:
-                        await HandleSessionEventAsync(acceptedSocket, frame);
+                        await HandleSessionEventAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.RouteRequest:
-                        await HandleRouteRequestAsync(acceptedSocket, frame);
+                        await HandleRouteRequestAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.ClientLocationRequest:
-                        await HandleClientLocationRequestAsync(acceptedSocket, frame);
+                        await HandleClientLocationRequestAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.ServerRegistryUpsert:
-                        await HandlePeerServerUpsertAsync(acceptedSocket, frame);
+                        await HandlePeerServerUpsertAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.SessionSummaryUpsert:
-                        await HandlePeerSessionUpsertAsync(acceptedSocket, frame);
+                        await HandlePeerSessionUpsertAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.SessionSummaryRemove:
-                        await HandlePeerSessionRemoveAsync(acceptedSocket, frame);
+                        await HandlePeerSessionRemoveAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.ClientLocationUpsert:
-                        await HandlePeerClientLocationUpsertAsync(acceptedSocket, frame);
+                        await HandlePeerClientLocationUpsertAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.ClientLocationRemove:
-                        await HandlePeerClientLocationRemoveAsync(acceptedSocket, frame);
+                        await HandlePeerClientLocationRemoveAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.RouteReservationUpsert:
-                        await HandlePeerReservationUpsertAsync(acceptedSocket, frame);
+                        await HandlePeerReservationUpsertAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.RouteReservationRelease:
-                        await HandlePeerReservationReleaseAsync(acceptedSocket, frame);
+                        await HandlePeerReservationReleaseAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.RegistrySnapshotRequest:
-                        await HandleRegistrySnapshotRequestAsync(acceptedSocket, frame);
+                        await HandleRegistrySnapshotRequestAsync(acceptedConnection, frame);
                         break;
                     default:
                         Logger.Warn($"ControlServer received unknown message. messageId={frame.MessageId}");
@@ -211,7 +213,7 @@ public class ControlServer : IDisposable
         }
     }
 
-    private async Task HandleServerRegisterAsync(Socket socket, SocketMessageFrame frame)
+    private async Task HandleServerRegisterAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         if (!ControlProtocol.TryDecode(frame, ControlMessageIds.ServerRegister, out ServerRegisterRequest request))
         {
@@ -219,7 +221,7 @@ public class ControlServer : IDisposable
         }
 
         BackendServerSnapshot snapshot = this.registry.Upsert(request, this.config.NodeId);
-        await ControlProtocol.SendAsync(socket, frame.ClientId, ControlMessageIds.ServerRegisterAck, new ServerRegisterAck
+        await ControlProtocol.SendAsync(connection, frame.ClientId, ControlMessageIds.ServerRegisterAck, new ServerRegisterAck
         {
             ClusterId = this.config.ClusterId,
             ControlNodeId = this.config.NodeId,
@@ -230,7 +232,7 @@ public class ControlServer : IDisposable
         await PublishServerSnapshotAsync(snapshot);
     }
 
-    private async Task HandleServerHeartbeatAsync(Socket socket, SocketMessageFrame frame)
+    private async Task HandleServerHeartbeatAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         if (!ControlProtocol.TryDecode(frame, ControlMessageIds.ServerHeartbeat, out ServerHeartbeatRequest request))
         {
@@ -238,7 +240,7 @@ public class ControlServer : IDisposable
         }
 
         BackendServerSnapshot snapshot = this.registry.Upsert(request, this.config.NodeId, this.healthThreshold);
-        await ControlProtocol.SendAsync(socket, frame.ClientId, ControlMessageIds.ServerHeartbeatAck, new ServerHeartbeatAck
+        await ControlProtocol.SendAsync(connection, frame.ClientId, ControlMessageIds.ServerHeartbeatAck, new ServerHeartbeatAck
         {
             ClusterId = this.config.ClusterId,
             ControlNodeId = this.config.NodeId,
@@ -249,7 +251,7 @@ public class ControlServer : IDisposable
         await PublishServerSnapshotAsync(snapshot);
     }
 
-    private async Task HandleSessionEventAsync(Socket socket, SocketMessageFrame frame)
+    private async Task HandleSessionEventAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         if (!ControlProtocol.TryDecode(frame, frame.MessageId, out SessionEventMessage sessionEvent))
         {
@@ -281,7 +283,7 @@ public class ControlServer : IDisposable
             await PublishClientLocationAsync(sessionEvent, ControlMessageIds.ClientLocationRemove);
         }
 
-        await ControlProtocol.SendAsync(socket, frame.ClientId, ControlMessageIds.ServerHeartbeatAck, new ServerHeartbeatAck
+        await ControlProtocol.SendAsync(connection, frame.ClientId, ControlMessageIds.ServerHeartbeatAck, new ServerHeartbeatAck
         {
             ClusterId = this.config.ClusterId,
             ControlNodeId = this.config.NodeId,
@@ -291,7 +293,7 @@ public class ControlServer : IDisposable
         });
     }
 
-    private async Task HandleClientLocationRequestAsync(Socket socket, SocketMessageFrame frame)
+    private async Task HandleClientLocationRequestAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         if (!ControlProtocol.TryDecode(frame, ControlMessageIds.ClientLocationRequest, out ClientLocationRequest request))
         {
@@ -300,13 +302,13 @@ public class ControlServer : IDisposable
 
         ClientLocationResponse response = this.registry.ResolveClientLocation(request);
         await ControlProtocol.SendAsync(
-            socket,
+            connection,
             request.SourceClientId,
             response.Success ? ControlMessageIds.ClientLocationResponse : ControlMessageIds.ClientLocationNotFound,
             response);
     }
 
-    private async Task HandleRouteRequestAsync(Socket socket, SocketMessageFrame frame)
+    private async Task HandleRouteRequestAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         if (!ControlProtocol.TryDecode(frame, ControlMessageIds.RouteRequest, out RouteRequest request))
         {
@@ -317,7 +319,7 @@ public class ControlServer : IDisposable
             request,
             this.config.NodeId,
             TimeSpan.FromSeconds(Math.Max(1, this.config.RouteReservationSeconds)));
-        await ControlProtocol.SendAsync(socket, request.ClientId, ControlMessageIds.RouteResponse, response);
+        await ControlProtocol.SendAsync(connection, request.ClientId, ControlMessageIds.RouteResponse, response);
         if (response.Success)
         {
             RouteReservationMessage? reservation = this.registry.Reservations
@@ -329,7 +331,7 @@ public class ControlServer : IDisposable
         }
     }
 
-    private async Task HandlePeerServerUpsertAsync(Socket socket, SocketMessageFrame frame)
+    private async Task HandlePeerServerUpsertAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         if (!ControlProtocol.TryDecode(frame, ControlMessageIds.ServerRegistryUpsert, out BackendServerSnapshot snapshot))
         {
@@ -337,7 +339,7 @@ public class ControlServer : IDisposable
         }
 
         this.registry.UpsertPeerSnapshot(snapshot);
-        await ControlProtocol.SendAsync(socket, frame.ClientId, ControlMessageIds.ControlRegisterAck, new
+        await ControlProtocol.SendAsync(connection, frame.ClientId, ControlMessageIds.ControlRegisterAck, new
         {
             clusterId = this.config.ClusterId,
             controlNodeId = this.config.NodeId,
@@ -345,70 +347,70 @@ public class ControlServer : IDisposable
         });
     }
 
-    private async Task HandlePeerSessionUpsertAsync(Socket socket, SocketMessageFrame frame)
+    private async Task HandlePeerSessionUpsertAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         if (ControlProtocol.TryDecode(frame, ControlMessageIds.SessionSummaryUpsert, out SessionEventMessage session))
         {
             this.registry.UpsertSession(session);
         }
 
-        await SendPeerAckAsync(socket, frame.ClientId);
+        await SendPeerAckAsync(connection, frame.ClientId);
     }
 
-    private async Task HandlePeerSessionRemoveAsync(Socket socket, SocketMessageFrame frame)
+    private async Task HandlePeerSessionRemoveAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         if (ControlProtocol.TryDecode(frame, ControlMessageIds.SessionSummaryRemove, out SessionEventMessage session))
         {
             this.registry.RemoveSession(session);
         }
 
-        await SendPeerAckAsync(socket, frame.ClientId);
+        await SendPeerAckAsync(connection, frame.ClientId);
     }
 
-    private async Task HandlePeerClientLocationUpsertAsync(Socket socket, SocketMessageFrame frame)
+    private async Task HandlePeerClientLocationUpsertAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         if (ControlProtocol.TryDecode(frame, ControlMessageIds.ClientLocationUpsert, out ClientLocationMessage location))
         {
             this.registry.UpsertClientLocation(location);
         }
 
-        await SendPeerAckAsync(socket, frame.ClientId);
+        await SendPeerAckAsync(connection, frame.ClientId);
     }
 
-    private async Task HandlePeerClientLocationRemoveAsync(Socket socket, SocketMessageFrame frame)
+    private async Task HandlePeerClientLocationRemoveAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         if (ControlProtocol.TryDecode(frame, ControlMessageIds.ClientLocationRemove, out ClientLocationMessage location))
         {
             this.registry.RemoveClientLocation(location);
         }
 
-        await SendPeerAckAsync(socket, frame.ClientId);
+        await SendPeerAckAsync(connection, frame.ClientId);
     }
 
-    private async Task HandlePeerReservationUpsertAsync(Socket socket, SocketMessageFrame frame)
+    private async Task HandlePeerReservationUpsertAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         if (ControlProtocol.TryDecode(frame, ControlMessageIds.RouteReservationUpsert, out RouteReservationMessage reservation))
         {
             this.registry.UpsertReservation(reservation);
         }
 
-        await SendPeerAckAsync(socket, frame.ClientId);
+        await SendPeerAckAsync(connection, frame.ClientId);
     }
 
-    private async Task HandlePeerReservationReleaseAsync(Socket socket, SocketMessageFrame frame)
+    private async Task HandlePeerReservationReleaseAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         if (ControlProtocol.TryDecode(frame, ControlMessageIds.RouteReservationRelease, out RouteReservationMessage reservation))
         {
             this.registry.ReleaseReservation(reservation.ReservationId);
         }
 
-        await SendPeerAckAsync(socket, frame.ClientId);
+        await SendPeerAckAsync(connection, frame.ClientId);
     }
 
-    private async Task HandleRegistrySnapshotRequestAsync(Socket socket, SocketMessageFrame frame)
+    private async Task HandleRegistrySnapshotRequestAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         await ControlProtocol.SendAsync(
-            socket,
+            connection,
             frame.ClientId,
             ControlMessageIds.RegistrySnapshotResponse,
             this.registry.GetStatus());
@@ -468,10 +470,12 @@ public class ControlServer : IDisposable
         {
             try
             {
-                using Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+                Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
                 await socket.ConnectAsync(IPAddress.Parse(peer.Host), peer.Port);
+                using SecureSocketConnection connection =
+                    await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketControl");
                 await ControlProtocol.SendAndReceiveAsync(
-                    socket,
+                    connection,
                     0,
                     messageId,
                     payload);
@@ -483,9 +487,9 @@ public class ControlServer : IDisposable
         }
     }
 
-    private Task SendPeerAckAsync(Socket socket, uint clientId)
+    private Task SendPeerAckAsync(SecureSocketConnection connection, uint clientId)
     {
-        return ControlProtocol.SendAsync(socket, clientId, ControlMessageIds.ControlRegisterAck, new
+        return ControlProtocol.SendAsync(connection, clientId, ControlMessageIds.ControlRegisterAck, new
         {
             clusterId = this.config.ClusterId,
             controlNodeId = this.config.NodeId,

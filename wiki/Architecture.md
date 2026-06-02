@@ -10,7 +10,7 @@ Client <- ControlServer       ROUTE_RESPONSE(host, port)
 Client -> SocketServer        direct TCP connection
 ```
 
-ControlServer는 TCP payload를 프록시하지 않습니다. 실제 장기 연결은 클라이언트와 SocketServer가 직접 유지합니다.
+ControlServer는 TCP payload를 프록시하지 않습니다. 실제 장기 연결은 클라이언트와 SocketServer가 직접 유지하며, 각 연결은 TLS 소켓 연결로 인증된 뒤 메시지 프레임을 송수신합니다.
 
 클라이언트 간 메시지 전송도 ControlServer가 payload를 프록시하지 않습니다. ControlServer는 target client 위치만 알려주고, 실제 payload는 SocketServer 간 relay로 이동합니다.
 

@@ -3,6 +3,7 @@ using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
+using SocketCommon.Model;
 using SocketServer.Model;
 
 namespace SocketTests.Model;
@@ -14,7 +15,7 @@ public class ConnectionSessionTests
     public async Task MarkReceivedUpdatesLastReceivedAtTest()
     {
         using SocketPair pair = await SocketPair.CreateAsync();
-        ConnectionSession session = new(7, pair.ServerSocket);
+        ConnectionSession session = new(7, pair.ServerConnection);
         DateTimeOffset initialLastReceivedAt = session.LastReceivedAt;
 
         await Task.Delay(10);
@@ -30,7 +31,7 @@ public class ConnectionSessionTests
     public async Task CloseIsIdempotentTest()
     {
         using SocketPair pair = await SocketPair.CreateAsync();
-        ConnectionSession session = new(1, pair.ServerSocket);
+        ConnectionSession session = new(1, pair.ServerConnection);
 
         Assert.IsTrue(session.Close());
         Assert.IsTrue(session.IsClosed);
@@ -39,15 +40,15 @@ public class ConnectionSessionTests
 
     private sealed class SocketPair : IDisposable
     {
-        private SocketPair(Socket serverSocket, Socket clientSocket)
+        private SocketPair(SecureSocketConnection serverConnection, SecureSocketConnection clientConnection)
         {
-            ServerSocket = serverSocket;
-            ClientSocket = clientSocket;
+            ServerConnection = serverConnection;
+            ClientConnection = clientConnection;
         }
 
-        public Socket ServerSocket { get; }
+        public SecureSocketConnection ServerConnection { get; }
 
-        public Socket ClientSocket { get; }
+        public SecureSocketConnection ClientConnection { get; }
 
         public static async Task<SocketPair> CreateAsync()
         {
@@ -61,14 +62,19 @@ public class ConnectionSessionTests
             Task connectTask = clientSocket.ConnectAsync(IPAddress.Loopback, port);
             Socket serverSocket = await listener.AcceptAsync();
             await connectTask;
+            Task<SecureSocketConnection> serverConnectionTask =
+                SecureSocketConnection.AuthenticateServerAsync(serverSocket, "SocketTests");
+            Task<SecureSocketConnection> clientConnectionTask =
+                SecureSocketConnection.AuthenticateClientAsync(clientSocket, "SocketTests");
+            await Task.WhenAll(serverConnectionTask, clientConnectionTask);
 
-            return new SocketPair(serverSocket, clientSocket);
+            return new SocketPair(await serverConnectionTask, await clientConnectionTask);
         }
 
         public void Dispose()
         {
-            ServerSocket.Dispose();
-            ClientSocket.Dispose();
+            ServerConnection.Dispose();
+            ClientConnection.Dispose();
         }
     }
 }

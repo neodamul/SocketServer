@@ -341,6 +341,11 @@ public static class ControlProtocol
         return SocketMessageFrame.SendAsync(socket, CreateFrame(clientId, messageId, payload));
     }
 
+    public static Task<bool> SendAsync<T>(SecureSocketConnection connection, uint clientId, uint messageId, T payload)
+    {
+        return SocketMessageFrame.SendAsync(connection, CreateFrame(clientId, messageId, payload));
+    }
+
     public static async Task<(bool Success, SocketMessageFrame Frame)> SendAndReceiveAsync<T>(
         Socket socket,
         uint clientId,
@@ -354,6 +359,28 @@ public static class ControlProtocol
         }
 
         Task<(bool Success, SocketMessageFrame Frame)> receiveTask = SocketMessageFrame.TryReceiveAsync(socket);
+        Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(timeoutMilliseconds));
+        if (completedTask != receiveTask)
+        {
+            return (false, null);
+        }
+
+        return await receiveTask;
+    }
+
+    public static async Task<(bool Success, SocketMessageFrame Frame)> SendAndReceiveAsync<T>(
+        SecureSocketConnection connection,
+        uint clientId,
+        uint messageId,
+        T payload,
+        int timeoutMilliseconds = 5000)
+    {
+        if (!await SendAsync(connection, clientId, messageId, payload))
+        {
+            return (false, null);
+        }
+
+        Task<(bool Success, SocketMessageFrame Frame)> receiveTask = SocketMessageFrame.TryReceiveAsync(connection);
         Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(timeoutMilliseconds));
         if (completedTask != receiveTask)
         {

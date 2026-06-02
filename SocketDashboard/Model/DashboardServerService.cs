@@ -1,6 +1,8 @@
 ﻿using System;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Threading.Tasks;
 using SocketCommon;
 using SocketCommon.Configuration;
@@ -67,14 +69,25 @@ public class DashboardServerService : IDisposable
         {
             return null;
         }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (AuthenticationException)
+        {
+            return null;
+        }
     }
 
     private static async Task<ClusterStatusSnapshot?> QueryControlClusterStatusAsync(EndpointConfig endpoint)
     {
+        LocalCertificateStore.GetOrCreate("SocketDashboard");
         using Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
         await socket.ConnectAsync(IPAddress.Parse(endpoint.Host), endpoint.Port);
+        using SecureSocketConnection connection =
+            await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketDashboard");
         (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
-            socket,
+            connection,
             0,
             ControlMessageIds.RegistrySnapshotRequest,
             new { requestedAt = DateTimeOffset.UtcNow });

@@ -81,6 +81,14 @@ public static class HelloWorldProtocol
             Array.Empty<byte>()));
     }
 
+    public static Task<bool> SendAsync(SecureSocketConnection connection, HelloWorldRequest request)
+    {
+        return SocketMessageFrame.SendAsync(connection, new SocketMessageFrame(
+            request.ClientId,
+            RequestMessageId,
+            Array.Empty<byte>()));
+    }
+
     public static bool Send(Socket socket, HelloWorldResponse response)
     {
         return SendAsync(socket, response).GetAwaiter().GetResult();
@@ -95,6 +103,20 @@ public static class HelloWorldProtocol
         }
 
         return SocketMessageFrame.SendAsync(socket, new SocketMessageFrame(
+            response.ClientId,
+            ResponseMessageId,
+            payload));
+    }
+
+    public static Task<bool> SendAsync(SecureSocketConnection connection, HelloWorldResponse response)
+    {
+        byte[] payload = Encoding.UTF8.GetBytes(response.Message);
+        if (payload.Length > SocketMessageFrame.MaxPayloadLength)
+        {
+            return Task.FromResult(false);
+        }
+
+        return SocketMessageFrame.SendAsync(connection, new SocketMessageFrame(
             response.ClientId,
             ResponseMessageId,
             payload));
@@ -118,6 +140,17 @@ public static class HelloWorldProtocol
         return (true, request);
     }
 
+    public static async Task<(bool Success, HelloWorldRequest Request)> TryReceiveRequestAsync(SecureSocketConnection connection)
+    {
+        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(connection);
+        if (!success || !TryDecodeRequest(frame, out HelloWorldRequest request))
+        {
+            return (false, null);
+        }
+
+        return (true, request);
+    }
+
     public static bool TryReceiveResponse(Socket socket, out HelloWorldResponse response)
     {
         (bool success, HelloWorldResponse receivedResponse) = TryReceiveResponseAsync(socket).GetAwaiter().GetResult();
@@ -128,6 +161,17 @@ public static class HelloWorldProtocol
     public static async Task<(bool Success, HelloWorldResponse Response)> TryReceiveResponseAsync(Socket socket)
     {
         (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(socket);
+        if (!success || !TryDecodeResponse(frame, out HelloWorldResponse response))
+        {
+            return (false, null);
+        }
+
+        return (true, response);
+    }
+
+    public static async Task<(bool Success, HelloWorldResponse Response)> TryReceiveResponseAsync(SecureSocketConnection connection)
+    {
+        (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(connection);
         if (!success || !TryDecodeResponse(frame, out HelloWorldResponse response))
         {
             return (false, null);

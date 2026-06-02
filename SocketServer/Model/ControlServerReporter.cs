@@ -219,6 +219,7 @@ public class ControlServerReporter : IDisposable
     {
         private readonly SemaphoreSlim sendLock = new(1, 1);
         private Socket socket;
+        private SecureSocketConnection connection;
 
         public ControlEndpointConnection(EndpointConfig endpoint)
         {
@@ -237,7 +238,7 @@ public class ControlServerReporter : IDisposable
             {
                 await this.EnsureConnectedAsync();
                 (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
-                    this.socket,
+                    this.connection,
                     clientId,
                     messageId,
                     payload);
@@ -258,7 +259,7 @@ public class ControlServerReporter : IDisposable
         {
             try
             {
-                this.socket?.Shutdown(SocketShutdown.Both);
+                this.connection?.Dispose();
             }
             catch (SocketException)
             {
@@ -268,6 +269,7 @@ public class ControlServerReporter : IDisposable
             }
             finally
             {
+                this.connection = null;
                 this.socket?.Dispose();
                 this.socket = null;
             }
@@ -280,7 +282,7 @@ public class ControlServerReporter : IDisposable
 
         private async Task EnsureConnectedAsync()
         {
-            if (this.socket != null && this.socket.Connected)
+            if (this.connection != null && this.connection.IsConnected)
             {
                 return;
             }
@@ -288,6 +290,7 @@ public class ControlServerReporter : IDisposable
             this.Close();
             this.socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
             await this.socket.ConnectAsync(IPAddress.Parse(this.Endpoint.Host), this.Endpoint.Port);
+            this.connection = await SecureSocketConnection.AuthenticateClientAsync(this.socket, "SocketServer");
         }
     }
 }

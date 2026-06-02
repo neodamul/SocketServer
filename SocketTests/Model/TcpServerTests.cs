@@ -8,6 +8,11 @@ using System.Threading.Tasks;
 using SocketClient.Model;
 using SocketCommon.Model;
 using SocketServer.Model;
+using AddressFamily = System.Net.Sockets.AddressFamily;
+using ProtocolType = System.Net.Sockets.ProtocolType;
+using Socket = System.Net.Sockets.Socket;
+using SocketException = System.Net.Sockets.SocketException;
+using SocketType = System.Net.Sockets.SocketType;
 
 namespace SocketTests.Model;
 [TestClass()]
@@ -105,18 +110,19 @@ public class TcpServerTests
     [TestMethod()]
     public void BindInPortRangeSkipsUsedPortTest()
     {
-        using System.Net.Sockets.Socket occupied = new(
-            System.Net.Sockets.AddressFamily.InterNetwork,
-            System.Net.Sockets.SocketType.Stream,
-            System.Net.Sockets.ProtocolType.Tcp);
-        occupied.Bind(new IPEndPoint(IPAddress.Loopback, TestPort));
+        (int occupiedPort, int nextPort) = GetAvailableConsecutivePorts();
+        using Socket occupied = new(
+            AddressFamily.InterNetwork,
+            SocketType.Stream,
+            ProtocolType.Tcp);
+        occupied.Bind(new IPEndPoint(IPAddress.Loopback, occupiedPort));
         occupied.Listen(1);
 
         TcpServer server = new(1, "testServer", "127.0.0.1", 0);
         try
         {
-            Assert.IsTrue(server.BindInPortRange(TestPort, TestPort + 1));
-            Assert.AreEqual(TestPort + 1, server.GetPort());
+            Assert.IsTrue(server.BindInPortRange(occupiedPort, nextPort));
+            Assert.AreEqual(nextPort, server.GetPort());
         }
         finally
         {
@@ -127,17 +133,18 @@ public class TcpServerTests
     [TestMethod()]
     public void BindInPortRangeFailsWhenRangeIsExhaustedTest()
     {
-        using System.Net.Sockets.Socket occupied = new(
-            System.Net.Sockets.AddressFamily.InterNetwork,
-            System.Net.Sockets.SocketType.Stream,
-            System.Net.Sockets.ProtocolType.Tcp);
-        occupied.Bind(new IPEndPoint(IPAddress.Loopback, TestPort));
+        (int occupiedPort, _) = GetAvailableConsecutivePorts();
+        using Socket occupied = new(
+            AddressFamily.InterNetwork,
+            SocketType.Stream,
+            ProtocolType.Tcp);
+        occupied.Bind(new IPEndPoint(IPAddress.Loopback, occupiedPort));
         occupied.Listen(1);
 
         TcpServer server = new(1, "testServer", "127.0.0.1", 0);
         try
         {
-            Assert.IsFalse(server.BindInPortRange(TestPort, TestPort));
+            Assert.IsFalse(server.BindInPortRange(occupiedPort, occupiedPort));
         }
         finally
         {
@@ -224,7 +231,7 @@ public class TcpServerTests
             Assert.IsTrue(firstClient.Connect());
             await WaitForStatusAsync(server, s => s.ConnectedClientCount == 1);
 
-            Assert.IsTrue(secondClient.Connect());
+            Assert.IsFalse(secondClient.Connect());
             TcpServerStatus status = await WaitForStatusAsync(server, s => s.TotalRejectedClients >= 1);
 
             Assert.AreEqual(1, status.ConnectedClientCount);
@@ -366,5 +373,31 @@ public class TcpServerTests
         }
 
         await task;
+    }
+
+    private static (int First, int Second) GetAvailableConsecutivePorts()
+    {
+        for (int port = 5200; port < 65000; port += 2)
+        {
+            using Socket first = CreateUnboundSocket();
+            using Socket second = CreateUnboundSocket();
+            try
+            {
+                first.Bind(new IPEndPoint(IPAddress.Loopback, port));
+                second.Bind(new IPEndPoint(IPAddress.Loopback, port + 1));
+                return (port, port + 1);
+            }
+            catch (SocketException)
+            {
+            }
+        }
+
+        Assert.Fail("Could not find available consecutive TCP ports.");
+        return (0, 0);
+    }
+
+    private static Socket CreateUnboundSocket()
+    {
+        return new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
     }
 }
