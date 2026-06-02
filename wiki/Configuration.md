@@ -8,6 +8,20 @@ SocketServer/config.json
 SocketClient/config.json
 ```
 
+각 프로젝트는 자체 `log4net.config`를 관리합니다. 실행 프로젝트와 테스트 프로젝트는 빌드 출력으로 자신의 `log4net.config`를 복사하고, 라이브러리 프로젝트는 프로젝트별 설정 파일만 보관해 참조 프로젝트 간 설정 파일 충돌을 피합니다.
+
+```text
+SocketCommon/log4net.config
+SocketClient/log4net.config
+SocketControl/log4net.config
+SocketServer/log4net.config
+SocketDashboard/log4net.config
+SocketLoadTest/log4net.config
+SocketTests/log4net.config
+```
+
+`SocketLoadTest`는 부하 테스트용 `log4net.load-test.config`를 우선 사용하고, 해당 파일이 없으면 `log4net.config`를 fallback으로 사용합니다.
+
 ## ControlServer
 
 ```json

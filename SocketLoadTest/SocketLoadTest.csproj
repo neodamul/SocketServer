@@ -15,7 +15,7 @@
 
   <ItemGroup>
     <None Include="log4net.load-test.config" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\log4net.config" Link="log4net.config" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="log4net.config" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

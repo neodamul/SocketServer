@@ -23,7 +23,7 @@ SocketServer.sln
 - SocketServer port range 바인딩과 서버별 최대/현재/접속가능 수 관리
 - ControlServer 브로커 기반 서버 등록, heartbeat, route 응답
 - 서버별 CPU/MEM/STORAGE 사용률 수집 및 대시보드 표시
-- log4net 공통 로깅
+- 프로젝트별 log4net 로깅 설정
 
 ## 요구 사항
 
