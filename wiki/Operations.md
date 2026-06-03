@@ -88,7 +88,17 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --b
 ControlServer route 사용:
 
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --host 127.0.0.1 --port 5000 --use-control-server
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k --host 127.0.0.1 --port 5000 --use-control-server --report-file reports/soak-10k.json
+```
+
+부하 테스트 preset:
+
+```text
+smoke       100 clients, 10s hold
+soak-1k     1,000 clients, 300s hold
+soak-10k    10,000 clients, 600s hold
+soak-50k    50,000 clients, 900s hold
+message-1k  1,000 clients, client message delivery/ack
 ```
 
 ## Scale Notes

@@ -84,7 +84,7 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --b
 ControlServer route 사용:
 
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --host 127.0.0.1 --port 5000 --use-control-server
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k --host 127.0.0.1 --port 5000 --use-control-server --report-file reports/soak-10k.json
 ```
 
 클라이언트 간 메시지 전송 부하:

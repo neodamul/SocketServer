@@ -36,7 +36,7 @@ dotnet test SocketTests/SocketTests.csproj
 대량 접속 검증은 `SocketLoadTest`에서 수행합니다.
 
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --use-control-server
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k --use-control-server --report-file reports/soak-10k.json
 ```
 
 기본 부하 테스트는 접속, 최초 healthcheck, healthcheck loop 유지 상태를 집계합니다. `--message-test`를 추가하면 연결된 클라이언트를 source/target 쌍으로 나누고 클라이언트 간 메시지 delivery와 source ack를 검증합니다.
@@ -47,6 +47,7 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --b
 
 주요 옵션:
 
+- `--profile`: `smoke`, `soak-1k`, `soak-10k`, `soak-50k`, `message-1k`
 - `--clients`: 생성할 클라이언트 수
 - `--batch-size`: 한 번에 증가시킬 클라이언트 수
 - `--hold-seconds`: 접속 유지 시간
@@ -57,6 +58,7 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --b
 - `--expected-connected`: 최소 연결 성공 수
 - `--healthcheck-timeout-seconds`: healthcheck 응답 timeout
 - `--message-timeout-seconds`: client message delivery/ack timeout
+- `--report-file`: 실행 옵션, counters, elapsed time을 JSON 파일로 저장
 
 기본 batch size는 100개 단위 증가입니다. 10,000개 이상 검증은 OS와 장비 설정을 먼저 확인해야 합니다.
 

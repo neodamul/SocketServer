@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using SocketClient.Model;
 using SocketCommon.Logging;
 using SocketServer.Model;
@@ -98,6 +99,7 @@ internal static class Program
 
         stopwatch.Stop();
         PrintSummary(counters, stopwatch.Elapsed);
+        WriteReport(options, counters, stopwatch.Elapsed);
         if (options.ExpectedConnected > 0 && counters.Connected < options.ExpectedConnected)
         {
             Console.Error.WriteLine($"Expected at least {options.ExpectedConnected} connected clients, but {counters.Connected} connected.");
@@ -331,10 +333,56 @@ internal static class Program
         Console.WriteLine($"Elapsed: {elapsed}");
     }
 
+    private static void WriteReport(LoadTestOptions options, LoadTestCounters counters, TimeSpan elapsed)
+    {
+        if (string.IsNullOrWhiteSpace(options.ReportFile))
+        {
+            return;
+        }
+
+        string? directory = Path.GetDirectoryName(options.ReportFile);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        LoadTestReport report = new()
+        {
+            Profile = options.Profile,
+            Clients = options.Clients,
+            BatchSize = options.BatchSize,
+            HoldSeconds = options.HoldSeconds,
+            Host = options.Host,
+            Port = options.Port,
+            ExternalServer = options.ExternalServer,
+            UseControlServer = options.UseControlServer,
+            MessageTest = options.MessageTest,
+            MessageRounds = options.MessageRounds,
+            RampDelayMilliseconds = options.RampDelayMilliseconds,
+            ExpectedConnected = options.ExpectedConnected,
+            Attempted = counters.Attempted,
+            Connected = counters.Connected,
+            ConnectFail = counters.ConnectFail,
+            HealthCheckSuccess = counters.HealthCheckSuccess,
+            HealthCheckFail = counters.HealthCheckFail,
+            RegisterFail = counters.RegisterFail,
+            MessageAttempted = counters.MessageAttempted,
+            MessageSuccess = counters.MessageSuccess,
+            MessageFail = counters.MessageFail,
+            ElapsedMilliseconds = elapsed.TotalMilliseconds,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+
+        File.WriteAllText(
+            options.ReportFile,
+            JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+        Console.WriteLine($"Report written: {options.ReportFile}");
+    }
+
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: dotnet run --project SocketLoadTest -- [--clients N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--external-server] [--use-control-server] [--message-test] [--message-rounds N] [--ramp-delay-ms N] [--expected-connected N] [--healthcheck-timeout-seconds N] [--message-timeout-seconds N]");
+            "Usage: dotnet run --project SocketLoadTest -- [--profile smoke|soak-1k|soak-10k|soak-50k|message-1k] [--clients N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--external-server] [--use-control-server] [--message-test] [--message-rounds N] [--ramp-delay-ms N] [--expected-connected N] [--healthcheck-timeout-seconds N] [--message-timeout-seconds N] [--report-file PATH]");
     }
 }
 
@@ -371,7 +419,9 @@ internal sealed record LoadTestOptions(
     int RampDelayMilliseconds,
     int ExpectedConnected,
     int HealthCheckTimeoutSeconds,
-    int MessageTimeoutSeconds)
+    int MessageTimeoutSeconds,
+    string Profile,
+    string ReportFile)
 {
     public static bool TryParse(string[] args, out LoadTestOptions options, out string error)
     {
@@ -388,7 +438,9 @@ internal sealed record LoadTestOptions(
             RampDelayMilliseconds: 0,
             ExpectedConnected: 0,
             HealthCheckTimeoutSeconds: 10,
-            MessageTimeoutSeconds: 10);
+            MessageTimeoutSeconds: 10,
+            Profile: "custom",
+            ReportFile: "");
         error = string.Empty;
 
         for (int index = 0; index < args.Length; index++)
@@ -404,6 +456,19 @@ internal sealed record LoadTestOptions(
 
             switch (arg)
             {
+                case "--profile":
+                    if (!TryReadString(args, ref index, value, arg, out string profile, out error))
+                    {
+                        return false;
+                    }
+
+                    if (!TryCreateProfile(profile, options, out options, out error))
+                    {
+                        return false;
+                    }
+
+                    break;
+
                 case "--clients":
                     if (!TryReadInt(args, ref index, value, arg, 0, int.MaxValue, out int clients, out error))
                     {
@@ -524,12 +589,84 @@ internal sealed record LoadTestOptions(
                     options = options with { MessageTimeoutSeconds = messageTimeoutSeconds };
                     break;
 
+                case "--report-file":
+                    if (!TryReadString(args, ref index, value, arg, out string reportFile, out error))
+                    {
+                        return false;
+                    }
+
+                    options = options with { ReportFile = reportFile };
+                    break;
+
                 default:
                     error = $"Unknown argument: {arg}";
                     return false;
             }
         }
 
+        return true;
+    }
+
+    private static bool TryCreateProfile(
+        string profile,
+        LoadTestOptions current,
+        out LoadTestOptions options,
+        out string error)
+    {
+        options = profile.ToLowerInvariant() switch
+        {
+            "smoke" => current with
+            {
+                Profile = "smoke",
+                Clients = 100,
+                BatchSize = 100,
+                HoldSeconds = 10,
+                ExpectedConnected = 100
+            },
+            "soak-1k" => current with
+            {
+                Profile = "soak-1k",
+                Clients = 1000,
+                BatchSize = 100,
+                HoldSeconds = 300,
+                ExpectedConnected = 1000
+            },
+            "soak-10k" => current with
+            {
+                Profile = "soak-10k",
+                Clients = 10000,
+                BatchSize = 100,
+                HoldSeconds = 600,
+                ExpectedConnected = 10000
+            },
+            "soak-50k" => current with
+            {
+                Profile = "soak-50k",
+                Clients = 50000,
+                BatchSize = 100,
+                HoldSeconds = 900,
+                ExpectedConnected = 50000
+            },
+            "message-1k" => current with
+            {
+                Profile = "message-1k",
+                Clients = 1000,
+                BatchSize = 100,
+                HoldSeconds = 0,
+                MessageTest = true,
+                MessageRounds = 1,
+                ExpectedConnected = 1000
+            },
+            _ => current
+        };
+
+        if (ReferenceEquals(options, current) && !string.Equals(profile, "custom", StringComparison.OrdinalIgnoreCase))
+        {
+            error = $"Unknown profile: {profile}";
+            return false;
+        }
+
+        error = string.Empty;
         return true;
     }
 
@@ -585,4 +722,53 @@ internal sealed record LoadTestOptions(
         index++;
         return args[index];
     }
+}
+
+internal sealed class LoadTestReport
+{
+    public string Profile { get; init; } = "";
+
+    public int Clients { get; init; }
+
+    public int BatchSize { get; init; }
+
+    public int HoldSeconds { get; init; }
+
+    public string Host { get; init; } = "";
+
+    public int Port { get; init; }
+
+    public bool ExternalServer { get; init; }
+
+    public bool UseControlServer { get; init; }
+
+    public bool MessageTest { get; init; }
+
+    public int MessageRounds { get; init; }
+
+    public int RampDelayMilliseconds { get; init; }
+
+    public int ExpectedConnected { get; init; }
+
+    public int Attempted { get; init; }
+
+    public int Connected { get; init; }
+
+    public int ConnectFail { get; init; }
+
+    public int HealthCheckSuccess { get; init; }
+
+    public int HealthCheckFail { get; init; }
+
+    public int RegisterFail { get; init; }
+
+    public int MessageAttempted { get; init; }
+
+    public int MessageSuccess { get; init; }
+
+    public int MessageFail { get; init; }
+
+    public double ElapsedMilliseconds { get; init; }
+
+    public DateTimeOffset CompletedAt { get; init; }
 }

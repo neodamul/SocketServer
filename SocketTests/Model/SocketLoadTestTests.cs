@@ -1,4 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System;
+using System.IO;
+using System.Text.Json;
 using System.Threading.Tasks;
 using SocketLoadTest;
 
@@ -52,6 +55,39 @@ public class SocketLoadTestTests
     }
 
     [TestMethod]
+    public void ParseLoadTestProfileOptionsTest()
+    {
+        Assert.IsTrue(LoadTestOptions.TryParse(
+            new[]
+            {
+                "--profile", "soak-10k",
+                "--hold-seconds", "1",
+                "--report-file", "load-report.json"
+            },
+            out LoadTestOptions options,
+            out string error));
+
+        Assert.AreEqual(string.Empty, error);
+        Assert.AreEqual("soak-10k", options.Profile);
+        Assert.AreEqual(10000, options.Clients);
+        Assert.AreEqual(100, options.BatchSize);
+        Assert.AreEqual(1, options.HoldSeconds);
+        Assert.AreEqual(10000, options.ExpectedConnected);
+        Assert.AreEqual("load-report.json", options.ReportFile);
+    }
+
+    [TestMethod]
+    public void ParseLoadTestProfileRejectsUnknownProfileTest()
+    {
+        Assert.IsFalse(LoadTestOptions.TryParse(
+            new[] { "--profile", "unknown" },
+            out _,
+            out string error));
+
+        Assert.AreEqual("Unknown profile: unknown", error);
+    }
+
+    [TestMethod]
     public async Task RunMessageLoadTestWithTwoClientsTest()
     {
         int exitCode = await Program.RunAsync(new[]
@@ -65,5 +101,39 @@ public class SocketLoadTestTests
         });
 
         Assert.AreEqual(0, exitCode);
+    }
+
+    [TestMethod]
+    public async Task RunLoadTestWritesSummaryReportTest()
+    {
+        string reportFile = Path.Combine(Path.GetTempPath(), $"socket-load-report-{Guid.NewGuid():N}.json");
+        try
+        {
+            int exitCode = await Program.RunAsync(new[]
+            {
+                "--clients", "1",
+                "--batch-size", "1",
+                "--hold-seconds", "0",
+                "--port", "0",
+                "--report-file", reportFile
+            });
+
+            Assert.AreEqual(0, exitCode);
+            Assert.IsTrue(File.Exists(reportFile));
+
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(reportFile));
+            JsonElement root = document.RootElement;
+            Assert.AreEqual("custom", root.GetProperty("Profile").GetString());
+            Assert.AreEqual(1, root.GetProperty("Clients").GetInt32());
+            Assert.AreEqual(1, root.GetProperty("Connected").GetInt32());
+            Assert.AreEqual(1, root.GetProperty("HealthCheckSuccess").GetInt32());
+        }
+        finally
+        {
+            if (File.Exists(reportFile))
+            {
+                File.Delete(reportFile);
+            }
+        }
     }
 }
