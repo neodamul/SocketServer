@@ -1,4 +1,5 @@
 const fields = {
+  refreshNow: document.getElementById("refreshNow"),
   refreshIntervalSeconds: document.getElementById("refreshIntervalSeconds"),
   health: document.getElementById("health"),
   selectedServerName: document.getElementById("selectedServerName"),
@@ -313,6 +314,10 @@ async function refresh() {
   }
 
   refreshInFlight = true;
+  if (fields.refreshNow) {
+    fields.refreshNow.disabled = true;
+  }
+
   try {
     const response = await fetch("/api/server/status", { cache: "no-store" });
     if (!response.ok) {
@@ -332,6 +337,9 @@ async function refresh() {
     setHealth(false);
   } finally {
     refreshInFlight = false;
+    if (fields.refreshNow) {
+      fields.refreshNow.disabled = false;
+    }
   }
 }
 
@@ -369,6 +377,8 @@ fields.refreshIntervalSeconds?.addEventListener("change", () => {
   scheduleRefresh();
   refresh();
 });
+
+fields.refreshNow?.addEventListener("click", refresh);
 
 refresh();
 scheduleRefresh();

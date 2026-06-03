@@ -69,11 +69,6 @@ p {
   background: var(--panel);
 }
 
-.refresh-control span {
-  font-size: 13px;
-  font-weight: 700;
-}
-
 .refresh-control select {
   min-width: 76px;
   padding: 4px 8px;
@@ -83,6 +78,24 @@ p {
   color: var(--text);
   font: inherit;
   font-size: 14px;
+}
+
+.refresh-control button {
+  min-width: 72px;
+  padding: 5px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.refresh-control button:disabled {
+  cursor: default;
+  opacity: 0.65;
 }
 
 .status-pill {
