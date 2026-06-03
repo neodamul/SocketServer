@@ -460,6 +460,25 @@ public class BackendServerRegistry
         }
     }
 
+    public IReadOnlyCollection<BackendServerSnapshot> MarkExpiredServersUnhealthy()
+    {
+        lock (this.syncRoot)
+        {
+            Dictionary<string, long> versions = this.servers.ToDictionary(item => item.Key, item => item.Value.Version);
+            bool normalized = NormalizeExpiredServers();
+            if (!normalized)
+            {
+                return Array.Empty<BackendServerSnapshot>();
+            }
+
+            this.SaveState();
+            return this.servers.Values
+                .Where(server => server.Health == ServerHealthState.Unhealthy)
+                .Where(server => !versions.TryGetValue(server.InstanceId, out long previousVersion) || server.Version != previousVersion)
+                .ToArray();
+        }
+    }
+
     public BackendRegistryState SnapshotState()
     {
         lock (this.syncRoot)
@@ -594,12 +613,13 @@ public class BackendServerRegistry
                 continue;
             }
 
+            bool serverChanged = false;
             if (server.Health != ServerHealthState.Unhealthy ||
                 server.CurrentConnections != 0 ||
                 server.ReservedConnections != 0 ||
                 server.AvailableConnections != 0)
             {
-                changed = true;
+                serverChanged = true;
             }
 
             server.Health = ServerHealthState.Unhealthy;
@@ -611,7 +631,7 @@ public class BackendServerRegistry
             {
                 if (session.State != "ServerDisconnected")
                 {
-                    changed = true;
+                    serverChanged = true;
                 }
 
                 session.State = "ServerDisconnected";
@@ -622,7 +642,7 @@ public class BackendServerRegistry
             {
                 if (location.State != "ServerDisconnected")
                 {
-                    changed = true;
+                    serverChanged = true;
                 }
 
                 location.State = "ServerDisconnected";
@@ -632,7 +652,24 @@ public class BackendServerRegistry
 
             foreach (RouteReservationMessage reservation in this.reservations.Values.Where(item => item.InstanceId == server.InstanceId))
             {
-                changed |= this.reservations.TryRemove(reservation.ReservationId, out _);
+                serverChanged |= this.reservations.TryRemove(reservation.ReservationId, out _);
+            }
+
+            if (serverChanged)
+            {
+                server.Version = Interlocked.Increment(ref this.version);
+                server.UpdatedAt = now;
+                foreach (SessionEventMessage session in this.sessions.Values.Where(item => item.InstanceId == server.InstanceId))
+                {
+                    session.Version = Math.Max(session.Version, server.Version);
+                }
+
+                foreach (ClientLocationMessage location in this.clientLocations.Values.Where(item => item.InstanceId == server.InstanceId))
+                {
+                    location.Version = Math.Max(location.Version, server.Version);
+                }
+
+                changed = true;
             }
         }
 

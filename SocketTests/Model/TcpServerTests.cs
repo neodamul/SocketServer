@@ -250,7 +250,7 @@ public class TcpServerTests
     }
 
     [TestMethod()]
-    public async Task IdleTimeoutClosesInactiveClientTest()
+    public async Task CleanupSchedulerClosesInactiveClientAfterHealthCheckTimeoutTest()
     {
         TcpServer server = new(
             1,

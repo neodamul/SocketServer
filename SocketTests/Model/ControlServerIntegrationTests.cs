@@ -271,6 +271,50 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
+    public async Task ControlServerCleanupSchedulerClosesStaleControlConnectionTest()
+    {
+        using ControlServer controlServer = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-cleanup",
+                Host = "127.0.0.1",
+                Port = 0,
+                RouteReservationSeconds = 5,
+                HeartbeatTimeoutSeconds = 1
+            }
+        });
+        Assert.IsTrue(controlServer.Start());
+
+        using TcpServer socketServer = CreateStartedSocketServer(7, "server-7-a");
+        using ControlServerReporter reporter = new(
+            socketServer,
+            new[] { new EndpointConfig { Host = "127.0.0.1", Port = controlServer.Port } },
+            "socket-cluster-1",
+            0,
+            0);
+
+        await reporter.RegisterAsync();
+        await WaitForClusterAsync(controlServer, status => status.HealthyServerCount == 1 && status.TotalAvailableConnections == 10);
+        await WaitForConditionAsync(() => controlServer.ActiveConnectionCount == 1);
+
+        await WaitForConditionAsync(() => controlServer.ActiveConnectionCount == 0, timeoutSeconds: 4);
+        ClusterStatusSnapshot staleStatus = await WaitForClusterAsync(
+            controlServer,
+            status => status.ServerCount == 1 &&
+                status.HealthyServerCount == 0 &&
+                status.TotalAvailableConnections == 0);
+        Assert.AreEqual(0, staleStatus.HealthyServerCount);
+
+        reporter.StartHeartbeatLoop(TimeSpan.FromMilliseconds(100));
+        ClusterStatusSnapshot restoredStatus = await WaitForClusterAsync(
+            controlServer,
+            status => status.HealthyServerCount == 1 && status.TotalAvailableConnections == 10);
+        Assert.AreEqual(1, restoredStatus.HealthyServerCount);
+    }
+
+    [TestMethod]
     public async Task ActiveActiveControlsRouteThreeServersAndPlatformSampleClientsMessageTest()
     {
         SocketSecurityConfig security = new()
@@ -476,6 +520,23 @@ public class ControlServerIntegrationTests
         while (DateTimeOffset.UtcNow < deadline);
 
         Assert.Fail("Timed out waiting for client location count.");
+    }
+
+    private static async Task WaitForConditionAsync(Func<bool> predicate, int timeoutSeconds = 5)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
+        do
+        {
+            if (predicate())
+            {
+                return;
+            }
+
+            await Task.Delay(25);
+        }
+        while (DateTimeOffset.UtcNow < deadline);
+
+        Assert.Fail("Timed out waiting for condition.");
     }
 
     private static async Task<T> WithTimeoutAsync<T>(Task<T> task)

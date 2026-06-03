@@ -22,12 +22,13 @@ public class ControlServer : IDisposable
     private readonly IReadOnlyCollection<EndpointConfig> peers;
     private readonly BackendServerRegistry registry;
     private readonly ControlHealthThreshold healthThreshold;
-    private readonly ConcurrentDictionary<long, Socket> activeSockets = new();
+    private readonly ConcurrentDictionary<long, ActiveControlConnection> activeConnections = new();
     private Socket? listener;
     private Socket? peerListener;
     private CancellationTokenSource? cancellation;
     private Task? acceptTask;
     private Task? peerAcceptTask;
+    private Task? connectionCleanupTask;
     private long nextActiveSocketId;
     private bool disposedValue;
 
@@ -48,6 +49,8 @@ public class ControlServer : IDisposable
 
     public BackendServerRegistry Registry => this.registry;
 
+    public int ActiveConnectionCount => this.activeConnections.Count;
+
     public int Port => this.listener?.LocalEndPoint is IPEndPoint endPoint ? endPoint.Port : this.config.Port;
 
     public bool Start()
@@ -65,6 +68,7 @@ public class ControlServer : IDisposable
             LocalCertificateStore.GetOrCreate("SocketControl");
             this.cancellation = new CancellationTokenSource();
             this.acceptTask = this.RunAcceptLoopAsync(this.cancellation.Token);
+            this.connectionCleanupTask = this.RunConnectionCleanupLoopAsync(this.cancellation.Token);
             if (this.config.PeerSyncPort > 0 && this.config.PeerSyncPort != this.config.Port)
             {
                 this.peerListener = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
@@ -99,18 +103,20 @@ public class ControlServer : IDisposable
         this.cancellation?.Cancel();
         this.listener?.Dispose();
         this.peerListener?.Dispose();
-        foreach (Socket socket in this.activeSockets.Values)
+        foreach (ActiveControlConnection connection in this.activeConnections.Values)
         {
-            socket.Dispose();
+            connection.Socket.Dispose();
         }
 
         await WaitForTaskAsync(this.acceptTask, timeout);
         await WaitForTaskAsync(this.peerAcceptTask, timeout);
+        await WaitForTaskAsync(this.connectionCleanupTask, timeout);
 
         this.listener = null;
         this.peerListener = null;
         this.acceptTask = null;
         this.peerAcceptTask = null;
+        this.connectionCleanupTask = null;
         this.cancellation?.Dispose();
         this.cancellation = null;
         Logger.Info($"ControlServer stopped. nodeId={this.config.NodeId}");
@@ -165,7 +171,8 @@ public class ControlServer : IDisposable
     private async Task HandleConnectionAsync(Socket socket)
     {
         long activeSocketId = Interlocked.Increment(ref this.nextActiveSocketId);
-        this.activeSockets[activeSocketId] = socket;
+        ActiveControlConnection activeConnection = new(socket);
+        this.activeConnections[activeSocketId] = activeConnection;
         SecureSocketConnection? acceptedConnection = null;
         string serverInstanceId = "";
         try
@@ -179,14 +186,17 @@ public class ControlServer : IDisposable
                     break;
                 }
 
+                activeConnection.MarkReceived();
                 switch (frame.MessageId)
                 {
                     case ControlMessageIds.ServerRegister:
                         serverInstanceId = GetServerRegisterInstanceId(frame);
+                        activeConnection.ServerInstanceId = serverInstanceId;
                         await HandleServerRegisterAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.ServerHeartbeat:
                         serverInstanceId = GetServerHeartbeatInstanceId(frame, serverInstanceId);
+                        activeConnection.ServerInstanceId = serverInstanceId;
                         await HandleServerHeartbeatAsync(acceptedConnection, frame);
                         break;
                     case ControlMessageIds.SessionOpened:
@@ -257,16 +267,60 @@ public class ControlServer : IDisposable
         finally
         {
             acceptedConnection?.Dispose();
-            this.activeSockets.TryRemove(activeSocketId, out _);
-            if (!string.IsNullOrWhiteSpace(serverInstanceId))
+            this.activeConnections.TryRemove(activeSocketId, out _);
+            string disconnectedInstanceId = string.IsNullOrWhiteSpace(serverInstanceId)
+                ? activeConnection.ServerInstanceId
+                : serverInstanceId;
+            if (!string.IsNullOrWhiteSpace(disconnectedInstanceId))
             {
-                BackendServerSnapshot? snapshot = this.registry.MarkServerDisconnected(serverInstanceId);
+                BackendServerSnapshot? snapshot = this.registry.MarkServerDisconnected(disconnectedInstanceId);
                 if (snapshot != null)
                 {
-                    Logger.Warn($"SocketServer control channel disconnected. instanceId={serverInstanceId}");
+                    Logger.Warn($"SocketServer control channel disconnected. instanceId={disconnectedInstanceId}");
                     await PublishServerSnapshotAsync(snapshot);
                 }
             }
+        }
+    }
+
+    private async Task RunConnectionCleanupLoopAsync(CancellationToken cancellationToken)
+    {
+        TimeSpan cleanupInterval = GetConnectionCleanupInterval();
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(cleanupInterval, cancellationToken);
+            }
+            catch (TaskCanceledException)
+            {
+                break;
+            }
+
+            await CleanupUnhealthyConnectionsAsync();
+        }
+    }
+
+    private async Task CleanupUnhealthyConnectionsAsync()
+    {
+        TimeSpan heartbeatTimeout = GetHeartbeatTimeout();
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        foreach (KeyValuePair<long, ActiveControlConnection> item in this.activeConnections)
+        {
+            ActiveControlConnection connection = item.Value;
+            if (now - connection.LastReceivedAt <= heartbeatTimeout)
+            {
+                continue;
+            }
+
+            Logger.Warn($"ControlServer closing stale control connection. activeSocketId={item.Key}, instanceId={connection.ServerInstanceId}");
+            connection.Socket.Dispose();
+        }
+
+        foreach (BackendServerSnapshot snapshot in this.registry.MarkExpiredServersUnhealthy())
+        {
+            Logger.Warn($"SocketServer heartbeat expired. instanceId={snapshot.InstanceId}");
+            await PublishServerSnapshotAsync(snapshot);
         }
     }
 
@@ -598,6 +652,18 @@ public class ControlServer : IDisposable
             : fallback;
     }
 
+    private TimeSpan GetHeartbeatTimeout()
+    {
+        return TimeSpan.FromSeconds(this.config.HeartbeatTimeoutSeconds <= 0 ? 90 : this.config.HeartbeatTimeoutSeconds);
+    }
+
+    private TimeSpan GetConnectionCleanupInterval()
+    {
+        double heartbeatTimeoutMilliseconds = GetHeartbeatTimeout().TotalMilliseconds;
+        double intervalMilliseconds = Math.Min(5000, Math.Max(250, heartbeatTimeoutMilliseconds / 2));
+        return TimeSpan.FromMilliseconds(intervalMilliseconds);
+    }
+
     private static async Task WaitForTaskAsync(Task? task, TimeSpan timeout)
     {
         if (task == null || task.IsCompleted)
@@ -626,6 +692,28 @@ public class ControlServer : IDisposable
     private bool IsStopping()
     {
         return this.disposedValue || this.cancellation?.IsCancellationRequested == true;
+    }
+
+    private sealed class ActiveControlConnection
+    {
+        private long lastReceivedAtTicks;
+
+        public ActiveControlConnection(Socket socket)
+        {
+            this.Socket = socket;
+            this.MarkReceived();
+        }
+
+        public Socket Socket { get; }
+
+        public string ServerInstanceId { get; set; } = "";
+
+        public DateTimeOffset LastReceivedAt => new(Interlocked.Read(ref this.lastReceivedAtTicks), TimeSpan.Zero);
+
+        public void MarkReceived()
+        {
+            Interlocked.Exchange(ref this.lastReceivedAtTicks, DateTimeOffset.UtcNow.Ticks);
+        }
     }
 
     public void Dispose()

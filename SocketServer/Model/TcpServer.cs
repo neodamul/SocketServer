@@ -352,7 +352,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             tasks[i] = this.RunAcceptWorkerAsync(cancellationToken);
         }
 
-        tasks[^1] = this.RunIdleTimeoutLoopAsync(cancellationToken);
+        tasks[^1] = this.RunUnhealthyConnectionCleanupLoopAsync(cancellationToken);
         await Task.WhenAll(tasks);
     }
 
@@ -430,7 +430,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         }
     }
 
-    private async Task RunIdleTimeoutLoopAsync(CancellationToken cancellationToken)
+    private async Task RunUnhealthyConnectionCleanupLoopAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -443,21 +443,29 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 break;
             }
 
-            DateTimeOffset now = DateTimeOffset.UtcNow;
-            foreach (ConnectionSession session in this.connectedClients.Values)
-            {
-                if (now - session.LastReceivedAt <= this.idleTimeout)
-                {
-                    continue;
-                }
+            this.CleanupUnhealthyConnections(DateTimeOffset.UtcNow);
+        }
+    }
 
-                if (this.RemoveConnectedClient(session))
-                {
-                    Interlocked.Increment(ref this.totalIdleTimeoutClients);
-                    Logger.Debug($"Client closed by idle timeout. connectionId={session.Id}, remote={session.RemoteEndPoint}");
-                }
+    private int CleanupUnhealthyConnections(DateTimeOffset now)
+    {
+        int closedCount = 0;
+        foreach (ConnectionSession session in this.connectedClients.Values)
+        {
+            if (now - session.LastReceivedAt <= this.idleTimeout)
+            {
+                continue;
+            }
+
+            if (this.RemoveConnectedClient(session))
+            {
+                closedCount++;
+                Interlocked.Increment(ref this.totalIdleTimeoutClients);
+                Logger.Debug($"Client closed by cleanup scheduler. connectionId={session.Id}, remote={session.RemoteEndPoint}");
             }
         }
+
+        return closedCount;
     }
 
     private async Task HandleClientAsync(ConnectionSession session, CancellationToken cancellationToken)

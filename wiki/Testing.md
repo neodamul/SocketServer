@@ -19,10 +19,12 @@ dotnet test SocketTests/SocketTests.csproj
 - TLS disabled message encryption transport with AES-GCM/HMAC
 - SocketAsyncEventArgs pool and mapped slab receive buffer
 - TcpClient/TcpServer 기본 송수신
+- SocketServer inactive client cleanup scheduler
 - port range binding
 - ControlServer route
 - ControlServer peer registry sync
 - ControlServer registry file persistence and stale heartbeat normalization
+- ControlServer stale control connection cleanup scheduler
 - client-to-client local delivery
 - SocketServer-to-SocketServer client message relay
 - SocketServer control channel disconnect detection
