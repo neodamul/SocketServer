@@ -30,7 +30,7 @@ dotnet test SocketTests/SocketTests.csproj
 - heartbeat timeout route exclusion
 - degraded resource route exclusion
 - dashboard cluster snapshot
-- dashboard, ControlServer, SocketServer, sample client registration integration
+- dashboard, ControlServer, SocketServer, sample client registration and message send/receive integration
 - dashboard liveness, readiness, metrics models
 - sample client settings and client-to-client message flow
 - native Android sample protocol validation script

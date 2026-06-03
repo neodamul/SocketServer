@@ -102,7 +102,7 @@ public class DashboardServerServiceTests
     }
 
     [TestMethod]
-    public async Task DashboardStatusReflectsSampleClientRegisteredThroughControlServerTest()
+    public async Task DashboardStatusReflectsSampleClientMessageThroughControlServerTest()
     {
         SocketSecurityConfig security = new()
         {
@@ -159,30 +159,56 @@ public class DashboardServerServiceTests
         Assert.AreEqual("server-dashboard-e2e", registeredStatus.Cluster.Servers.First().InstanceId);
         Assert.AreNotEqual("dashboardServer", registeredStatus.Cluster.Servers.First().InstanceId);
 
-        using SampleSocketClientSession sampleClient = new();
-        sampleClient.Configure(new SampleClientSettings
-        {
-            ClientId = 701,
-            ClientName = "sample-dashboard-e2e",
-            Host = "127.0.0.1",
-            Port = controlServer.Port,
-            UseControlServer = true,
-            ReceiveTimeoutSeconds = 3,
-            Security = security
-        });
+        using SampleSocketClientSession sourceClient = new();
+        using SampleSocketClientSession targetClient = new();
+        sourceClient.Configure(CreateSampleSettings(701, "sample-source-e2e", controlServer.Port, security));
+        targetClient.Configure(CreateSampleSettings(702, "sample-target-e2e", controlServer.Port, security));
 
-        Assert.IsTrue(await sampleClient.ConnectAsync());
-        Assert.IsTrue(await sampleClient.RegisterAsync());
+        Assert.IsTrue(await sourceClient.ConnectAsync());
+        Assert.IsTrue(await targetClient.ConnectAsync());
+        Assert.IsTrue(await sourceClient.RegisterAsync());
+        Assert.IsTrue(await targetClient.RegisterAsync());
 
         DashboardServerStatus clientStatus = await WaitForDashboardStatusAsync(
             dashboard,
-            status => status.Cluster.TotalSessionCount == 1 &&
-                status.Cluster.TotalCurrentConnections == 1);
+            status => status.Cluster.TotalSessionCount == 2 &&
+                status.Cluster.TotalCurrentConnections == 2);
 
-        Assert.AreEqual(1, clientStatus.Cluster.TotalSessionCount);
-        Assert.AreEqual(1, clientStatus.Cluster.TotalCurrentConnections);
-        Assert.AreEqual(9, clientStatus.Cluster.TotalAvailableConnections);
+        Assert.AreEqual(2, clientStatus.Cluster.TotalSessionCount);
+        Assert.AreEqual(2, clientStatus.Cluster.TotalCurrentConnections);
+        Assert.AreEqual(8, clientStatus.Cluster.TotalAvailableConnections);
         Assert.AreEqual("server-dashboard-e2e", clientStatus.Cluster.Servers.First().InstanceId);
+
+        Task<ClientMessageDelivery?> receiveTask = targetClient.ReceiveMessageAsync();
+        bool sent = await sourceClient.SendMessageAsync(702, "dashboard-e2e-message");
+        ClientMessageDelivery? delivery = await receiveTask;
+
+        Assert.IsTrue(sent);
+        Assert.IsNotNull(delivery);
+        Assert.AreEqual((uint)701, delivery!.SourceClientId);
+        Assert.AreEqual((uint)702, delivery.TargetClientId);
+        Assert.AreEqual("dashboard-e2e-message", delivery.Content);
+        Assert.AreEqual("Message delivered to 702", sourceClient.GetState().Status);
+        Assert.AreEqual("Message received", targetClient.GetState().Status);
+        Assert.AreEqual("701: dashboard-e2e-message", targetClient.GetState().LastReceivedMessage);
+    }
+
+    private static SampleClientSettings CreateSampleSettings(
+        int clientId,
+        string clientName,
+        int controlPort,
+        SocketSecurityConfig security)
+    {
+        return new SampleClientSettings
+        {
+            ClientId = clientId,
+            ClientName = clientName,
+            Host = "127.0.0.1",
+            Port = controlPort,
+            UseControlServer = true,
+            ReceiveTimeoutSeconds = 3,
+            Security = security
+        };
     }
 
     private static async Task<DashboardServerStatus> WaitForDashboardStatusAsync(
