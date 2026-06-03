@@ -66,6 +66,7 @@ public class ControlServer : IDisposable
                 this.peerAcceptTask = this.RunAcceptLoopAsync(this.cancellation.Token, this.peerListener);
             }
 
+            _ = Task.Run(this.SyncRegistryFromPeersAsync);
             Logger.Info($"ControlServer started. nodeId={this.config.NodeId}, endpoint={this.config.Host}:{this.Port}");
             return true;
         }
@@ -483,6 +484,36 @@ public class ControlServer : IDisposable
             catch (SocketException exception)
             {
                 Logger.Warn($"ControlServer peer sync failed. peer={peer.Host}:{peer.Port}", exception);
+            }
+        }
+    }
+
+    private async Task SyncRegistryFromPeersAsync()
+    {
+        foreach (EndpointConfig peer in this.peers)
+        {
+            try
+            {
+                Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+                await socket.ConnectAsync(IPAddress.Parse(peer.Host), peer.Port);
+                using SecureSocketConnection connection =
+                    await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketControl");
+                (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
+                    connection,
+                    0,
+                    ControlMessageIds.RegistrySnapshotRequest,
+                    new RegistrySnapshotRequest { RequestedAt = DateTimeOffset.UtcNow });
+                if (success &&
+                    frame.MessageId == ControlMessageIds.RegistrySnapshotResponse &&
+                    ControlProtocol.TryDecode(frame, ControlMessageIds.RegistrySnapshotResponse, out ClusterStatusSnapshot snapshot))
+                {
+                    this.registry.ImportSnapshot(snapshot);
+                    Logger.Info($"ControlServer registry snapshot imported. peer={peer.Host}:{peer.Port}, servers={snapshot.ServerCount}");
+                }
+            }
+            catch (SocketException exception)
+            {
+                Logger.Warn($"ControlServer initial peer sync failed. peer={peer.Host}:{peer.Port}", exception);
             }
         }
     }

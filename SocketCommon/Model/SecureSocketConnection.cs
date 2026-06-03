@@ -6,6 +6,7 @@ using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
+using SocketCommon.Configuration;
 
 namespace SocketCommon.Model;
 
@@ -16,7 +17,12 @@ public sealed class SecureSocketConnection : IDisposable
     public const string TargetHost = "SocketServerLocal";
     public const string CertificateDirectoryEnvironmentVariable = "SOCKET_CERTIFICATE_DIR";
     public const string RequireTls13EnvironmentVariable = "SOCKET_REQUIRE_TLS13";
-    private const int AuthenticationTimeoutMilliseconds = 5000;
+
+    private static readonly object OptionsLock = new();
+    private static SslProtocols configuredProtocols = SslProtocols.None;
+    private static bool requireTls13;
+    private static int authenticationTimeoutMilliseconds = 5000;
+    private static string certificateDirectory = "";
 
     private readonly NetworkStream networkStream;
     private readonly SslStream sslStream;
@@ -38,6 +44,55 @@ public sealed class SecureSocketConnection : IDisposable
 
     public bool IsConnected => !this.disposed && this.Socket.Connected;
 
+    public static SslProtocols ConfiguredProtocols
+    {
+        get
+        {
+            lock (OptionsLock)
+            {
+                return configuredProtocols;
+            }
+        }
+    }
+
+    public static bool RequireTls13
+    {
+        get
+        {
+            lock (OptionsLock)
+            {
+                return requireTls13;
+            }
+        }
+    }
+
+    public static int AuthenticationTimeoutMilliseconds
+    {
+        get
+        {
+            lock (OptionsLock)
+            {
+                return authenticationTimeoutMilliseconds;
+            }
+        }
+    }
+
+    public static void Configure(SocketSecurityConfig config)
+    {
+        if (config == null)
+        {
+            return;
+        }
+
+        lock (OptionsLock)
+        {
+            configuredProtocols = ParseProtocols(config.TlsProtocol);
+            requireTls13 = config.RequireTls13;
+            authenticationTimeoutMilliseconds = Math.Max(1000, config.AuthenticationTimeoutMilliseconds);
+            certificateDirectory = config.CertificateDirectory?.Trim() ?? "";
+        }
+    }
+
     public static async Task<SecureSocketConnection> AuthenticateClientAsync(Socket socket, string moduleName)
     {
         NetworkStream networkStream = new(socket, ownsSocket: true);
@@ -49,7 +104,7 @@ public sealed class SecureSocketConnection : IDisposable
         await WaitForAuthenticationAsync(sslStream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
         {
             TargetHost = TargetHost,
-            EnabledSslProtocols = SslProtocols.None,
+            EnabledSslProtocols = ConfiguredProtocols,
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck
         }));
         EnsureTls13IfRequired(sslStream);
@@ -66,7 +121,7 @@ public sealed class SecureSocketConnection : IDisposable
         await WaitForAuthenticationAsync(sslStream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
         {
             ServerCertificate = certificate,
-            EnabledSslProtocols = SslProtocols.None,
+            EnabledSslProtocols = ConfiguredProtocols,
             ClientCertificateRequired = false,
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck
         }));
@@ -184,7 +239,7 @@ public sealed class SecureSocketConnection : IDisposable
         }
 
         using X509Certificate2 rootCertificate = LocalCertificateStore.GetOrCreateRootAuthority();
-        return LocalCertificateStore.IsSignedByRoot(certificate2, rootCertificate);
+            return LocalCertificateStore.IsSignedByRoot(certificate2, rootCertificate);
     }
 
     private static async Task WaitForAuthenticationAsync(Task authenticationTask)
@@ -202,10 +257,42 @@ public sealed class SecureSocketConnection : IDisposable
 
     private static void EnsureTls13IfRequired(SslStream sslStream)
     {
-        if (Environment.GetEnvironmentVariable(RequireTls13EnvironmentVariable) == "true" &&
+        if ((RequireTls13 || Environment.GetEnvironmentVariable(RequireTls13EnvironmentVariable) == "true") &&
             sslStream.SslProtocol != SslProtocols.Tls13)
         {
             throw new AuthenticationException($"TLS 1.3 is required. negotiated={sslStream.SslProtocol}");
+        }
+    }
+
+    private static SslProtocols ParseProtocols(string protocol)
+    {
+        if (string.IsNullOrWhiteSpace(protocol) ||
+            string.Equals(protocol, "Auto", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(protocol, "None", StringComparison.OrdinalIgnoreCase))
+        {
+            return SslProtocols.None;
+        }
+
+        SslProtocols result = SslProtocols.None;
+        foreach (string token in protocol.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (Enum.TryParse(token, ignoreCase: true, out SslProtocols parsed))
+            {
+                result |= parsed;
+            }
+        }
+
+        return result == SslProtocols.None ? SslProtocols.Tls13 : result;
+    }
+
+    internal static string ConfiguredCertificateDirectory
+    {
+        get
+        {
+            lock (OptionsLock)
+            {
+                return certificateDirectory;
+            }
         }
     }
 }
@@ -274,6 +361,12 @@ public static class LocalCertificateStore
 
     public static string GetCertificateDirectory()
     {
+        string configuredSocketDirectory = SecureSocketConnection.ConfiguredCertificateDirectory;
+        if (!string.IsNullOrWhiteSpace(configuredSocketDirectory))
+        {
+            return configuredSocketDirectory;
+        }
+
         string configuredDirectory = Environment.GetEnvironmentVariable(
             SecureSocketConnection.CertificateDirectoryEnvironmentVariable);
         if (!string.IsNullOrWhiteSpace(configuredDirectory))

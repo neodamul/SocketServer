@@ -15,6 +15,8 @@ public class ControlServerConfigFile
 {
     public ControlServerNodeConfig ControlServer { get; set; } = new();
 
+    public SocketSecurityConfig Security { get; set; } = new();
+
     public List<EndpointConfig> Peers { get; set; } = new();
 
     public ClusterRegistryConfig Registry { get; set; } = new();
@@ -56,6 +58,8 @@ public class ClusterRegistryConfig
 
 public class SocketServerConfigFile
 {
+    public SocketSecurityConfig Security { get; set; } = new();
+
     public List<EndpointConfig> ControlServers { get; set; } = new()
     {
         new EndpointConfig { Host = Constants.LocalHostIpAddress, Port = Constants.LocalHostPort }
@@ -89,7 +93,20 @@ public class SocketServerInstanceConfig
 
 public class SocketClientConfigFile
 {
+    public SocketSecurityConfig Security { get; set; } = new();
+
     public SocketClientConnectionConfig Client { get; set; } = new();
+}
+
+public class SocketSecurityConfig
+{
+    public string TlsProtocol { get; set; } = "Tls13";
+
+    public bool RequireTls13 { get; set; } = true;
+
+    public string CertificateDirectory { get; set; } = "";
+
+    public int AuthenticationTimeoutMilliseconds { get; set; } = 5000;
 }
 
 public class SocketClientConnectionConfig

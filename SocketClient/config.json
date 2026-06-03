@@ -1,4 +1,10 @@
 {
+  "security": {
+    "tlsProtocol": "Tls13",
+    "requireTls13": true,
+    "certificateDirectory": "",
+    "authenticationTimeoutMilliseconds": 5000
+  },
   "client": {
     "clientId": 1,
     "name": "socket-client-1",

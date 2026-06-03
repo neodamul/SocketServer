@@ -22,6 +22,23 @@ SocketTests/log4net.config
 
 `SocketLoadTest`는 부하 테스트용 `log4net.load-test.config`를 우선 사용하고, 해당 파일이 없으면 `log4net.config`를 fallback으로 사용합니다.
 
+## Security
+
+실행 프로젝트는 `security` 설정을 통해 TLS 정책을 적용합니다.
+
+```json
+{
+  "security": {
+    "tlsProtocol": "Tls13",
+    "requireTls13": true,
+    "certificateDirectory": "",
+    "authenticationTimeoutMilliseconds": 5000
+  }
+}
+```
+
+`tlsProtocol`은 기본 `Tls13`입니다. `Auto` 또는 `None`으로 설정하면 OS/.NET 기본 협상을 사용합니다. 운영 설정은 TLS 1.3 강제를 기본으로 둡니다.
+
 ## Certificates
 
 각 모듈은 최초 TLS 연결 시 로컬 인증서를 자동 생성합니다. Root CA는 하나만 만들고, 모듈별 leaf 인증서는 이 Root CA로 서명합니다.
@@ -34,7 +51,7 @@ Certificates/SocketControl.pfx
 Certificates/SocketDashboard.pfx
 ```
 
-기본 저장 위치는 솔루션 루트의 `Certificates/`입니다. `SOCKET_CERTIFICATE_DIR` 환경 변수를 설정하면 다른 로컬 경로를 사용할 수 있습니다. 인증서는 로컬 개발/테스트용이며 leaf subject는 `CN=SocketServerLocal`, SAN은 `SocketServerLocal`, `localhost`입니다. TLS 1.3을 필수로 검증해야 하는 환경은 `SOCKET_REQUIRE_TLS13=true`를 설정합니다. 플랫폼이 TLS 1.3을 협상하지 못하면 연결은 실패합니다.
+기본 저장 위치는 솔루션 루트의 `Certificates/`입니다. `security.certificateDirectory` 또는 `SOCKET_CERTIFICATE_DIR` 환경 변수를 설정하면 다른 로컬 경로를 사용할 수 있습니다. 인증서는 로컬 개발/테스트용이며 leaf subject는 `CN=SocketServerLocal`, SAN은 `SocketServerLocal`, `localhost`입니다. TLS 1.3을 필수로 검증해야 하는 환경은 `security.requireTls13=true` 또는 `SOCKET_REQUIRE_TLS13=true`를 설정합니다. 플랫폼이 TLS 1.3을 협상하지 못하면 연결은 실패합니다.
 
 ## ControlServer
 

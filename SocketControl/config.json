@@ -1,4 +1,10 @@
 {
+  "security": {
+    "tlsProtocol": "Tls13",
+    "requireTls13": true,
+    "certificateDirectory": "",
+    "authenticationTimeoutMilliseconds": 5000
+  },
   "controlServer": {
     "clusterId": "socket-cluster-1",
     "nodeId": "control-1",

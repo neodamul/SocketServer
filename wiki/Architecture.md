@@ -79,7 +79,7 @@ SocketServer는 ControlServer와 persistent control channel을 유지합니다. 
 
 ## ControlServer Active-Active
 
-ControlServer는 `peers` 설정을 통해 서로 registry 정보를 공유합니다. 현재 구현은 in-memory registry 기반이며 다음 메시지를 peer로 전파합니다.
+ControlServer는 `peers` 설정을 통해 서로 registry 정보를 공유합니다. 노드 시작 시 peer registry snapshot을 먼저 요청해 이미 등록된 서버 정보를 보정하고, 이후 변경 이벤트를 peer로 전파합니다. 현재 구현은 in-memory registry 기반이며 다음 메시지를 peer로 전파합니다.
 
 - `SERVER_REGISTRY_UPSERT`
 - `SESSION_SUMMARY_UPSERT`

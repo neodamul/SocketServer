@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using SocketCommon.Configuration;
 using SocketCommon.Logging;
+using SocketCommon.Model;
 using SocketServer.Model;
 
 namespace SocketServer;
@@ -17,6 +18,7 @@ class Program
 
         string configPath = args.FirstOrDefault(arg => arg.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) ?? "config.json";
         SocketServerConfigFile config = SocketConfigLoader.Load<SocketServerConfigFile>(configPath);
+        SecureSocketConnection.Configure(config.Security);
         int? selectedServerId = ReadServerId(args);
         bool runAll = args.Contains("--all", StringComparer.OrdinalIgnoreCase) || !selectedServerId.HasValue;
 

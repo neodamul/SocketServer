@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Threading.Tasks;
+using SocketCommon.Configuration;
 using SocketCommon.Model;
 
 namespace SocketTests.Model;
@@ -54,5 +55,27 @@ public class SecureSocketConnectionTests
 
         Assert.IsTrue(server.NegotiatedProtocol is SslProtocols.Tls12 or SslProtocols.Tls13);
         Assert.IsTrue(client.NegotiatedProtocol is SslProtocols.Tls12 or SslProtocols.Tls13);
+    }
+
+    [TestMethod]
+    public void SecureSocketOptionsCanBeConfiguredFromConfigTest()
+    {
+        SecureSocketConnection.Configure(new SocketSecurityConfig
+        {
+            TlsProtocol = "Tls13",
+            RequireTls13 = true,
+            AuthenticationTimeoutMilliseconds = 2500
+        });
+
+        Assert.AreEqual(SslProtocols.Tls13, SecureSocketConnection.ConfiguredProtocols);
+        Assert.IsTrue(SecureSocketConnection.RequireTls13);
+        Assert.AreEqual(2500, SecureSocketConnection.AuthenticationTimeoutMilliseconds);
+
+        SecureSocketConnection.Configure(new SocketSecurityConfig
+        {
+            TlsProtocol = "Auto",
+            RequireTls13 = false,
+            AuthenticationTimeoutMilliseconds = 5000
+        });
     }
 }
