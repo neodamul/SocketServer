@@ -37,6 +37,8 @@ public class ConnectionSession
 
     public Task HandlerTask { get; set; }
 
+    public bool HasReportedOpened { get; private set; }
+
     public bool IsClosed => this.closed != 0;
 
     public async Task<bool> SendAsync(SocketMessageFrame frame)
@@ -70,6 +72,11 @@ public class ConnectionSession
         }
 
         this.LastReceivedAt = DateTimeOffset.UtcNow;
+    }
+
+    public void MarkReportedOpened()
+    {
+        this.HasReportedOpened = true;
     }
 
     public bool Close()

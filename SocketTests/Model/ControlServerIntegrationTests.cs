@@ -339,6 +339,70 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
+    public async Task SocketServerRefreshesRelayListAndBroadcastsAcrossAllKnownServersTest()
+    {
+        using ControlServer controlServer = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-broadcast-all",
+                Host = "127.0.0.1",
+                Port = 0,
+                RouteReservationSeconds = 5
+            }
+        });
+        Assert.IsTrue(controlServer.Start());
+
+        using TcpServer sourceServer = CreateStartedSocketServer(12, "server-12-a");
+        using TcpServer emptyServer = CreateStartedSocketServer(13, "server-13-a");
+        using TcpServer targetServer = CreateStartedSocketServer(14, "server-14-a");
+        using TcpClient sourceClient = new(121, "source-121", "127.0.0.1", sourceServer.GetPort());
+        using TcpClient targetClient = new(122, "target-122", "127.0.0.1", targetServer.GetPort());
+
+        Assert.IsTrue(sourceClient.Connect());
+        Assert.IsTrue(targetClient.Connect());
+        Assert.IsTrue(await sourceClient.RegisterClientAsync());
+        Assert.IsTrue(await targetClient.RegisterClientAsync());
+
+        EndpointConfig[] controlEndpoints = { new() { Host = "127.0.0.1", Port = controlServer.Port } };
+        using ControlServerReporter sourceReporter = CreateReporter(sourceServer, controlEndpoints);
+        using ControlServerReporter emptyReporter = CreateReporter(emptyServer, controlEndpoints);
+        using ControlServerReporter targetReporter = CreateReporter(targetServer, controlEndpoints);
+        await sourceReporter.RegisterAsync();
+        await emptyReporter.RegisterAsync();
+        await targetReporter.RegisterAsync();
+        await WaitForClusterAsync(controlServer, status => status.ServerCount == 3 && status.TotalSessionCount == 0);
+
+        int relayServerCount = await sourceServer.RefreshRelayServersFromControlServersAsync();
+        Assert.AreEqual(2, relayServerCount);
+        Assert.AreEqual(2, sourceServer.RelayServerCount);
+
+        Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
+            sourceClient.SendClientMessageAsync(122, "broadcast-all-relay-message");
+        (bool delivered, ClientMessageDelivery delivery) =
+            await WithTimeoutAsync(targetClient.TryReceiveClientMessageAsync());
+        (bool acked, ClientMessageAck ack, ClientMessageError error) =
+            await WithTimeoutAsync(sendTask);
+
+        Assert.IsTrue(delivered);
+        Assert.AreEqual((uint)121, delivery.SourceClientId);
+        Assert.AreEqual((uint)122, delivery.TargetClientId);
+        Assert.AreEqual("broadcast-all-relay-message", delivery.Content);
+        Assert.IsTrue(acked);
+        Assert.IsNotNull(ack);
+        Assert.IsNull(error);
+        Assert.AreEqual("server-14-a", ack.TargetInstanceId);
+
+        ClusterStatusSnapshot statusAfterRelay = await WaitForClusterAsync(
+            controlServer,
+            status => status.ServerCount == 3 &&
+                status.TotalSessionCount == 1);
+        Assert.AreEqual(1, statusAfterRelay.TotalSessionCount);
+        Assert.AreEqual(1, controlServer.Registry.ClientLocations.Count);
+    }
+
+    [TestMethod]
     public async Task ControlServerMarksSocketServerUnavailableWhenControlChannelDisconnectsTest()
     {
         using ControlServer controlServer = new(new ControlServerConfigFile
@@ -621,7 +685,11 @@ public class ControlServerIntegrationTests
         }
         while (DateTimeOffset.UtcNow < deadline);
 
-        Assert.Fail("Timed out waiting for cluster status.");
+        Assert.Fail(
+            $"Timed out waiting for cluster status. " +
+            $"servers={status.ServerCount}, healthy={status.HealthyServerCount}, " +
+            $"sessions={status.TotalSessionCount}, current={status.TotalCurrentConnections}, " +
+            $"reserved={status.TotalReservedConnections}, available={status.TotalAvailableConnections}");
         return status;
     }
 

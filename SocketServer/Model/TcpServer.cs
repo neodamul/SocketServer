@@ -470,7 +470,6 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 this.AddConnectedClient(session);
                 Interlocked.Increment(ref this.totalAcceptedClients);
                 Logger.Debug($"Client accepted. connectionId={session.Id}, remote={session.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
-                this.NotifySessionOpened(session);
                 session.HandlerTask = this.HandleClientAsync(session, cancellationToken);
             }
             catch (SocketException exception)
@@ -561,9 +560,23 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                     break;
                 }
 
+                if (ClientMessageProtocol.TryDecodeRelay(frame, out ServerRelayMessage relayMessage))
+                {
+                    session.MarkReceived(frame.ClientId);
+                    Interlocked.Increment(ref this.totalReceivedMessages);
+                    await this.HandleServerRelayAsync(session, relayMessage);
+                    break;
+                }
+
                 session.MarkReceived(frame.ClientId);
                 this.UpdateClientIndex(session);
                 Interlocked.Increment(ref this.totalReceivedMessages);
+                if (!session.HasReportedOpened)
+                {
+                    session.MarkReportedOpened();
+                    this.NotifySessionOpened(session);
+                }
+
                 this.NotifySessionUpdated(session);
                 bool handled = await this.HandleClientMessageAsync(session, frame);
                 if (!handled)
@@ -981,7 +994,10 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             Interlocked.Decrement(ref this.activeConnectionSlots);
             Interlocked.Increment(ref this.totalClosedClients);
             Logger.Debug($"Client closed. connectionId={removedSession.Id}, remote={removedSession.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
-            this.NotifySessionClosed(removedSession);
+            if (removedSession.HasReportedOpened)
+            {
+                this.NotifySessionClosed(removedSession);
+            }
         }
 
         return true;
