@@ -23,6 +23,7 @@ public class SocketSampleClientTests
             Port = 5001,
             UseControlServer = false,
             ReceiveTimeoutSeconds = 3,
+            HealthCheckIntervalSeconds = 5,
             Security = new SocketSecurityConfig
             {
                 TransportMode = "MessageEncryption",
@@ -43,6 +44,7 @@ public class SocketSampleClientTests
         clone.Security.TlsProtocol = "Tls13";
 
         Assert.AreEqual(12, clone.ClientId);
+        Assert.AreEqual(5, clone.HealthCheckIntervalSeconds);
         Assert.AreEqual("MessageEncryption", clone.Security.TransportMode);
         Assert.AreEqual("Auto", settings.Security.TlsProtocol);
         Assert.AreEqual("Tls13", clone.Security.TlsProtocol);
@@ -85,6 +87,38 @@ public class SocketSampleClientTests
         Assert.AreEqual("sample-message", delivery.Content);
         Assert.AreEqual("302", target.GetState().ClientId.ToString());
         Assert.AreEqual("301: sample-message", target.GetState().LastReceivedMessage);
+    }
+
+    [TestMethod]
+    public async Task SampleClientSessionStartsHealthCheckAfterRegisterTest()
+    {
+        using TcpServer server = new(
+            31,
+            "sample-health-server",
+            "127.0.0.1",
+            0,
+            maxConnections: 10,
+            pendingAcceptCount: 2,
+            idleTimeout: TimeSpan.FromSeconds(2),
+            instanceId: "sample-health-server");
+        Assert.IsTrue(server.BindInPortRange(0, 0));
+        Assert.IsTrue(server.Listen());
+        Assert.IsTrue(server.StartClientAcceptLoop());
+
+        using SampleSocketClientSession client = new();
+        SampleClientSettings settings = CreateSettings(303, server.GetPort());
+        settings.HealthCheckIntervalSeconds = 1;
+        client.Configure(settings);
+
+        Assert.IsTrue(await client.ConnectAsync());
+        Assert.IsTrue(await client.RegisterAsync());
+
+        await Task.Delay(TimeSpan.FromSeconds(4));
+
+        SampleClientState state = client.GetState();
+        Assert.IsTrue(state.IsConnected);
+        Assert.IsTrue(state.IsRegistered);
+        Assert.AreEqual(1, server.GetConnectedClientCount());
     }
 
     [TestMethod]

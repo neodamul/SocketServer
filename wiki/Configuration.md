@@ -225,6 +225,7 @@ Samples/SocketSample.Android/app/src/main/res/raw/config.json
 - `host`, `port`: 직접 SocketServer 또는 ControlServer endpoint
 - `useControlServer`: `true`이면 ControlServer route 요청 후 SocketServer에 연결
 - `receiveTimeoutSeconds`: receive 버튼 대기 시간
+- `healthCheckIntervalSeconds`: 등록 후 keepalive healthcheck 전송 간격
 - `security`: TLS/mTLS 설정
 
 iOS/macOS 샘플은 화면에서 `Client ID`, `Host`, `Port`, local self-signed certificate 허용 여부를 설정합니다. Swift 샘플 프로젝트 파일은 `Samples/SocketSample.iOS/project.yml`, `Samples/SocketSample.macOS/project.yml`에서 XcodeGen으로 생성합니다.

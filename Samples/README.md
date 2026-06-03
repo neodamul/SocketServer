@@ -14,7 +14,7 @@ dotnet run --project Samples/SocketSample.Net/SocketSample.Net.csproj
 http://127.0.0.1:5090
 ```
 
-서버 정보는 `Samples/SocketSample.Net/appsettings.json`의 `sampleClient` 섹션에서 기본값을 관리하고, 화면에서도 `Host`, `Port`, `Use ControlServer`, `Client ID`를 수정할 수 있습니다. `security.transportMode`는 기본 `Tls`이며, `MessageEncryption`을 사용하려면 서버와 같은 `SOCKET_MESSAGE_SECRET` 값을 설정합니다.
+서버 정보는 `Samples/SocketSample.Net/appsettings.json`의 `sampleClient` 섹션에서 기본값을 관리하고, 화면에서도 `Host`, `Port`, `Use ControlServer`, `Client ID`를 수정할 수 있습니다. 등록 성공 후 `healthCheckIntervalSeconds` 간격으로 keepalive를 유지합니다. `security.transportMode`는 기본 `Tls`이며, `MessageEncryption`을 사용하려면 서버와 같은 `SOCKET_MESSAGE_SECRET` 값을 설정합니다.
 
 ## iOS
 

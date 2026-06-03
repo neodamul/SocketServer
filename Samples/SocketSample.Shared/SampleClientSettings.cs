@@ -16,6 +16,8 @@ public sealed class SampleClientSettings
 
     public int ReceiveTimeoutSeconds { get; set; } = 10;
 
+    public int HealthCheckIntervalSeconds { get; set; } = 30;
+
     public SocketSecurityConfig Security { get; set; } = new();
 
     public SocketOperationConfig SocketOptions { get; set; } = new();
@@ -30,6 +32,7 @@ public sealed class SampleClientSettings
             Port = this.Port,
             UseControlServer = this.UseControlServer,
             ReceiveTimeoutSeconds = this.ReceiveTimeoutSeconds,
+            HealthCheckIntervalSeconds = this.HealthCheckIntervalSeconds,
             Security = new SocketSecurityConfig
             {
                 TransportMode = this.Security.TransportMode,
