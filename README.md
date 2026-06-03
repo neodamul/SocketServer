@@ -18,7 +18,6 @@ SocketServer.sln
 
 ## 핵심 기능
 
-- 12바이트 헤더, protobuf payload, 4KB payload 제한
 - TLS 기반 소켓 연결, optional mTLS, TLS 비활성 시 AES-GCM/HMAC 메시지 보호
 - healthcheck, HelloWorld, ControlServer route 프로토콜
 - 클라이언트 간 메시지 전송과 SocketServer 간 relay
