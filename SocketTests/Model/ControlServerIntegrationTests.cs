@@ -23,53 +23,25 @@ public class ControlServerIntegrationTests
     [TestMethod]
     public async Task ClientReceivesRouteAndConnectsToSocketServerTest()
     {
-        using ControlServer controlServer = new(new ControlServerConfigFile
-        {
-            ControlServer = new ControlServerNodeConfig
-            {
-                ClusterId = "socket-cluster-1",
-                NodeId = "control-test",
-                Host = "127.0.0.1",
-                Port = 0,
-                RouteReservationSeconds = 5
-            }
-        });
-        Assert.IsTrue(controlServer.Start());
-
-        using TcpServer socketServer = new(
-            1,
-            "server-1-a",
-            "127.0.0.1",
-            0,
-            maxConnections: 10,
-            pendingAcceptCount: 2,
-            idleTimeout: TimeSpan.FromSeconds(30),
-            instanceId: "server-1-a");
-        Assert.IsTrue(socketServer.BindInPortRange(0, 0));
-        Assert.IsTrue(socketServer.Listen());
-        Assert.IsTrue(socketServer.StartClientAcceptLoop());
-
-        using ControlServerReporter reporter = new(
-            socketServer,
-            new[] { new EndpointConfig { Host = "127.0.0.1", Port = controlServer.Port } },
-            "socket-cluster-1",
-            0,
-            0);
-        await reporter.RegisterAsync();
-        await WaitForClusterAsync(controlServer, status => status.TotalAvailableConnections == 10);
+        using ControlServerPair controls = CreateStartedControlPair("route");
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(1, "server-route");
+        servers.AttachReporters(controls.Endpoints);
+        await servers.RegisterAsync();
+        await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
+        await WaitForClusterAsync(controls.ControlB, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
 
         using TcpClient client = new(7, "client-7");
-        Assert.IsTrue(await client.ConnectViaControlServerAsync("127.0.0.1", controlServer.Port));
+        Assert.IsTrue(await client.ConnectViaControlServerAsync("127.0.0.1", controls.ControlA.Port));
         Assert.IsTrue(await client.SendHealthCheckAsync());
         (bool received, HealthCheckMessage message) = await WithTimeoutAsync(client.TryReceiveHealthCheckAsync());
 
         Assert.IsTrue(received);
         Assert.AreEqual(HealthCheckMessageType.Pong, message.Type);
         ClusterStatusSnapshot routeStatus = await WaitForClusterAsync(
-            controlServer,
+            controls.ControlA,
             status => status.TotalReservedConnections == 0 && status.TotalSessionCount == 1);
         Assert.AreEqual(0, routeStatus.TotalReservedConnections);
-        Assert.AreEqual(10, routeStatus.TotalAvailableConnections);
+        Assert.AreEqual(40, routeStatus.TotalAvailableConnections);
         Assert.AreEqual(1, routeStatus.TotalSessionCount);
     }
 
@@ -103,31 +75,14 @@ public class ControlServerIntegrationTests
         });
         Assert.IsTrue(primaryControl.Start());
 
-        using TcpServer socketServer = new(
-            2,
-            "server-2-a",
-            "127.0.0.1",
-            0,
-            maxConnections: 20,
-            pendingAcceptCount: 2,
-            idleTimeout: TimeSpan.FromSeconds(30),
-            instanceId: "server-2-a");
-        Assert.IsTrue(socketServer.BindInPortRange(0, 0));
-        Assert.IsTrue(socketServer.Listen());
-        Assert.IsTrue(socketServer.StartClientAcceptLoop());
-
-        using ControlServerReporter reporter = new(
-            socketServer,
-            new[] { new EndpointConfig { Host = "127.0.0.1", Port = primaryControl.Port } },
-            "socket-cluster-1",
-            0,
-            0);
-        await reporter.RegisterAsync();
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(2, "server-peer");
+        servers.AttachReporters(new[] { new EndpointConfig { Host = "127.0.0.1", Port = primaryControl.Port } });
+        await servers.RegisterAsync();
 
         ClusterStatusSnapshot peerStatus = await WaitForClusterAsync(
             peerControl,
-            status => status.TotalAvailableConnections == 20);
-        Assert.AreEqual(1, peerStatus.ServerCount);
+            status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
+        Assert.AreEqual(4, peerStatus.ServerCount);
 
         using TcpClient client = new(8, "client-8");
         Assert.IsTrue(await client.ConnectViaControlServerAsync("127.0.0.1", peerControl.Port));
@@ -169,40 +124,29 @@ public class ControlServerIntegrationTests
         });
         Assert.IsTrue(primaryControl.Start());
 
-        using TcpServer socketServer = CreateStartedSocketServer(9, "server-9-a");
-        using ControlServerReporter reporter = new(
-            socketServer,
-            new[] { new EndpointConfig { Host = "127.0.0.1", Port = primaryControl.Port } },
-            "socket-cluster-1",
-            0,
-            0);
-        await reporter.RegisterAsync();
-        await WaitForClusterAsync(primaryControl, status => status.ServerCount == 1 && status.TotalAvailableConnections == 10);
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(9, "server-periodic");
+        servers.AttachReporters(new[] { new EndpointConfig { Host = "127.0.0.1", Port = primaryControl.Port } });
+        await servers.RegisterAsync();
+        await WaitForClusterAsync(primaryControl, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
 
         ClusterStatusSnapshot peerStatus = await WaitForClusterAsync(
             peerControl,
-            status => status.ServerCount == 1 && status.TotalAvailableConnections == 10,
+            status => status.ServerCount == 4 && status.TotalAvailableConnections == 40,
             timeoutSeconds: 6);
-        Assert.AreEqual(1, peerStatus.ServerCount);
-        Assert.AreEqual(10, peerStatus.TotalAvailableConnections);
+        Assert.AreEqual(4, peerStatus.ServerCount);
+        Assert.AreEqual(40, peerStatus.TotalAvailableConnections);
     }
 
     [TestMethod]
     public async Task ClientMessageDeliveredBetweenClientsOnSameSocketServerTest()
     {
-        using TcpServer socketServer = new(
-            3,
-            "server-3-a",
-            "127.0.0.1",
-            0,
-            maxConnections: 10,
-            pendingAcceptCount: 2,
-            idleTimeout: TimeSpan.FromSeconds(30),
-            instanceId: "server-3-a");
-        Assert.IsTrue(socketServer.BindInPortRange(0, 0));
-        Assert.IsTrue(socketServer.Listen());
-        Assert.IsTrue(socketServer.StartClientAcceptLoop());
+        using ControlServerPair controls = CreateStartedControlPair("same-server");
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(30, "server-same");
+        servers.AttachReporters(controls.Endpoints);
+        await servers.RegisterAsync();
+        await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
 
+        TcpServer socketServer = servers.Servers[0];
         using TcpClient sourceClient = new(31, "source-31", "127.0.0.1", socketServer.GetPort());
         using TcpClient targetClient = new(32, "target-32", "127.0.0.1", socketServer.GetPort());
 
@@ -225,51 +169,29 @@ public class ControlServerIntegrationTests
         Assert.IsTrue(acked);
         Assert.IsNotNull(ack);
         Assert.IsNull(error);
-        Assert.AreEqual("server-3-a", ack.TargetInstanceId);
+        Assert.AreEqual(socketServer.InstanceId, ack.TargetInstanceId);
     }
 
     [TestMethod]
     public async Task ClientMessageRelayedBetweenClientsOnDifferentSocketServersTest()
     {
-        using ControlServer controlServer = new(new ControlServerConfigFile
-        {
-            ControlServer = new ControlServerNodeConfig
-            {
-                ClusterId = "socket-cluster-1",
-                NodeId = "control-relay",
-                Host = "127.0.0.1",
-                Port = 0,
-                RouteReservationSeconds = 5
-            }
-        });
-        Assert.IsTrue(controlServer.Start());
+        using ControlServerPair controls = CreateStartedControlPair("relay");
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(40, "server-relay");
+        servers.AttachReporters(controls.Endpoints);
+        await servers.RegisterAsync();
+        await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4);
+        await WaitForClusterAsync(controls.ControlB, status => status.ServerCount == 4);
 
-        using TcpServer sourceServer = CreateStartedSocketServer(4, "server-4-a");
-        using TcpServer targetServer = CreateStartedSocketServer(5, "server-5-a");
-        using ControlServerReporter sourceReporter = new(
-            sourceServer,
-            new[] { new EndpointConfig { Host = "127.0.0.1", Port = controlServer.Port } },
-            "socket-cluster-1",
-            0,
-            0);
-        using ControlServerReporter targetReporter = new(
-            targetServer,
-            new[] { new EndpointConfig { Host = "127.0.0.1", Port = controlServer.Port } },
-            "socket-cluster-1",
-            0,
-            0);
-
-        await sourceReporter.RegisterAsync();
-        await targetReporter.RegisterAsync();
-        await WaitForClusterAsync(controlServer, status => status.ServerCount == 2);
-
+        TcpServer sourceServer = servers.Servers[0];
+        TcpServer targetServer = servers.Servers[3];
         using TcpClient sourceClient = new(41, "source-41", "127.0.0.1", sourceServer.GetPort());
         using TcpClient targetClient = new(42, "target-42", "127.0.0.1", targetServer.GetPort());
         Assert.IsTrue(sourceClient.Connect());
         Assert.IsTrue(targetClient.Connect());
         Assert.IsTrue(await sourceClient.RegisterClientAsync());
         Assert.IsTrue(await targetClient.RegisterClientAsync());
-        await WaitForClientLocationCountAsync(controlServer, 2);
+        await WaitForClientLocationCountAsync(controls.ControlA, 2);
+        await WaitForClientLocationCountAsync(controls.ControlB, 2);
 
         Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
             sourceClient.SendClientMessageAsync(42, "cross-server-message");
@@ -285,27 +207,16 @@ public class ControlServerIntegrationTests
         Assert.IsTrue(acked);
         Assert.IsNotNull(ack);
         Assert.IsNull(error);
-        Assert.AreEqual("server-5-a", ack.TargetInstanceId);
+        Assert.AreEqual(targetServer.InstanceId, ack.TargetInstanceId);
     }
 
     [TestMethod]
     public async Task SocketServerBroadcastsRelayToKnownServersWhenControlLocationIsMissingTest()
     {
-        using ControlServer controlServer = new(new ControlServerConfigFile
-        {
-            ControlServer = new ControlServerNodeConfig
-            {
-                ClusterId = "socket-cluster-1",
-                NodeId = "control-broadcast",
-                Host = "127.0.0.1",
-                Port = 0,
-                RouteReservationSeconds = 5
-            }
-        });
-        Assert.IsTrue(controlServer.Start());
-
-        using TcpServer sourceServer = CreateStartedSocketServer(10, "server-10-a");
-        using TcpServer targetServer = CreateStartedSocketServer(11, "server-11-a");
+        using ControlServerPair controls = CreateStartedControlPair("broadcast");
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(100, "server-broadcast");
+        TcpServer sourceServer = servers.Servers[0];
+        TcpServer targetServer = servers.Servers[3];
         using TcpClient sourceClient = new(101, "source-101", "127.0.0.1", sourceServer.GetPort());
         using TcpClient targetClient = new(102, "target-102", "127.0.0.1", targetServer.GetPort());
 
@@ -314,12 +225,10 @@ public class ControlServerIntegrationTests
         Assert.IsTrue(await sourceClient.RegisterClientAsync());
         Assert.IsTrue(await targetClient.RegisterClientAsync());
 
-        EndpointConfig[] controlEndpoints = { new() { Host = "127.0.0.1", Port = controlServer.Port } };
-        using ControlServerReporter sourceReporter = CreateReporter(sourceServer, controlEndpoints);
-        using ControlServerReporter targetReporter = CreateReporter(targetServer, controlEndpoints);
-        await sourceReporter.RegisterAsync();
-        await targetReporter.RegisterAsync();
-        await WaitForClusterAsync(controlServer, status => status.ServerCount == 2 && status.TotalSessionCount == 0);
+        servers.AttachReporters(controls.Endpoints);
+        await servers.RegisterAsync();
+        await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4 && status.TotalSessionCount == 0);
+        await WaitForClusterAsync(controls.ControlB, status => status.ServerCount == 4 && status.TotalSessionCount == 0);
 
         Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
             sourceClient.SendClientMessageAsync(102, "broadcast-relay-message");
@@ -335,28 +244,16 @@ public class ControlServerIntegrationTests
         Assert.IsTrue(acked);
         Assert.IsNotNull(ack);
         Assert.IsNull(error);
-        Assert.AreEqual("server-11-a", ack.TargetInstanceId);
+        Assert.AreEqual(targetServer.InstanceId, ack.TargetInstanceId);
     }
 
     [TestMethod]
     public async Task SocketServerRefreshesRelayListAndBroadcastsAcrossAllKnownServersTest()
     {
-        using ControlServer controlServer = new(new ControlServerConfigFile
-        {
-            ControlServer = new ControlServerNodeConfig
-            {
-                ClusterId = "socket-cluster-1",
-                NodeId = "control-broadcast-all",
-                Host = "127.0.0.1",
-                Port = 0,
-                RouteReservationSeconds = 5
-            }
-        });
-        Assert.IsTrue(controlServer.Start());
-
-        using TcpServer sourceServer = CreateStartedSocketServer(12, "server-12-a");
-        using TcpServer emptyServer = CreateStartedSocketServer(13, "server-13-a");
-        using TcpServer targetServer = CreateStartedSocketServer(14, "server-14-a");
+        using ControlServerPair controls = CreateStartedControlPair("broadcast-all");
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(120, "server-broadcast-all");
+        TcpServer sourceServer = servers.Servers[0];
+        TcpServer targetServer = servers.Servers[3];
         using TcpClient sourceClient = new(121, "source-121", "127.0.0.1", sourceServer.GetPort());
         using TcpClient targetClient = new(122, "target-122", "127.0.0.1", targetServer.GetPort());
 
@@ -365,18 +262,14 @@ public class ControlServerIntegrationTests
         Assert.IsTrue(await sourceClient.RegisterClientAsync());
         Assert.IsTrue(await targetClient.RegisterClientAsync());
 
-        EndpointConfig[] controlEndpoints = { new() { Host = "127.0.0.1", Port = controlServer.Port } };
-        using ControlServerReporter sourceReporter = CreateReporter(sourceServer, controlEndpoints);
-        using ControlServerReporter emptyReporter = CreateReporter(emptyServer, controlEndpoints);
-        using ControlServerReporter targetReporter = CreateReporter(targetServer, controlEndpoints);
-        await sourceReporter.RegisterAsync();
-        await emptyReporter.RegisterAsync();
-        await targetReporter.RegisterAsync();
-        await WaitForClusterAsync(controlServer, status => status.ServerCount == 3 && status.TotalSessionCount == 0);
+        servers.AttachReporters(controls.Endpoints);
+        await servers.RegisterAsync();
+        await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4 && status.TotalSessionCount == 0);
+        await WaitForClusterAsync(controls.ControlB, status => status.ServerCount == 4 && status.TotalSessionCount == 0);
 
         int relayServerCount = await sourceServer.RefreshRelayServersFromControlServersAsync();
-        Assert.AreEqual(2, relayServerCount);
-        Assert.AreEqual(2, sourceServer.RelayServerCount);
+        Assert.AreEqual(3, relayServerCount);
+        Assert.AreEqual(3, sourceServer.RelayServerCount);
 
         Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
             sourceClient.SendClientMessageAsync(122, "broadcast-all-relay-message");
@@ -392,96 +285,60 @@ public class ControlServerIntegrationTests
         Assert.IsTrue(acked);
         Assert.IsNotNull(ack);
         Assert.IsNull(error);
-        Assert.AreEqual("server-14-a", ack.TargetInstanceId);
+        Assert.AreEqual(targetServer.InstanceId, ack.TargetInstanceId);
 
         ClusterStatusSnapshot statusAfterRelay = await WaitForClusterAsync(
-            controlServer,
-            status => status.ServerCount == 3 &&
+            controls.ControlA,
+            status => status.ServerCount == 4 &&
                 status.TotalSessionCount == 1);
         Assert.AreEqual(1, statusAfterRelay.TotalSessionCount);
-        Assert.AreEqual(1, controlServer.Registry.ClientLocations.Count);
+        Assert.AreEqual(1, controls.ControlA.Registry.ClientLocations.Count);
     }
 
     [TestMethod]
     public async Task ControlServerMarksSocketServerUnavailableWhenControlChannelDisconnectsTest()
     {
-        using ControlServer controlServer = new(new ControlServerConfigFile
-        {
-            ControlServer = new ControlServerNodeConfig
-            {
-                ClusterId = "socket-cluster-1",
-                NodeId = "control-disconnect",
-                Host = "127.0.0.1",
-                Port = 0,
-                RouteReservationSeconds = 5
-            }
-        });
-        Assert.IsTrue(controlServer.Start());
+        using ControlServerPair controls = CreateStartedControlPair("disconnect");
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(60, "server-disconnect");
+        servers.AttachReporters(controls.Endpoints);
+        await servers.RegisterAsync();
+        await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4 && status.HealthyServerCount == 4 && status.TotalAvailableConnections == 40);
 
-        using TcpServer socketServer = CreateStartedSocketServer(6, "server-6-a");
-        using ControlServerReporter reporter = new(
-            socketServer,
-            new[] { new EndpointConfig { Host = "127.0.0.1", Port = controlServer.Port } },
-            "socket-cluster-1",
-            0,
-            0);
-
-        await reporter.RegisterAsync();
-        await WaitForClusterAsync(controlServer, status => status.HealthyServerCount == 1 && status.TotalAvailableConnections == 10);
-
-        reporter.Stop();
+        servers.Reporters[0].Stop();
 
         ClusterStatusSnapshot disconnectedStatus = await WaitForClusterAsync(
-            controlServer,
-            status => status.ServerCount == 1 &&
-                status.HealthyServerCount == 0 &&
-                status.TotalAvailableConnections == 0);
-        Assert.AreEqual(0, disconnectedStatus.HealthyServerCount);
-        Assert.AreEqual(0, disconnectedStatus.TotalAvailableConnections);
+            controls.ControlA,
+            status => status.ServerCount == 4 &&
+                status.HealthyServerCount == 3 &&
+                status.TotalAvailableConnections == 30);
+        Assert.AreEqual(3, disconnectedStatus.HealthyServerCount);
+        Assert.AreEqual(30, disconnectedStatus.TotalAvailableConnections);
     }
 
     [TestMethod]
     public async Task ControlServerCleanupSchedulerClosesStaleControlConnectionTest()
     {
-        using ControlServer controlServer = new(new ControlServerConfigFile
-        {
-            ControlServer = new ControlServerNodeConfig
-            {
-                ClusterId = "socket-cluster-1",
-                NodeId = "control-cleanup",
-                Host = "127.0.0.1",
-                Port = 0,
-                RouteReservationSeconds = 5,
-                HeartbeatTimeoutSeconds = 1
-            }
-        });
-        Assert.IsTrue(controlServer.Start());
+        using ControlServerPair controls = CreateStartedControlPair("cleanup", heartbeatTimeoutSeconds: 1);
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(70, "server-cleanup");
+        servers.AttachReporters(controls.Endpoints);
+        await servers.RegisterAsync();
+        await WaitForClusterAsync(controls.ControlA, status => status.HealthyServerCount == 4 && status.TotalAvailableConnections == 40);
+        await WaitForConditionAsync(() => controls.ControlA.ActiveConnectionCount >= 4);
 
-        using TcpServer socketServer = CreateStartedSocketServer(7, "server-7-a");
-        using ControlServerReporter reporter = new(
-            socketServer,
-            new[] { new EndpointConfig { Host = "127.0.0.1", Port = controlServer.Port } },
-            "socket-cluster-1",
-            0,
-            0);
-
-        await reporter.RegisterAsync();
-        await WaitForClusterAsync(controlServer, status => status.HealthyServerCount == 1 && status.TotalAvailableConnections == 10);
-        await WaitForConditionAsync(() => controlServer.ActiveConnectionCount == 1);
-
-        await WaitForConditionAsync(() => controlServer.ActiveConnectionCount == 0, timeoutSeconds: 4);
+        await WaitForConditionAsync(() => controls.ControlA.ActiveConnectionCount == 0, timeoutSeconds: 4);
         ClusterStatusSnapshot staleStatus = await WaitForClusterAsync(
-            controlServer,
-            status => status.ServerCount == 1 &&
+            controls.ControlA,
+            status => status.ServerCount == 4 &&
                 status.HealthyServerCount == 0 &&
                 status.TotalAvailableConnections == 0);
         Assert.AreEqual(0, staleStatus.HealthyServerCount);
 
-        reporter.StartHeartbeatLoop(TimeSpan.FromMilliseconds(100));
+        servers.StartHeartbeatLoops(TimeSpan.FromMilliseconds(100));
         ClusterStatusSnapshot restoredStatus = await WaitForClusterAsync(
-            controlServer,
-            status => status.HealthyServerCount == 1 && status.TotalAvailableConnections == 10);
-        Assert.AreEqual(1, restoredStatus.HealthyServerCount);
+            controls.ControlA,
+            status => status.HealthyServerCount == 4 && status.TotalAvailableConnections == 40,
+            timeoutSeconds: 10);
+        Assert.AreEqual(4, restoredStatus.HealthyServerCount);
     }
 
     [TestMethod]
@@ -509,21 +366,21 @@ public class ControlServerIntegrationTests
         });
         Assert.IsTrue(healthyControl.Start());
 
-        using TcpServer socketServer = CreateStartedSocketServer(8, "server-8-a");
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(80, "server-healthy");
         EndpointConfig[] controlEndpoints =
         {
             new() { Host = "127.0.0.1", Port = stalledPort },
             new() { Host = "127.0.0.1", Port = healthyControl.Port }
         };
-        using ControlServerReporter reporter = CreateReporter(socketServer, controlEndpoints);
+        servers.AttachReporters(controlEndpoints);
 
         DateTimeOffset startedAt = DateTimeOffset.UtcNow;
-        Task registerTask = reporter.RegisterAsync();
+        Task registerTask = servers.RegisterAsync();
         ClusterStatusSnapshot status = await WaitForClusterAsync(
             healthyControl,
-            snapshot => snapshot.ServerCount == 1 && snapshot.HealthyServerCount == 1);
+            snapshot => snapshot.ServerCount == 4 && snapshot.HealthyServerCount == 4);
 
-        Assert.AreEqual(10, status.TotalAvailableConnections);
+        Assert.AreEqual(40, status.TotalAvailableConnections);
         Task completedTask = await Task.WhenAny(registerTask, Task.Delay(TimeSpan.FromSeconds(4)));
         Assert.AreSame(registerTask, completedTask);
         await registerTask;
@@ -531,7 +388,13 @@ public class ControlServerIntegrationTests
 
         stalledCancellation.Cancel();
         stalledListener.Dispose();
-        foreach (NetSocket socket in stalledSockets)
+        NetSocket[] socketsToDispose;
+        lock (stalledSockets)
+        {
+            socketsToDispose = stalledSockets.ToArray();
+        }
+
+        foreach (NetSocket socket in socketsToDispose)
         {
             socket.Dispose();
         }
@@ -540,7 +403,7 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
-    public async Task ActiveActiveControlsRouteThreeServersAndPlatformSampleClientsMessageTest()
+    public async Task ActiveActiveControlsRouteFourServersAndPlatformSampleClientsMessageTest()
     {
         SocketSecurityConfig security = new()
         {
@@ -588,20 +451,14 @@ public class ControlServerIntegrationTests
             new() { Host = "127.0.0.1", Port = controlB.Port }
         };
 
-        using TcpServer serverA = CreateStartedSocketServer(80, "server-active-a");
-        using TcpServer serverB = CreateStartedSocketServer(81, "server-active-b");
-        using TcpServer serverC = CreateStartedSocketServer(82, "server-active-c");
-        using ControlServerReporter reporterA = CreateReporter(serverA, controlEndpoints);
-        using ControlServerReporter reporterB = CreateReporter(serverB, controlEndpoints);
-        using ControlServerReporter reporterC = CreateReporter(serverC, controlEndpoints);
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(90, "server-active");
+        servers.AttachReporters(controlEndpoints);
 
-        await Task.WhenAll(reporterA.RegisterAsync(), reporterB.RegisterAsync(), reporterC.RegisterAsync());
-        reporterA.StartHeartbeatLoop(TimeSpan.FromMilliseconds(100));
-        reporterB.StartHeartbeatLoop(TimeSpan.FromMilliseconds(100));
-        reporterC.StartHeartbeatLoop(TimeSpan.FromMilliseconds(100));
+        await servers.RegisterAsync();
+        servers.StartHeartbeatLoops(TimeSpan.FromMilliseconds(500));
 
-        await WaitForClusterAsync(controlA, status => status.ServerCount == 3 && status.TotalAvailableConnections == 30);
-        await WaitForClusterAsync(controlB, status => status.ServerCount == 3 && status.TotalAvailableConnections == 30);
+        await WaitForClusterAsync(controlA, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
+        await WaitForClusterAsync(controlB, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
 
         using SampleSocketClientSession dotnetClient = new();
         using SampleSocketClientSession iosClient = new();
@@ -627,8 +484,8 @@ public class ControlServerIntegrationTests
             androidClient.RegisterAsync());
         Assert.IsTrue(registerResults.All(result => result));
 
-        await WaitForClusterAsync(controlA, status => status.TotalSessionCount == 4 && status.TotalCurrentConnections == 4);
-        await WaitForClusterAsync(controlB, status => status.TotalSessionCount == 4 && status.TotalCurrentConnections == 4);
+        await WaitForClusterAsync(controlA, status => status.TotalSessionCount == 4);
+        await WaitForClusterAsync(controlB, status => status.TotalSessionCount == 4);
         await WaitForClientLocationCountAsync(controlA, 4);
         await WaitForClientLocationCountAsync(controlB, 4);
 
@@ -657,13 +514,11 @@ public class ControlServerIntegrationTests
 
         ClusterStatusSnapshot finalStatus = await WaitForClusterAsync(
             controlA,
-            status => status.TotalSessionCount == 4 &&
-                status.TotalCurrentConnections == 4 &&
-                status.TotalAvailableConnections == 26,
+            status => status.ServerCount == 4 &&
+                status.TotalSessionCount == 4,
             timeoutSeconds: 15);
-        Assert.AreEqual(3, finalStatus.ServerCount);
-        Assert.AreEqual(4, finalStatus.TotalCurrentConnections);
-        Assert.AreEqual(26, finalStatus.TotalAvailableConnections);
+        Assert.AreEqual(4, finalStatus.ServerCount);
+        Assert.AreEqual(4, finalStatus.TotalSessionCount);
     }
 
     private static async Task<ClusterStatusSnapshot> WaitForClusterAsync(
@@ -725,6 +580,133 @@ public class ControlServerIntegrationTests
             "socket-cluster-1",
             0,
             0);
+    }
+
+    private static ControlServerPair CreateStartedControlPair(
+        string nodeIdSuffix,
+        SocketSecurityConfig security = null!,
+        int heartbeatTimeoutSeconds = 30)
+    {
+        ControlServer controlA = new(new ControlServerConfigFile
+        {
+            Security = security,
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = $"control-{nodeIdSuffix}-a",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0,
+                RouteReservationSeconds = 5,
+                HeartbeatTimeoutSeconds = heartbeatTimeoutSeconds
+            }
+        });
+        Assert.IsTrue(controlA.Start());
+
+        ControlServer controlB = new(new ControlServerConfigFile
+        {
+            Security = security,
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = $"control-{nodeIdSuffix}-b",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0,
+                RouteReservationSeconds = 5,
+                HeartbeatTimeoutSeconds = heartbeatTimeoutSeconds
+            },
+            Peers = { new EndpointConfig { Host = "127.0.0.1", Port = controlA.Port } }
+        });
+        Assert.IsTrue(controlB.Start());
+
+        return new ControlServerPair(controlA, controlB);
+    }
+
+    private static SocketServerCluster CreateStartedSocketServerCluster(
+        int firstServerId,
+        string instanceIdPrefix,
+        int count = 4)
+    {
+        List<TcpServer> servers = new();
+        for (int index = 0; index < count; index++)
+        {
+            servers.Add(CreateStartedSocketServer(firstServerId + index, $"{instanceIdPrefix}-{index + 1}"));
+        }
+
+        return new SocketServerCluster(servers);
+    }
+
+    private sealed class ControlServerPair : IDisposable
+    {
+        public ControlServerPair(ControlServer controlA, ControlServer controlB)
+        {
+            this.ControlA = controlA;
+            this.ControlB = controlB;
+            this.Endpoints = new[]
+            {
+                new EndpointConfig { Host = "127.0.0.1", Port = controlA.Port },
+                new EndpointConfig { Host = "127.0.0.1", Port = controlB.Port }
+            };
+        }
+
+        public ControlServer ControlA { get; }
+
+        public ControlServer ControlB { get; }
+
+        public EndpointConfig[] Endpoints { get; }
+
+        public void Dispose()
+        {
+            this.ControlB.Dispose();
+            this.ControlA.Dispose();
+        }
+    }
+
+    private sealed class SocketServerCluster : IDisposable
+    {
+        public SocketServerCluster(IReadOnlyList<TcpServer> servers)
+        {
+            this.Servers = servers;
+        }
+
+        public IReadOnlyList<TcpServer> Servers { get; }
+
+        public List<ControlServerReporter> Reporters { get; } = new();
+
+        public void AttachReporters(EndpointConfig[] controlEndpoints)
+        {
+            foreach (TcpServer server in this.Servers)
+            {
+                this.Reporters.Add(CreateReporter(server, controlEndpoints));
+            }
+        }
+
+        public Task RegisterAsync()
+        {
+            return Task.WhenAll(this.Reporters.Select(reporter => reporter.RegisterAsync()));
+        }
+
+        public void StartHeartbeatLoops(TimeSpan interval)
+        {
+            foreach (ControlServerReporter reporter in this.Reporters)
+            {
+                reporter.StartHeartbeatLoop(interval);
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach (ControlServerReporter reporter in this.Reporters)
+            {
+                reporter.Dispose();
+            }
+
+            foreach (TcpServer server in this.Servers)
+            {
+                server.Dispose();
+            }
+        }
     }
 
     private static async Task AcceptAndHoldSocketsAsync(

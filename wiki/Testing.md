@@ -30,9 +30,9 @@ dotnet test SocketTests/SocketTests.csproj
 - client-to-client local delivery
 - SocketServer-to-SocketServer client message relay
 - SocketServer relay server list refresh and broadcast fallback
-- three SocketServer relay list refresh and broadcast fan-out
+- four SocketServer relay list refresh and broadcast fan-out
 - SocketServer control channel disconnect detection
-- active-active ControlServer, three SocketServers, platform sample clients concurrent messaging
+- active-active ControlServer, four SocketServers, platform sample clients concurrent messaging
 - graceful shutdown for ControlServer, SocketServer, and SocketClient
 - route reservation release
 - heartbeat timeout route exclusion
