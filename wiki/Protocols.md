@@ -136,7 +136,7 @@ Control-Control:
 ## Server Heartbeat
 
 `SERVER_HEARTBEAT`는 서버별 capacity와 리소스 사용률을 포함합니다.
-ControlServer는 heartbeat timeout을 초과한 SocketServer control channel을 cleanup scheduler로 닫고, 해당 서버 snapshot을 `Unhealthy`로 정규화해 route 후보에서 제외합니다.
+ControlServer는 SocketServer 요청 채널이 닫혀도 즉시 장애로 처리하지 않습니다. heartbeat timeout을 초과한 서버 snapshot만 cleanup scheduler에서 `Unhealthy`로 정규화해 route 후보에서 제외합니다.
 
 ```text
 ProtoServerHeartbeatRequest

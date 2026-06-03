@@ -137,7 +137,7 @@ public class SocketSecurityConfig
 
     public int ModuleCertificateLifetimeYears { get; set; } = 2;
 
-    public int AuthenticationTimeoutMilliseconds { get; set; } = 5000;
+    public int AuthenticationTimeoutMilliseconds { get; set; } = 30000;
 
     public string MessageEncryptionSecretEnvironmentVariable { get; set; } = "SOCKET_MESSAGE_SECRET";
 }

@@ -71,6 +71,11 @@ public class BackendServerRegistry
             },
             (_, existing) =>
             {
+                if (request.StartedAt > existing.StartedAt)
+                {
+                    this.RemoveInstanceState(request.InstanceId);
+                }
+
                 existing.ClusterId = request.ClusterId;
                 existing.SourceControlNodeId = controlNodeId;
                 existing.ServerId = request.ServerId;
@@ -147,9 +152,13 @@ public class BackendServerRegistry
                 snapshot,
                 (_, existing) =>
                 {
-                    if (snapshot.Version > existing.Version ||
-                        (snapshot.Version == existing.Version && snapshot.UpdatedAt > existing.UpdatedAt))
+                    if (IsNewerServerSnapshot(snapshot, existing))
                     {
+                        if (snapshot.StartedAt > existing.StartedAt)
+                        {
+                            this.RemoveInstanceState(snapshot.InstanceId);
+                        }
+
                         return snapshot;
                     }
 
@@ -715,6 +724,39 @@ public class BackendServerRegistry
     {
         return candidate.Version > existing.Version ||
             (candidate.Version == existing.Version && candidate.UpdatedAt >= existing.UpdatedAt);
+    }
+
+    private void RemoveInstanceState(string instanceId)
+    {
+        foreach (SessionEventMessage session in this.sessions.Values.Where(item => item.InstanceId == instanceId))
+        {
+            this.sessions.TryRemove(CreateSessionKey(session), out _);
+        }
+
+        foreach (ClientLocationMessage location in this.clientLocations.Values.Where(item => item.InstanceId == instanceId))
+        {
+            this.clientLocations.TryRemove(location.ClientId, out _);
+        }
+
+        foreach (RouteReservationMessage reservation in this.reservations.Values.Where(item => item.InstanceId == instanceId))
+        {
+            this.reservations.TryRemove(reservation.ReservationId, out _);
+        }
+    }
+
+    private static bool IsNewerServerSnapshot(BackendServerSnapshot candidate, BackendServerSnapshot existing)
+    {
+        if (candidate.LastHeartbeatAt != existing.LastHeartbeatAt)
+        {
+            return candidate.LastHeartbeatAt > existing.LastHeartbeatAt;
+        }
+
+        if (candidate.UpdatedAt != existing.UpdatedAt)
+        {
+            return candidate.UpdatedAt >= existing.UpdatedAt;
+        }
+
+        return candidate.Version >= existing.Version;
     }
 
     private static string CreateSessionKey(SessionEventMessage session)

@@ -378,13 +378,14 @@ public static class ControlProtocol
         uint clientId,
         uint messageId,
         T payload,
-        int timeoutMilliseconds = 5000)
+        int timeoutMilliseconds = 0)
     {
         if (!await SendAsync(socket, clientId, messageId, payload))
         {
             return (false, null);
         }
 
+        timeoutMilliseconds = NormalizeTimeout(timeoutMilliseconds);
         Task<(bool Success, SocketMessageFrame Frame)> receiveTask = SocketMessageFrame.TryReceiveAsync(socket);
         Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(timeoutMilliseconds));
         if (completedTask != receiveTask)
@@ -400,13 +401,14 @@ public static class ControlProtocol
         uint clientId,
         uint messageId,
         T payload,
-        int timeoutMilliseconds = 5000)
+        int timeoutMilliseconds = 0)
     {
         if (!await SendAsync(connection, clientId, messageId, payload))
         {
             return (false, null);
         }
 
+        timeoutMilliseconds = NormalizeTimeout(timeoutMilliseconds);
         Task<(bool Success, SocketMessageFrame Frame)> receiveTask = SocketMessageFrame.TryReceiveAsync(connection);
         Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(timeoutMilliseconds));
         if (completedTask != receiveTask)
@@ -415,5 +417,12 @@ public static class ControlProtocol
         }
 
         return await receiveTask;
+    }
+
+    private static int NormalizeTimeout(int timeoutMilliseconds)
+    {
+        return timeoutMilliseconds <= 0
+            ? SocketFactory.ReadTimeoutMilliseconds
+            : timeoutMilliseconds;
     }
 }

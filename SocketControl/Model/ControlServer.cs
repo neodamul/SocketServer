@@ -277,12 +277,7 @@ public class ControlServer : IDisposable
                 : serverInstanceId;
             if (!string.IsNullOrWhiteSpace(disconnectedInstanceId))
             {
-                BackendServerSnapshot? snapshot = this.registry.MarkServerDisconnected(disconnectedInstanceId);
-                if (snapshot != null)
-                {
-                    Logger.Warn($"SocketServer control channel disconnected. instanceId={disconnectedInstanceId}");
-                    await PublishServerSnapshotAsync(snapshot);
-                }
+                Logger.Debug($"ControlServer request channel closed. instanceId={disconnectedInstanceId}");
             }
         }
     }

@@ -84,6 +84,145 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void BackendRegistryPeerSnapshotUsesHeartbeatRecencyOverLocalVersionTest()
+    {
+        BackendServerRegistry registry = new(TimeSpan.FromMilliseconds(10));
+        registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
+        registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 0, 100, DateTimeOffset.UtcNow.AddSeconds(-1)), "control-1", new ControlHealthThreshold());
+        _ = registry.GetStatus();
+
+        BackendServerSnapshot expired = registry.Servers.Single();
+        Assert.AreEqual(ServerHealthState.Unhealthy, expired.Health);
+        Assert.AreEqual(0, expired.CurrentConnections);
+
+        DateTimeOffset freshHeartbeat = DateTimeOffset.UtcNow;
+        BackendServerSnapshot peerSnapshot = new()
+        {
+            ClusterId = "socket-cluster-1",
+            SourceControlNodeId = "control-peer",
+            ServerId = 1,
+            InstanceId = "server-1",
+            Name = "server-1",
+            Host = "127.0.0.1",
+            Port = 5101,
+            PortRangeStart = 5101,
+            PortRangeEnd = 5101,
+            MaxConnections = 100,
+            CurrentConnections = 4,
+            ReservedConnections = 0,
+            AvailableConnections = 96,
+            Health = ServerHealthState.Healthy,
+            ResourceUsage = new ResourceUsageSnapshot(),
+            Version = Math.Max(1, expired.Version - 1),
+            StartedAt = freshHeartbeat.AddMinutes(-1),
+            LastHeartbeatAt = freshHeartbeat,
+            UpdatedAt = freshHeartbeat
+        };
+
+        registry.UpsertPeerSnapshot(peerSnapshot);
+        ClusterStatusSnapshot status = registry.GetStatus();
+
+        Assert.AreEqual(1, status.HealthyServerCount);
+        Assert.AreEqual(4, status.TotalCurrentConnections);
+        Assert.AreEqual(96, status.TotalAvailableConnections);
+    }
+
+    [TestMethod]
+    public void BackendRegistryClearsInstanceSessionsWhenServerRestartsTest()
+    {
+        BackendServerRegistry registry = new();
+        ServerRegisterRequest firstRegister = CreateRegister(1, "server-1", 5101, 100);
+        firstRegister.StartedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+        registry.Upsert(firstRegister, "control-1");
+        registry.UpsertSession(new SessionEventMessage
+        {
+            ClusterId = "socket-cluster-1",
+            ClientId = 77,
+            ServerId = 1,
+            InstanceId = "server-1",
+            SessionId = 700,
+            State = "Connected",
+            Version = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeMilliseconds()
+        });
+
+        Assert.AreEqual(1, registry.GetStatus().TotalSessionCount);
+
+        ServerRegisterRequest restartRegister = CreateRegister(1, "server-1", 5101, 100);
+        restartRegister.StartedAt = DateTimeOffset.UtcNow;
+        registry.Upsert(restartRegister, "control-1");
+        ClusterStatusSnapshot status = registry.GetStatus();
+        ClientLocationResponse location = registry.ResolveClientLocation(new ClientLocationRequest
+        {
+            SourceClientId = 1,
+            TargetClientId = 77
+        });
+
+        Assert.AreEqual(0, status.TotalSessionCount);
+        Assert.IsFalse(location.Success);
+    }
+
+    [TestMethod]
+    public void BackendRegistryClearsInstanceSessionsWhenPeerSnapshotShowsRestartTest()
+    {
+        BackendServerRegistry registry = new();
+        DateTimeOffset firstStart = DateTimeOffset.UtcNow.AddMinutes(-10);
+        registry.UpsertPeerSnapshot(new BackendServerSnapshot
+        {
+            ClusterId = "socket-cluster-1",
+            SourceControlNodeId = "control-peer",
+            ServerId = 1,
+            InstanceId = "server-1",
+            Name = "server-1",
+            Host = "127.0.0.1",
+            Port = 5101,
+            MaxConnections = 100,
+            CurrentConnections = 1,
+            AvailableConnections = 99,
+            Health = ServerHealthState.Healthy,
+            ResourceUsage = new ResourceUsageSnapshot(),
+            Version = 1,
+            StartedAt = firstStart,
+            LastHeartbeatAt = firstStart.AddSeconds(1),
+            UpdatedAt = firstStart.AddSeconds(1)
+        });
+        registry.UpsertSession(new SessionEventMessage
+        {
+            ClusterId = "socket-cluster-1",
+            ClientId = 77,
+            ServerId = 1,
+            InstanceId = "server-1",
+            SessionId = 700,
+            State = "Connected",
+            Version = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeMilliseconds()
+        });
+
+        Assert.AreEqual(1, registry.GetStatus().TotalSessionCount);
+
+        DateTimeOffset restarted = DateTimeOffset.UtcNow;
+        registry.UpsertPeerSnapshot(new BackendServerSnapshot
+        {
+            ClusterId = "socket-cluster-1",
+            SourceControlNodeId = "control-peer",
+            ServerId = 1,
+            InstanceId = "server-1",
+            Name = "server-1",
+            Host = "127.0.0.1",
+            Port = 5101,
+            MaxConnections = 100,
+            CurrentConnections = 0,
+            AvailableConnections = 100,
+            Health = ServerHealthState.Healthy,
+            ResourceUsage = new ResourceUsageSnapshot(),
+            Version = 2,
+            StartedAt = restarted,
+            LastHeartbeatAt = restarted,
+            UpdatedAt = restarted
+        });
+
+        Assert.AreEqual(0, registry.GetStatus().TotalSessionCount);
+    }
+
+    [TestMethod]
     public void BackendRegistryExcludesDegradedServerTest()
     {
         BackendServerRegistry registry = new();

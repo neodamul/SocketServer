@@ -32,7 +32,7 @@ public sealed class SecureSocketConnection : IDisposable
     private static SslProtocols configuredProtocols = SslProtocols.None;
     private static bool requireTls13;
     private static bool requireClientCertificate;
-    private static int authenticationTimeoutMilliseconds = 5000;
+    private static int authenticationTimeoutMilliseconds = 30000;
     private static string certificateDirectory = "";
     private static string certificatePasswordEnvironmentVariable = "SOCKET_CERTIFICATE_PASSWORD";
     private static int certificateRenewBeforeDays = 30;

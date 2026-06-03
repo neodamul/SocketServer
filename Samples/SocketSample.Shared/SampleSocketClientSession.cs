@@ -119,7 +119,7 @@ public sealed class SampleSocketClientSession : IDisposable
         return success;
     }
 
-    public async Task<bool> SendMessageAsync(uint targetClientId, string content)
+    public async Task<bool> SendMessageAsync(uint targetClientId, string content, int ttlSeconds = 10)
     {
         TcpClient activeClient = this.GetRequiredClient();
         bool success;
@@ -128,7 +128,7 @@ public sealed class SampleSocketClientSession : IDisposable
         await this.operationGate.WaitAsync();
         try
         {
-            (success, ack, error) = await activeClient.SendClientMessageAsync(targetClientId, content ?? "");
+            (success, ack, error) = await activeClient.SendClientMessageAsync(targetClientId, content ?? "", ttlSeconds);
         }
         finally
         {

@@ -45,7 +45,7 @@ SocketTests/log4net.config
     "certificateRenewBeforeDays": 30,
     "rootCertificateLifetimeYears": 10,
     "moduleCertificateLifetimeYears": 2,
-    "authenticationTimeoutMilliseconds": 5000,
+    "authenticationTimeoutMilliseconds": 30000,
     "messageEncryptionSecretEnvironmentVariable": "SOCKET_MESSAGE_SECRET"
   }
 }

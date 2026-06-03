@@ -261,13 +261,14 @@ public static class ClientMessageProtocol
     public static async Task<(bool Success, SocketMessageFrame Frame)> SendRelayAndReceiveAsync(
         Socket socket,
         ServerRelayMessage relay,
-        int timeoutMilliseconds = 5000)
+        int timeoutMilliseconds = 0)
     {
         if (!await SendRelayAsync(socket, relay))
         {
             return (false, null);
         }
 
+        timeoutMilliseconds = NormalizeTimeout(timeoutMilliseconds);
         Task<(bool Success, SocketMessageFrame Frame)> receiveTask = SocketMessageFrame.TryReceiveAsync(socket);
         Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(timeoutMilliseconds));
         if (completedTask != receiveTask)
@@ -281,13 +282,14 @@ public static class ClientMessageProtocol
     public static async Task<(bool Success, SocketMessageFrame Frame)> SendRelayAndReceiveAsync(
         SecureSocketConnection connection,
         ServerRelayMessage relay,
-        int timeoutMilliseconds = 5000)
+        int timeoutMilliseconds = 0)
     {
         if (!await SendRelayAsync(connection, relay))
         {
             return (false, null);
         }
 
+        timeoutMilliseconds = NormalizeTimeout(timeoutMilliseconds);
         Task<(bool Success, SocketMessageFrame Frame)> receiveTask = SocketMessageFrame.TryReceiveAsync(connection);
         Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(timeoutMilliseconds));
         if (completedTask != receiveTask)
@@ -296,6 +298,13 @@ public static class ClientMessageProtocol
         }
 
         return await receiveTask;
+    }
+
+    private static int NormalizeTimeout(int timeoutMilliseconds)
+    {
+        return timeoutMilliseconds <= 0
+            ? SocketFactory.ReadTimeoutMilliseconds
+            : timeoutMilliseconds;
     }
 
     public static bool TryDecode<T>(SocketMessageFrame frame, uint expectedMessageId, out T payload)

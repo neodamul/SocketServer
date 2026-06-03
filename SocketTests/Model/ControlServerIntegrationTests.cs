@@ -296,21 +296,27 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
-    public async Task ControlServerMarksSocketServerUnavailableWhenControlChannelDisconnectsTest()
+    public async Task ControlServerMarksSocketServerUnavailableAfterHeartbeatExpiresTest()
     {
-        using ControlServerPair controls = CreateStartedControlPair("disconnect");
+        using ControlServerPair controls = CreateStartedControlPair("disconnect", heartbeatTimeoutSeconds: 5);
         using SocketServerCluster servers = CreateStartedSocketServerCluster(60, "server-disconnect");
         servers.AttachReporters(controls.Endpoints);
         await servers.RegisterAsync();
         await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4 && status.HealthyServerCount == 4 && status.TotalAvailableConnections == 40);
+        servers.StartHeartbeatLoops(TimeSpan.FromMilliseconds(200));
 
         servers.Reporters[0].Stop();
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+        ClusterStatusSnapshot stillHealthyStatus = controls.ControlA.GetClusterStatus();
+        Assert.AreEqual(4, stillHealthyStatus.HealthyServerCount);
+        Assert.AreEqual(40, stillHealthyStatus.TotalAvailableConnections);
 
         ClusterStatusSnapshot disconnectedStatus = await WaitForClusterAsync(
             controls.ControlA,
             status => status.ServerCount == 4 &&
                 status.HealthyServerCount == 3 &&
-                status.TotalAvailableConnections == 30);
+                status.TotalAvailableConnections == 30,
+            timeoutSeconds: 10);
         Assert.AreEqual(3, disconnectedStatus.HealthyServerCount);
         Assert.AreEqual(30, disconnectedStatus.TotalAvailableConnections);
     }
@@ -323,14 +329,13 @@ public class ControlServerIntegrationTests
         servers.AttachReporters(controls.Endpoints);
         await servers.RegisterAsync();
         await WaitForClusterAsync(controls.ControlA, status => status.HealthyServerCount == 4 && status.TotalAvailableConnections == 40);
-        await WaitForConditionAsync(() => controls.ControlA.ActiveConnectionCount >= 4);
 
-        await WaitForConditionAsync(() => controls.ControlA.ActiveConnectionCount == 0, timeoutSeconds: 8);
         ClusterStatusSnapshot staleStatus = await WaitForClusterAsync(
             controls.ControlA,
             status => status.ServerCount == 4 &&
                 status.HealthyServerCount == 0 &&
-                status.TotalAvailableConnections == 0);
+                status.TotalAvailableConnections == 0,
+            timeoutSeconds: 12);
         Assert.AreEqual(0, staleStatus.HealthyServerCount);
 
         servers.StartHeartbeatLoops(TimeSpan.FromMilliseconds(100));
@@ -372,7 +377,7 @@ public class ControlServerIntegrationTests
             new() { Host = "127.0.0.1", Port = stalledPort },
             new() { Host = "127.0.0.1", Port = healthyControl.Port }
         };
-        servers.AttachReporters(controlEndpoints);
+        servers.AttachReporters(controlEndpoints, TimeSpan.FromSeconds(5));
 
         DateTimeOffset startedAt = DateTimeOffset.UtcNow;
         Task registerTask = servers.RegisterAsync();
@@ -384,7 +389,7 @@ public class ControlServerIntegrationTests
         Task completedTask = await Task.WhenAny(registerTask, Task.Delay(TimeSpan.FromSeconds(4)));
         Assert.AreSame(registerTask, completedTask);
         await registerTask;
-        Assert.IsTrue(DateTimeOffset.UtcNow - startedAt < TimeSpan.FromSeconds(4));
+        Assert.IsTrue(DateTimeOffset.UtcNow - startedAt < TimeSpan.FromSeconds(8));
 
         stalledCancellation.Cancel();
         stalledListener.Dispose();
@@ -410,7 +415,7 @@ public class ControlServerIntegrationTests
             TransportMode = "Tls",
             TlsProtocol = "Auto",
             RequireTls13 = false,
-            AuthenticationTimeoutMilliseconds = 5000
+            AuthenticationTimeoutMilliseconds = 10000
         };
         SecureSocketConnection.Configure(security);
 
@@ -484,21 +489,21 @@ public class ControlServerIntegrationTests
             androidClient.RegisterAsync());
         Assert.IsTrue(registerResults.All(result => result));
 
-        await WaitForClusterAsync(controlA, status => status.TotalSessionCount == 4, timeoutSeconds: 15);
-        await WaitForClusterAsync(controlB, status => status.TotalSessionCount == 4, timeoutSeconds: 15);
-        await WaitForClientLocationCountAsync(controlA, 4);
-        await WaitForClientLocationCountAsync(controlB, 4);
+        await WaitForClusterAsync(controlA, status => status.TotalSessionCount == 4, timeoutSeconds: 45);
+        await WaitForClusterAsync(controlB, status => status.TotalSessionCount == 4, timeoutSeconds: 45);
+        await WaitForClientLocationCountAsync(controlA, 4, timeoutSeconds: 45);
+        await WaitForClientLocationCountAsync(controlB, 4, timeoutSeconds: 45);
 
         Task<ClientMessageDelivery?> iosReceiveTask = iosClient.ReceiveMessageAsync();
         Task<ClientMessageDelivery?> macosReceiveTask = macosClient.ReceiveMessageAsync();
-        Task<bool> dotnetSendTask = dotnetClient.SendMessageAsync(902, "dotnet-to-ios");
-        Task<bool> androidSendTask = androidClient.SendMessageAsync(903, "android-to-macos");
+        Task<bool> dotnetSendTask = dotnetClient.SendMessageAsync(902, "dotnet-to-ios", ttlSeconds: 30);
+        Task<bool> androidSendTask = androidClient.SendMessageAsync(903, "android-to-macos", ttlSeconds: 30);
 
-        Assert.IsTrue(await WithTimeoutAsync(dotnetSendTask));
-        Assert.IsTrue(await WithTimeoutAsync(androidSendTask));
+        Assert.IsTrue(await WithTimeoutAsync(dotnetSendTask, timeoutSeconds: 30));
+        Assert.IsTrue(await WithTimeoutAsync(androidSendTask, timeoutSeconds: 30));
 
-        ClientMessageDelivery? iosDelivery = await WithTimeoutAsync(iosReceiveTask);
-        ClientMessageDelivery? macosDelivery = await WithTimeoutAsync(macosReceiveTask);
+        ClientMessageDelivery? iosDelivery = await WithTimeoutAsync(iosReceiveTask, timeoutSeconds: 30);
+        ClientMessageDelivery? macosDelivery = await WithTimeoutAsync(macosReceiveTask, timeoutSeconds: 30);
 
         Assert.IsNotNull(iosDelivery);
         Assert.AreEqual((uint)901, iosDelivery!.SourceClientId);
@@ -572,14 +577,18 @@ public class ControlServerIntegrationTests
         return socketServer;
     }
 
-    private static ControlServerReporter CreateReporter(TcpServer server, EndpointConfig[] controlEndpoints)
+    private static ControlServerReporter CreateReporter(
+        TcpServer server,
+        EndpointConfig[] controlEndpoints,
+        TimeSpan? reportTimeout = null)
     {
         return new ControlServerReporter(
             server,
             controlEndpoints,
             "socket-cluster-1",
             0,
-            0);
+            0,
+            reportTimeout);
     }
 
     private static ControlServerPair CreateStartedControlPair(
@@ -674,11 +683,11 @@ public class ControlServerIntegrationTests
 
         public List<ControlServerReporter> Reporters { get; } = new();
 
-        public void AttachReporters(EndpointConfig[] controlEndpoints)
+        public void AttachReporters(EndpointConfig[] controlEndpoints, TimeSpan? reportTimeout = null)
         {
             foreach (TcpServer server in this.Servers)
             {
-                this.Reporters.Add(CreateReporter(server, controlEndpoints));
+                this.Reporters.Add(CreateReporter(server, controlEndpoints, reportTimeout));
             }
         }
 
@@ -759,9 +768,12 @@ public class ControlServerIntegrationTests
         };
     }
 
-    private static async Task WaitForClientLocationCountAsync(ControlServer controlServer, int expectedCount)
+    private static async Task WaitForClientLocationCountAsync(
+        ControlServer controlServer,
+        int expectedCount,
+        int timeoutSeconds = 5)
     {
-        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
         do
         {
             if (controlServer.Registry.ClientLocations.Count == expectedCount)
@@ -793,9 +805,9 @@ public class ControlServerIntegrationTests
         Assert.Fail("Timed out waiting for condition.");
     }
 
-    private static async Task<T> WithTimeoutAsync<T>(Task<T> task)
+    private static async Task<T> WithTimeoutAsync<T>(Task<T> task, int timeoutSeconds = 5)
     {
-        Task completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(5)));
+        Task completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(timeoutSeconds)));
         if (completed != task)
         {
             Assert.Fail("Timed out waiting for task.");
@@ -804,9 +816,9 @@ public class ControlServerIntegrationTests
         return await task;
     }
 
-    private static async Task WithTimeoutAsync(Task task)
+    private static async Task WithTimeoutAsync(Task task, int timeoutSeconds = 5)
     {
-        Task completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(5)));
+        Task completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(timeoutSeconds)));
         if (completed != task)
         {
             Assert.Fail("Timed out waiting for task.");

@@ -17,13 +17,13 @@ namespace SocketServer.Model;
 public class ControlServerReporter : IDisposable
 {
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<ControlServerReporter>();
-    private static readonly TimeSpan EndpointReportTimeout = TimeSpan.FromSeconds(2);
 
     private readonly TcpServer server;
     private readonly IReadOnlyCollection<EndpointConfig> controlServers;
     private readonly string clusterId;
     private readonly int portRangeStart;
     private readonly int portRangeEnd;
+    private readonly TimeSpan reportTimeout;
     private readonly ResourceUsageProvider resourceUsageProvider = new();
     private readonly IReadOnlyCollection<ControlEndpointConnection> connections;
     private readonly Channel<ControlReportMessage> reportChannel = Channel.CreateBounded<ControlReportMessage>(
@@ -44,14 +44,16 @@ public class ControlServerReporter : IDisposable
         IReadOnlyCollection<EndpointConfig> controlServers,
         string clusterId,
         int portRangeStart,
-        int portRangeEnd)
+        int portRangeEnd,
+        TimeSpan? reportTimeout = null)
     {
         this.server = server;
         this.controlServers = controlServers;
         this.clusterId = string.IsNullOrWhiteSpace(clusterId) ? "socket-cluster-1" : clusterId;
         this.portRangeStart = portRangeStart;
         this.portRangeEnd = portRangeEnd;
-        this.connections = CreateConnections(controlServers);
+        this.reportTimeout = NormalizeReportTimeout(reportTimeout);
+        this.connections = CreateConnections(controlServers, this.reportTimeout);
         this.server.ConfigureControlRouting(this.controlServers, this.clusterId);
         this.server.SessionOpenedAsync += this.SendSessionOpenedAsync;
         this.server.SessionUpdatedAsync += this.SendSessionUpdatedAsync;
@@ -275,12 +277,27 @@ public class ControlServerReporter : IDisposable
 
     private sealed record ControlReportMessage(uint MessageId, SessionEventMessage Message);
 
-    private static IReadOnlyCollection<ControlEndpointConnection> CreateConnections(IReadOnlyCollection<EndpointConfig> endpoints)
+    private static TimeSpan NormalizeReportTimeout(TimeSpan? reportTimeout)
+    {
+        if (reportTimeout.HasValue && reportTimeout.Value > TimeSpan.Zero)
+        {
+            return reportTimeout.Value;
+        }
+
+        int timeoutMilliseconds = Math.Max(
+            SocketFactory.ReadTimeoutMilliseconds,
+            SocketFactory.WriteTimeoutMilliseconds);
+        return TimeSpan.FromMilliseconds(timeoutMilliseconds);
+    }
+
+    private static IReadOnlyCollection<ControlEndpointConnection> CreateConnections(
+        IReadOnlyCollection<EndpointConfig> endpoints,
+        TimeSpan reportTimeout)
     {
         List<ControlEndpointConnection> connections = new();
         foreach (EndpointConfig endpoint in endpoints)
         {
-            connections.Add(new ControlEndpointConnection(endpoint));
+            connections.Add(new ControlEndpointConnection(endpoint, reportTimeout));
         }
 
         return connections;
@@ -289,12 +306,14 @@ public class ControlServerReporter : IDisposable
     private sealed class ControlEndpointConnection : IDisposable
     {
         private readonly SemaphoreSlim sendLock = new(1, 1);
+        private readonly TimeSpan reportTimeout;
         private Socket socket;
         private SecureSocketConnection connection;
 
-        public ControlEndpointConnection(EndpointConfig endpoint)
+        public ControlEndpointConnection(EndpointConfig endpoint, TimeSpan reportTimeout)
         {
             this.Endpoint = endpoint;
+            this.reportTimeout = reportTimeout;
         }
 
         public EndpointConfig Endpoint { get; }
@@ -309,11 +328,11 @@ public class ControlServerReporter : IDisposable
             {
                 Task<(bool Success, SocketMessageFrame Frame)> reportTask =
                     this.SendAndReceiveCoreAsync(clientId, messageId, payload);
-                Task completedTask = await Task.WhenAny(reportTask, Task.Delay(EndpointReportTimeout));
+                Task completedTask = await Task.WhenAny(reportTask, Task.Delay(this.reportTimeout));
                 if (completedTask != reportTask)
                 {
                     this.Close();
-                    Logger.Warn($"ControlServer report timed out. endpoint={this.Endpoint.Host}:{this.Endpoint.Port}, messageId={messageId}, timeoutMs={EndpointReportTimeout.TotalMilliseconds}");
+                    Logger.Warn($"ControlServer report timed out. endpoint={this.Endpoint.Host}:{this.Endpoint.Port}, messageId={messageId}, timeoutMs={this.reportTimeout.TotalMilliseconds}");
                     return (false, default);
                 }
 
