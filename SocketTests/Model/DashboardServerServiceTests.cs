@@ -73,9 +73,8 @@ public class DashboardServerServiceTests
         string appJs = File.ReadAllText(Path.Combine(solutionRoot, "SocketDashboard/wwwroot/app.js"));
 
         Assert.IsTrue(indexHtml.Contains("id=\"refreshIntervalSeconds\"", StringComparison.Ordinal));
-        Assert.IsTrue(indexHtml.Contains("Control Servers", StringComparison.Ordinal));
-        Assert.IsTrue(indexHtml.Contains("id=\"controlServerInventoryCount\"", StringComparison.Ordinal));
-        Assert.IsTrue(indexHtml.Contains("id=\"controlServers\"", StringComparison.Ordinal));
+        Assert.IsFalse(indexHtml.Contains("id=\"controlServerInventoryCount\"", StringComparison.Ordinal));
+        Assert.IsFalse(indexHtml.Contains("id=\"controlServers\"", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<th>Instance</th>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<th>Max Conn</th>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<th>Current Conn</th>", StringComparison.Ordinal));
@@ -88,7 +87,9 @@ public class DashboardServerServiceTests
             indexHtml.IndexOf("Dashboard Details", StringComparison.Ordinal) <
                 indexHtml.IndexOf("Server Inventory", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("const DEFAULT_REFRESH_SECONDS = 30;", StringComparison.Ordinal));
-        Assert.IsTrue(appJs.Contains("renderControlServers(status.controlServers)", StringComparison.Ordinal));
+        Assert.IsFalse(appJs.Contains("renderControlServers(status.controlServers)", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("function buildControlServerRow(server)", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("renderServers(status.cluster.servers, server, status.controlServers)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("function healthText(value)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains(".map(buildSocketServerRow)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("getRefreshIntervalMilliseconds()", StringComparison.Ordinal));

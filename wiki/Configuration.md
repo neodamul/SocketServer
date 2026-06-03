@@ -78,7 +78,7 @@ SocketTests/log4net.config
 
 ## Dashboard
 
-`SocketDashboard/appsettings.json`은 조회할 ControlServer endpoint를 설정합니다. `dashboard.controlServers` 배열을 사용하면 여러 ControlServer를 대시보드에 항상 목록으로 표시하고, 각 endpoint별 조회 상태를 확인할 수 있습니다. 기존 단일 `dashboard.controlServer` 설정은 fallback으로 유지됩니다.
+`SocketDashboard/appsettings.json`은 조회할 ControlServer endpoint를 설정합니다. `dashboard.controlServers` 배열을 사용하면 여러 ControlServer를 Server Inventory에 `ControlServer` type으로 항상 표시하고, 각 endpoint별 조회 상태를 확인할 수 있습니다. 기존 단일 `dashboard.controlServer` 설정은 fallback으로 유지됩니다.
 
 ```json
 {

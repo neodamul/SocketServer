@@ -16,8 +16,6 @@ const fields = {
   totalCurrentConnections: document.getElementById("totalCurrentConnections"),
   totalAvailableConnections: document.getElementById("totalAvailableConnections"),
   serverInventoryCount: document.getElementById("serverInventoryCount"),
-  controlServerInventoryCount: document.getElementById("controlServerInventoryCount"),
-  controlServers: document.getElementById("controlServers"),
   clusterServers: document.getElementById("clusterServers"),
   address: document.getElementById("address"),
   backlog: document.getElementById("backlog"),
@@ -96,18 +94,33 @@ function buildSocketServerRow(server) {
   };
 }
 
+function buildControlServerRow(server) {
+  return {
+    type: "ControlServer",
+    instanceId: `control:${server.host}:${server.port}`,
+    health: server.status || (server.isHealthy ? "Healthy" : "Unavailable"),
+    host: server.host || "-",
+    port: server.port ?? "-",
+    maxConnections: "-",
+    currentConnections: server.totalCurrentConnections ?? "-",
+    availableConnections: server.totalAvailableConnections ?? "-",
+    resourceUsage: null
+  };
+}
+
 function sameEndpoint(left, right) {
   return left.instanceId === right.instanceId &&
     (left.host || left.ipAddress) === right.host &&
     Number(left.port) === Number(right.port);
 }
 
-function renderServers(clusterServers, dashboardServer) {
+function renderServers(clusterServers, dashboardServer, controlServers) {
   const dashboardRow = buildDashboardServerRow(dashboardServer);
+  const controlRows = (controlServers || []).map(buildControlServerRow);
   const socketRows = (clusterServers || [])
     .filter(server => !sameEndpoint(server, dashboardRow))
     .map(buildSocketServerRow);
-  const rows = [...socketRows, dashboardRow];
+  const rows = [...controlRows, ...socketRows, dashboardRow];
   fields.serverInventoryCount.textContent = rows.length;
 
   if (rows.length === 0) {
@@ -127,29 +140,6 @@ function renderServers(clusterServers, dashboardServer) {
       <td>${percent(server.resourceUsage?.cpuUsagePercent)}</td>
       <td>${percent(server.resourceUsage?.memoryUsagePercent)}</td>
       <td>${percent(server.resourceUsage?.storageUsagePercent)}</td>
-    </tr>
-  `).join("");
-}
-
-function renderControlServers(controlServers) {
-  const rows = controlServers || [];
-  fields.controlServerInventoryCount.textContent = rows.length;
-
-  if (rows.length === 0) {
-    fields.controlServers.innerHTML = "<tr><td colspan=\"8\">-</td></tr>";
-    return;
-  }
-
-  fields.controlServers.innerHTML = rows.map(server => `
-    <tr>
-      <td>${server.host}:${server.port}</td>
-      <td>${server.status}</td>
-      <td>${server.serverCount}</td>
-      <td>${server.healthyServerCount}</td>
-      <td>${server.totalCurrentConnections}</td>
-      <td>${server.totalAvailableConnections}</td>
-      <td>${server.totalSessionCount}</td>
-      <td>${localTime(server.checkedAt)}</td>
     </tr>
   `).join("");
 }
@@ -185,8 +175,7 @@ async function refresh() {
     fields.totalMaxConnections.textContent = status.cluster.totalMaxConnections;
     fields.totalCurrentConnections.textContent = status.cluster.totalCurrentConnections;
     fields.totalAvailableConnections.textContent = status.cluster.totalAvailableConnections;
-    renderControlServers(status.controlServers);
-    renderServers(status.cluster.servers, server);
+    renderServers(status.cluster.servers, server, status.controlServers);
     fields.address.textContent = `${server.ipAddress}:${server.port}`;
     fields.backlog.textContent = server.listenBacklog;
     fields.pendingAcceptCount.textContent = server.pendingAcceptCount;
