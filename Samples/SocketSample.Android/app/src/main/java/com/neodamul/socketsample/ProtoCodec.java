@@ -84,7 +84,7 @@ public final class ProtoCodec {
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         writeVarint(output, (field << 3) | 2);
         writeVarint(output, bytes.length);
-        output.writeBytes(bytes);
+        output.write(bytes, 0, bytes.length);
     }
 
     private static void writeVarint(ByteArrayOutputStream output, long value) {

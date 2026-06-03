@@ -31,6 +31,7 @@ dotnet test SocketTests/SocketTests.csproj
 - dashboard cluster snapshot
 - dashboard liveness, readiness, metrics models
 - sample client settings and client-to-client message flow
+- native Android sample protocol validation script
 
 ## Load Test
 
@@ -62,6 +63,18 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --b
 - `--report-file`: 실행 옵션, counters, elapsed time을 JSON 파일로 저장
 
 기본 batch size는 100개 단위 증가입니다. 10,000개 이상 검증은 OS와 장비 설정을 먼저 확인해야 합니다.
+
+## Native Samples
+
+Android 샘플은 Gradle Wrapper와 `validate.sh`를 포함합니다.
+
+```bash
+cd Samples/SocketSample.Android
+./validate.sh --protocol-only
+./validate.sh --apk
+```
+
+`--protocol-only`는 Android SDK 없이 프레임/프로토콜 Java 소스를 검증합니다. `--apk`는 Android SDK가 설정된 환경에서 debug APK 빌드를 강제합니다.
 
 ## Test Port
 

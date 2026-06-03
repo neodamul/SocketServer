@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using SocketCommon.Configuration;
@@ -91,7 +92,44 @@ public class SocketSampleClientTests
         Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.macOS/SocketSampleMac.xcodeproj/project.pbxproj")));
         Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/MainActivity.java")));
         Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/NativeSocketClient.java")));
+        Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/gradlew")));
+        Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/gradle/wrapper/gradle-wrapper.jar")));
+        Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/gradle/wrapper/gradle-wrapper.properties")));
+        Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/validate.sh")));
         Assert.IsFalse(File.Exists(Path.Combine(root, "Samples/SocketSample.Mobile/SocketSample.Mobile.csproj")));
+    }
+
+    [TestMethod]
+    public async Task AndroidNativeProtocolValidationScriptPassesTest()
+    {
+        string root = FindRepositoryRoot();
+        string sampleRoot = Path.Combine(root, "Samples/SocketSample.Android");
+        string scriptPath = Path.Combine(sampleRoot, "validate.sh");
+
+        if (!CommandExists("javac"))
+        {
+            Assert.Inconclusive("javac is required to validate Android native protocol sources.");
+        }
+
+        using Process process = new()
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "/bin/sh",
+                ArgumentList = { scriptPath, "--protocol-only" },
+                WorkingDirectory = sampleRoot,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            }
+        };
+
+        process.Start();
+        string output = await process.StandardOutput.ReadToEndAsync();
+        string error = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        Assert.AreEqual(0, process.ExitCode, output + error);
     }
 
     private static SampleClientSettings CreateSettings(int clientId, int port)
@@ -127,5 +165,20 @@ public class SocketSampleClientTests
         }
 
         throw new DirectoryNotFoundException("Repository root was not found.");
+    }
+
+    private static bool CommandExists(string command)
+    {
+        string path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        foreach (string directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            string candidate = Path.Combine(directory, command);
+            if (File.Exists(candidate))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

@@ -40,7 +40,11 @@ Java + Android SDK 기반 네이티브 앱입니다.
 
 ```bash
 cd Samples/SocketSample.Android
-gradle :app:assembleDebug
+./validate.sh
+./validate.sh --protocol-only
+./validate.sh --apk
 ```
+
+`validate.sh`는 Android 네이티브 샘플의 프레임/프로토콜 코드를 검증하고, Android SDK가 설정되어 있으면 APK 빌드까지 실행합니다. 프로토콜 검증만 실행하려면 `--protocol-only`, APK 빌드를 강제하려면 `--apk` 옵션을 사용합니다.
 
 기본 설정 파일은 `Samples/SocketSample.Android/app/src/main/res/raw/config.json`입니다. Android emulator에서 개발 PC의 localhost에 접근하려면 host `10.0.2.2`를 사용합니다. 실제 기기에서는 SocketServer 또는 ControlServer가 실행 중인 장비의 LAN IP로 바꿔야 합니다.

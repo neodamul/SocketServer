@@ -23,16 +23,12 @@ public final class SocketFrame {
         writeUInt32(output, clientId);
         writeUInt32(output, messageId);
         writeUInt32(output, payload.length);
-        output.writeBytes(payload);
+        output.write(payload, 0, payload.length);
         return output.toByteArray();
     }
 
     public static SocketFrame read(DataInputStream input) throws IOException {
-        byte[] header = input.readNBytes(HEADER_LENGTH);
-        if (header.length != HEADER_LENGTH) {
-            throw new IOException("Frame header was incomplete.");
-        }
-
+        byte[] header = readFully(input, HEADER_LENGTH);
         long clientId = readUInt32(header, 0);
         long messageId = readUInt32(header, 4);
         int payloadLength = (int)readUInt32(header, 8);
@@ -40,11 +36,7 @@ public final class SocketFrame {
             throw new IOException("Payload is too large.");
         }
 
-        byte[] payload = input.readNBytes(payloadLength);
-        if (payload.length != payloadLength) {
-            throw new IOException("Payload was incomplete.");
-        }
-
+        byte[] payload = readFully(input, payloadLength);
         return new SocketFrame(clientId, messageId, payload);
     }
 
@@ -60,5 +52,11 @@ public final class SocketFrame {
             ((long)(data[offset + 1] & 0xff) << 16) |
             ((long)(data[offset + 2] & 0xff) << 8) |
             ((long)(data[offset + 3] & 0xff));
+    }
+
+    private static byte[] readFully(DataInputStream input, int length) throws IOException {
+        byte[] buffer = new byte[length];
+        input.readFully(buffer);
+        return buffer;
     }
 }
