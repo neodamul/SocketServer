@@ -220,17 +220,7 @@ public class ControlServerReporter : IDisposable
     {
         try
         {
-            Task<(bool Success, SocketMessageFrame Frame)> reportTask =
-                connection.SendAndReceiveAsync(clientId, messageId, payload);
-            Task completedTask = await Task.WhenAny(reportTask, Task.Delay(EndpointReportTimeout));
-            if (completedTask != reportTask)
-            {
-                connection.Close();
-                Logger.Warn($"ControlServer report timed out. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}, timeoutMs={EndpointReportTimeout.TotalMilliseconds}");
-                return;
-            }
-
-            (bool success, _) = await reportTask;
+            (bool success, _) = await connection.SendAndReceiveAsync(clientId, messageId, payload);
             if (!success)
             {
                 Logger.Warn($"ControlServer report failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}");
@@ -317,12 +307,17 @@ public class ControlServerReporter : IDisposable
             await this.sendLock.WaitAsync();
             try
             {
-                await this.EnsureConnectedAsync();
-                (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
-                    this.connection,
-                    clientId,
-                    messageId,
-                    payload);
+                Task<(bool Success, SocketMessageFrame Frame)> reportTask =
+                    this.SendAndReceiveCoreAsync(clientId, messageId, payload);
+                Task completedTask = await Task.WhenAny(reportTask, Task.Delay(EndpointReportTimeout));
+                if (completedTask != reportTask)
+                {
+                    this.Close();
+                    Logger.Warn($"ControlServer report timed out. endpoint={this.Endpoint.Host}:{this.Endpoint.Port}, messageId={messageId}, timeoutMs={EndpointReportTimeout.TotalMilliseconds}");
+                    return (false, default);
+                }
+
+                (bool success, SocketMessageFrame frame) = await reportTask;
                 if (!success)
                 {
                     this.Close();
@@ -334,6 +329,19 @@ public class ControlServerReporter : IDisposable
             {
                 this.sendLock.Release();
             }
+        }
+
+        private async Task<(bool Success, SocketMessageFrame Frame)> SendAndReceiveCoreAsync<T>(
+            uint clientId,
+            uint messageId,
+            T payload)
+        {
+            await this.EnsureConnectedAsync();
+            return await ControlProtocol.SendAndReceiveAsync(
+                this.connection,
+                clientId,
+                messageId,
+                payload);
         }
 
         public void Close()

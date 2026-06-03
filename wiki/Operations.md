@@ -56,7 +56,7 @@ GET /health/ready
 GET /metrics
 ```
 
-ControlServer가 실행 중이면 cluster registry snapshot을 표시합니다. ControlServer가 없으면 로컬 fallback SocketServer 상태를 표시합니다. 설정된 ControlServer endpoint는 Server Inventory에 `ControlServer` type으로 항상 표시되며, endpoint별 healthy/unavailable 상태와 counters를 확인할 수 있습니다.
+ControlServer가 실행 중이면 cluster registry snapshot을 표시합니다. ControlServer가 없으면 로컬 fallback SocketServer 상태를 표시합니다. 설정된 ControlServer endpoint는 Server Inventory에 `ControlServer` type으로 항상 표시되며, endpoint별 healthy/unavailable 상태와 counters를 확인할 수 있습니다. Server Inventory row를 선택하면 하단 패널에서 해당 서버의 연결 수, traffic, runtime, 상세 값을 확인할 수 있습니다.
 웹 대시보드는 기본 30초 간격으로 `/api/server/status`를 갱신하며, 화면 상단 콤보에서 5초, 10초, 30초, 60초를 선택할 수 있습니다.
 `/health/live`는 Dashboard 프로세스 생존 여부, `/health/ready`는 Dashboard 내부 TCP 서버 준비 상태, `/metrics`는 cluster 연결 수와 로컬 socket/pool counters를 반환합니다.
 

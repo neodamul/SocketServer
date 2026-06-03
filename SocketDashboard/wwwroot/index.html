@@ -57,8 +57,34 @@
       </div>
     </section>
 
-    <section class="section-block" aria-label="Dashboard server">
-      <h2>Dashboard Server</h2>
+    <section class="server-table section-block" aria-label="Server inventory">
+      <h2>Server Inventory</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Instance</th>
+            <th>Health</th>
+            <th>Endpoint</th>
+            <th>Max Conn</th>
+            <th>Current Conn</th>
+            <th>Available Conn</th>
+            <th>CPU</th>
+            <th>MEM</th>
+            <th>Storage</th>
+          </tr>
+        </thead>
+        <tbody id="clusterServers">
+          <tr>
+            <td colspan="10">-</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section-block" aria-label="Selected server">
+      <h2>Selected Server</h2>
+      <p id="selectedServerName">-</p>
       <div class="metrics">
       <article>
         <span>Listening</span>
@@ -79,8 +105,8 @@
       </div>
     </section>
 
-    <section class="section-block" aria-label="Dashboard traffic">
-      <h2>Dashboard Traffic</h2>
+    <section class="section-block" aria-label="Selected server traffic">
+      <h2>Selected Traffic</h2>
       <div class="metrics">
       <article>
         <span>Accepted</span>
@@ -109,7 +135,7 @@
       </div>
     </section>
 
-    <section class="section-block" aria-label="Socket runtime">
+    <section class="section-block" aria-label="Selected socket runtime">
       <h2>Socket Runtime</h2>
       <div class="metrics">
       <article>
@@ -135,8 +161,8 @@
       </div>
     </section>
 
-    <section class="details section-block" aria-label="Dashboard server details">
-      <h2>Dashboard Details</h2>
+    <section class="details section-block" aria-label="Selected server details">
+      <h2>Selected Details</h2>
       <div>
         <span>Address</span>
         <strong id="address">-</strong>
@@ -169,31 +195,6 @@
         <span>Updated</span>
         <strong id="updatedAt">-</strong>
       </div>
-    </section>
-
-    <section class="server-table section-block" aria-label="Server inventory">
-      <h2>Server Inventory</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th>Instance</th>
-            <th>Health</th>
-            <th>Endpoint</th>
-            <th>Max Conn</th>
-            <th>Current Conn</th>
-            <th>Available Conn</th>
-            <th>CPU</th>
-            <th>MEM</th>
-            <th>Storage</th>
-          </tr>
-        </thead>
-        <tbody id="clusterServers">
-          <tr>
-            <td colspan="10">-</td>
-          </tr>
-        </tbody>
-      </table>
     </section>
   </main>
 

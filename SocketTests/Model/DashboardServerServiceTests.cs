@@ -87,13 +87,23 @@ public class DashboardServerServiceTests
         Assert.IsTrue(indexHtml.Contains("<option value=\"5\">5s</option>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<option value=\"10\">10s</option>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<option value=\"60\">60s</option>", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("Selected Server", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("Selected Details", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("id=\"selectedServerName\"", StringComparison.Ordinal));
         Assert.IsTrue(
-            indexHtml.IndexOf("Dashboard Details", StringComparison.Ordinal) <
-                indexHtml.IndexOf("Server Inventory", StringComparison.Ordinal));
+            indexHtml.IndexOf("Server Inventory", StringComparison.Ordinal) <
+                indexHtml.IndexOf("Selected Server", StringComparison.Ordinal));
+        Assert.IsTrue(
+            indexHtml.IndexOf("Socket Runtime", StringComparison.Ordinal) <
+                indexHtml.IndexOf("Selected Details", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("const DEFAULT_REFRESH_SECONDS = 30;", StringComparison.Ordinal));
         Assert.IsFalse(appJs.Contains("renderControlServers(status.controlServers)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("function buildControlServerRow(server)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("renderServers(status.cluster.servers, server, status.controlServers)", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("function renderSelectedServer(server)", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("data-row-key", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("selected-row", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("fields.clusterServers?.addEventListener(\"click\"", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("fields.controlServerCount.textContent = controlRows.length;", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("fields.socketServerCount.textContent = socketRows.length;", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("fields.dashboardServerCount.textContent = dashboardRow ? 1 : 0;", StringComparison.Ordinal));

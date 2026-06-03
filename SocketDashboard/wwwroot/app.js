@@ -1,6 +1,7 @@
 const fields = {
   refreshIntervalSeconds: document.getElementById("refreshIntervalSeconds"),
   health: document.getElementById("health"),
+  selectedServerName: document.getElementById("selectedServerName"),
   isListening: document.getElementById("isListening"),
   acceptLoop: document.getElementById("acceptLoop"),
   connectedClients: document.getElementById("connectedClients"),
@@ -36,6 +37,8 @@ const fields = {
 const DEFAULT_REFRESH_SECONDS = 30;
 let refreshTimer = null;
 let refreshInFlight = false;
+let selectedServerKey = "";
+let currentInventoryRows = [];
 
 function yesNo(value) {
   return value ? "ON" : "OFF";
@@ -59,6 +62,26 @@ function percent(value) {
   return `${Math.round((value || 0) * 10) / 10}%`;
 }
 
+function displayValue(value) {
+  return value === null || value === undefined || value === "" ? "-" : value;
+}
+
+function boolValue(value) {
+  return typeof value === "boolean" ? yesNo(value) : "-";
+}
+
+function durationSeconds(value) {
+  return value === null || value === undefined ? "-" : `${value}s`;
+}
+
+function bytes(value) {
+  return value === null || value === undefined ? "-" : `${value} bytes`;
+}
+
+function serverRowKey(server) {
+  return `${server.type}:${server.instanceId}:${server.host}:${server.port}`;
+}
+
 function buildDashboardServerRow(server) {
   return {
     type: "Dashboard",
@@ -69,7 +92,27 @@ function buildDashboardServerRow(server) {
     maxConnections: server.maxConnections,
     currentConnections: server.connectedClientCount,
     availableConnections: server.availableConnections,
-    resourceUsage: null
+    resourceUsage: null,
+    isListening: server.isListening,
+    isAcceptLoopRunning: server.isAcceptLoopRunning,
+    totalAcceptedClients: server.totalAcceptedClients,
+    totalClosedClients: server.totalClosedClients,
+    totalRejectedClients: server.totalRejectedClients,
+    totalIdleTimeoutClients: server.totalIdleTimeoutClients,
+    totalReceivedMessages: server.totalReceivedMessages,
+    totalSentMessages: server.totalSentMessages,
+    listenBacklog: server.listenBacklog,
+    pendingAcceptCount: server.pendingAcceptCount,
+    idleTimeoutSeconds: server.idleTimeoutSeconds,
+    noDelay: server.noDelay,
+    maxPayloadLength: server.maxPayloadLength,
+    socketAsyncEventArgsAvailableCount: server.socketAsyncEventArgsAvailableCount,
+    socketAsyncEventArgsTotalCreatedCount: server.socketAsyncEventArgsTotalCreatedCount,
+    socketAsyncEventArgsInUseCount: server.socketAsyncEventArgsInUseCount,
+    socketAsyncEventArgsHighWatermarkInUseCount: server.socketAsyncEventArgsHighWatermarkInUseCount,
+    socketAsyncEventArgsGrowthCount: server.socketAsyncEventArgsGrowthCount,
+    startedAt: server.startedAt,
+    updatedAt: server.updatedAt
   };
 }
 
@@ -92,7 +135,27 @@ function buildSocketServerRow(server) {
     maxConnections: server.maxConnections ?? "-",
     currentConnections: server.currentConnections ?? server.connectedClientCount ?? "-",
     availableConnections: server.availableConnections ?? "-",
-    resourceUsage: server.resourceUsage || null
+    resourceUsage: server.resourceUsage || null,
+    isListening: server.health === 1 || server.health === "Healthy",
+    isAcceptLoopRunning: server.health === 1 || server.health === "Healthy",
+    totalAcceptedClients: "-",
+    totalClosedClients: "-",
+    totalRejectedClients: "-",
+    totalIdleTimeoutClients: "-",
+    totalReceivedMessages: "-",
+    totalSentMessages: "-",
+    listenBacklog: "-",
+    pendingAcceptCount: "-",
+    idleTimeoutSeconds: "-",
+    noDelay: "-",
+    maxPayloadLength: "-",
+    socketAsyncEventArgsAvailableCount: "-",
+    socketAsyncEventArgsTotalCreatedCount: "-",
+    socketAsyncEventArgsInUseCount: "-",
+    socketAsyncEventArgsHighWatermarkInUseCount: "-",
+    socketAsyncEventArgsGrowthCount: "-",
+    startedAt: server.startedAt,
+    updatedAt: server.updatedAt || server.lastHeartbeatAt
   };
 }
 
@@ -106,7 +169,27 @@ function buildControlServerRow(server) {
     maxConnections: "-",
     currentConnections: server.totalCurrentConnections ?? "-",
     availableConnections: server.totalAvailableConnections ?? "-",
-    resourceUsage: null
+    resourceUsage: null,
+    isListening: server.isHealthy,
+    isAcceptLoopRunning: server.isHealthy,
+    totalAcceptedClients: "-",
+    totalClosedClients: "-",
+    totalRejectedClients: "-",
+    totalIdleTimeoutClients: "-",
+    totalReceivedMessages: "-",
+    totalSentMessages: "-",
+    listenBacklog: "-",
+    pendingAcceptCount: "-",
+    idleTimeoutSeconds: "-",
+    noDelay: "-",
+    maxPayloadLength: "-",
+    socketAsyncEventArgsAvailableCount: "-",
+    socketAsyncEventArgsTotalCreatedCount: "-",
+    socketAsyncEventArgsInUseCount: "-",
+    socketAsyncEventArgsHighWatermarkInUseCount: "-",
+    socketAsyncEventArgsGrowthCount: "-",
+    startedAt: "-",
+    updatedAt: server.checkedAt
   };
 }
 
@@ -123,17 +206,26 @@ function renderServers(clusterServers, dashboardServer, controlServers) {
     .filter(server => !sameEndpoint(server, dashboardRow))
     .map(buildSocketServerRow);
   const rows = [...controlRows, ...socketRows, dashboardRow];
+  currentInventoryRows = rows.map(server => ({
+    ...server,
+    key: serverRowKey(server)
+  }));
   fields.controlServerCount.textContent = controlRows.length;
   fields.socketServerCount.textContent = socketRows.length;
   fields.dashboardServerCount.textContent = dashboardRow ? 1 : 0;
 
-  if (rows.length === 0) {
+  if (currentInventoryRows.length === 0) {
     fields.clusterServers.innerHTML = "<tr><td colspan=\"10\">-</td></tr>";
+    renderSelectedServer(null);
     return;
   }
 
-  fields.clusterServers.innerHTML = rows.map(server => `
-    <tr>
+  if (!currentInventoryRows.some(server => server.key === selectedServerKey)) {
+    selectedServerKey = dashboardRow ? serverRowKey(dashboardRow) : currentInventoryRows[0].key;
+  }
+
+  fields.clusterServers.innerHTML = currentInventoryRows.map(server => `
+    <tr data-row-key="${server.key}" class="${server.key === selectedServerKey ? "selected-row" : ""}">
       <td>${server.type}</td>
       <td>${server.instanceId}</td>
       <td>${server.health}</td>
@@ -146,6 +238,68 @@ function renderServers(clusterServers, dashboardServer, controlServers) {
       <td>${percent(server.resourceUsage?.storageUsagePercent)}</td>
     </tr>
   `).join("");
+  renderSelectedServer(currentInventoryRows.find(server => server.key === selectedServerKey));
+}
+
+function renderSelectedServer(server) {
+  if (!server) {
+    fields.selectedServerName.textContent = "-";
+    fields.isListening.textContent = "-";
+    fields.acceptLoop.textContent = "-";
+    fields.connectedClients.textContent = "-";
+    fields.maxConnections.textContent = "-";
+    fields.acceptedClients.textContent = "-";
+    fields.closedClients.textContent = "-";
+    fields.rejectedClients.textContent = "-";
+    fields.idleTimeoutClients.textContent = "-";
+    fields.receivedMessages.textContent = "-";
+    fields.sentMessages.textContent = "-";
+    fields.saeaPool.textContent = "-";
+    fields.address.textContent = "-";
+    fields.backlog.textContent = "-";
+    fields.pendingAcceptCount.textContent = "-";
+    fields.idleTimeoutSeconds.textContent = "-";
+    fields.noDelay.textContent = "-";
+    fields.maxPayload.textContent = "-";
+    fields.saeaCreated.textContent = "-";
+    fields.saeaInUse.textContent = "-";
+    fields.saeaHighWatermark.textContent = "-";
+    fields.saeaGrowth.textContent = "-";
+    fields.startedAt.textContent = "-";
+    fields.updatedAt.textContent = "-";
+    return;
+  }
+
+  fields.selectedServerName.textContent = `${server.type} / ${server.instanceId} / ${server.host}:${server.port}`;
+  fields.isListening.textContent = boolValue(server.isListening);
+  fields.acceptLoop.textContent = boolValue(server.isAcceptLoopRunning);
+  fields.connectedClients.textContent = displayValue(server.currentConnections);
+  fields.maxConnections.textContent = displayValue(server.maxConnections);
+  fields.acceptedClients.textContent = displayValue(server.totalAcceptedClients);
+  fields.closedClients.textContent = displayValue(server.totalClosedClients);
+  fields.rejectedClients.textContent = displayValue(server.totalRejectedClients);
+  fields.idleTimeoutClients.textContent = displayValue(server.totalIdleTimeoutClients);
+  fields.receivedMessages.textContent = displayValue(server.totalReceivedMessages);
+  fields.sentMessages.textContent = displayValue(server.totalSentMessages);
+  fields.saeaPool.textContent = displayValue(server.socketAsyncEventArgsAvailableCount);
+  fields.address.textContent = `${server.host}:${server.port}`;
+  fields.backlog.textContent = displayValue(server.listenBacklog);
+  fields.pendingAcceptCount.textContent = displayValue(server.pendingAcceptCount);
+  fields.idleTimeoutSeconds.textContent = typeof server.idleTimeoutSeconds === "number"
+    ? durationSeconds(server.idleTimeoutSeconds)
+    : displayValue(server.idleTimeoutSeconds);
+  fields.noDelay.textContent = typeof server.noDelay === "boolean"
+    ? yesNo(server.noDelay)
+    : displayValue(server.noDelay);
+  fields.maxPayload.textContent = typeof server.maxPayloadLength === "number"
+    ? bytes(server.maxPayloadLength)
+    : displayValue(server.maxPayloadLength);
+  fields.saeaCreated.textContent = displayValue(server.socketAsyncEventArgsTotalCreatedCount);
+  fields.saeaInUse.textContent = displayValue(server.socketAsyncEventArgsInUseCount);
+  fields.saeaHighWatermark.textContent = displayValue(server.socketAsyncEventArgsHighWatermarkInUseCount);
+  fields.saeaGrowth.textContent = displayValue(server.socketAsyncEventArgsGrowthCount);
+  fields.startedAt.textContent = localTime(server.startedAt);
+  fields.updatedAt.textContent = localTime(server.updatedAt);
 }
 
 async function refresh() {
@@ -165,33 +319,10 @@ async function refresh() {
     const online = status.startSucceeded && server.isListening && server.isAcceptLoopRunning;
 
     setHealth(online);
-    fields.isListening.textContent = yesNo(server.isListening);
-    fields.acceptLoop.textContent = yesNo(server.isAcceptLoopRunning);
-    fields.connectedClients.textContent = server.connectedClientCount;
-    fields.maxConnections.textContent = server.maxConnections;
-    fields.acceptedClients.textContent = server.totalAcceptedClients;
-    fields.closedClients.textContent = server.totalClosedClients;
-    fields.rejectedClients.textContent = server.totalRejectedClients;
-    fields.idleTimeoutClients.textContent = server.totalIdleTimeoutClients;
-    fields.receivedMessages.textContent = server.totalReceivedMessages;
-    fields.sentMessages.textContent = server.totalSentMessages;
-    fields.saeaPool.textContent = server.socketAsyncEventArgsAvailableCount;
     fields.totalMaxConnections.textContent = status.cluster.totalMaxConnections;
     fields.totalCurrentConnections.textContent = status.cluster.totalCurrentConnections;
     fields.totalAvailableConnections.textContent = status.cluster.totalAvailableConnections;
     renderServers(status.cluster.servers, server, status.controlServers);
-    fields.address.textContent = `${server.ipAddress}:${server.port}`;
-    fields.backlog.textContent = server.listenBacklog;
-    fields.pendingAcceptCount.textContent = server.pendingAcceptCount;
-    fields.idleTimeoutSeconds.textContent = `${server.idleTimeoutSeconds}s`;
-    fields.noDelay.textContent = yesNo(server.noDelay);
-    fields.maxPayload.textContent = `${server.maxPayloadLength} bytes`;
-    fields.saeaCreated.textContent = server.socketAsyncEventArgsTotalCreatedCount;
-    fields.saeaInUse.textContent = server.socketAsyncEventArgsInUseCount;
-    fields.saeaHighWatermark.textContent = server.socketAsyncEventArgsHighWatermarkInUseCount;
-    fields.saeaGrowth.textContent = server.socketAsyncEventArgsGrowthCount;
-    fields.startedAt.textContent = localTime(server.startedAt);
-    fields.updatedAt.textContent = localTime(server.updatedAt);
   } catch {
     setHealth(false);
   } finally {
@@ -214,6 +345,20 @@ function scheduleRefresh() {
 
   refreshTimer = setInterval(refresh, getRefreshIntervalMilliseconds());
 }
+
+fields.clusterServers?.addEventListener("click", event => {
+  const row = event.target.closest("tr[data-row-key]");
+  if (!row) {
+    return;
+  }
+
+  selectedServerKey = row.dataset.rowKey;
+  for (const tableRow of fields.clusterServers.querySelectorAll("tr[data-row-key]")) {
+    tableRow.classList.toggle("selected-row", tableRow.dataset.rowKey === selectedServerKey);
+  }
+
+  renderSelectedServer(currentInventoryRows.find(server => server.key === selectedServerKey));
+});
 
 fields.refreshIntervalSeconds?.addEventListener("change", () => {
   scheduleRefresh();

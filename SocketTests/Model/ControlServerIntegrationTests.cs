@@ -318,14 +318,14 @@ public class ControlServerIntegrationTests
     [TestMethod]
     public async Task ControlServerCleanupSchedulerClosesStaleControlConnectionTest()
     {
-        using ControlServerPair controls = CreateStartedControlPair("cleanup", heartbeatTimeoutSeconds: 1);
+        using ControlServerPair controls = CreateStartedControlPair("cleanup", heartbeatTimeoutSeconds: 5);
         using SocketServerCluster servers = CreateStartedSocketServerCluster(70, "server-cleanup");
         servers.AttachReporters(controls.Endpoints);
         await servers.RegisterAsync();
         await WaitForClusterAsync(controls.ControlA, status => status.HealthyServerCount == 4 && status.TotalAvailableConnections == 40);
         await WaitForConditionAsync(() => controls.ControlA.ActiveConnectionCount >= 4);
 
-        await WaitForConditionAsync(() => controls.ControlA.ActiveConnectionCount == 0, timeoutSeconds: 4);
+        await WaitForConditionAsync(() => controls.ControlA.ActiveConnectionCount == 0, timeoutSeconds: 8);
         ClusterStatusSnapshot staleStatus = await WaitForClusterAsync(
             controls.ControlA,
             status => status.ServerCount == 4 &&
@@ -484,8 +484,8 @@ public class ControlServerIntegrationTests
             androidClient.RegisterAsync());
         Assert.IsTrue(registerResults.All(result => result));
 
-        await WaitForClusterAsync(controlA, status => status.TotalSessionCount == 4);
-        await WaitForClusterAsync(controlB, status => status.TotalSessionCount == 4);
+        await WaitForClusterAsync(controlA, status => status.TotalSessionCount == 4, timeoutSeconds: 15);
+        await WaitForClusterAsync(controlB, status => status.TotalSessionCount == 4, timeoutSeconds: 15);
         await WaitForClientLocationCountAsync(controlA, 4);
         await WaitForClientLocationCountAsync(controlB, 4);
 

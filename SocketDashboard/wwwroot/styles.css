@@ -190,6 +190,15 @@ tbody tr:last-child td {
   border-bottom: 0;
 }
 
+.server-table tbody tr[data-row-key] {
+  cursor: pointer;
+}
+
+.server-table tbody tr[data-row-key]:hover,
+.server-table tbody tr.selected-row {
+  background: #eef4ff;
+}
+
 @media (max-width: 820px) {
   .topbar {
     align-items: flex-start;
