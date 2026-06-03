@@ -803,7 +803,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         Func<ConnectionSession, Task> handler = this.SessionOpenedAsync;
         if (handler != null)
         {
-            _ = Task.Run(() => handler(session));
+            this.RunSessionEventHandler(handler, session, "opened");
         }
     }
 
@@ -812,7 +812,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         Func<ConnectionSession, Task> handler = this.SessionClosedAsync;
         if (handler != null)
         {
-            _ = Task.Run(() => handler(session));
+            this.RunSessionEventHandler(handler, session, "closed");
         }
     }
 
@@ -821,8 +821,15 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         Func<ConnectionSession, Task> handler = this.SessionUpdatedAsync;
         if (handler != null)
         {
-            _ = Task.Run(() => handler(session));
+            this.RunSessionEventHandler(handler, session, "updated");
         }
+    }
+
+    private void RunSessionEventHandler(Func<ConnectionSession, Task> handler, ConnectionSession session, string eventName)
+    {
+        _ = Task.Run(() => handler(session)).ContinueWith(
+            task => Logger.Warn($"Session {eventName} event handler failed. connectionId={session.Id}", task.Exception),
+            TaskContinuationOptions.OnlyOnFaulted);
     }
 
     private static string CreateInstanceId(int id, string name)

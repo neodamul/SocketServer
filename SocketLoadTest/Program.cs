@@ -41,7 +41,7 @@ internal static class Program
         }
 
         Console.WriteLine(
-            $"Starting load test: clients={options.Clients}, batch-size={options.BatchSize}, hold-seconds={options.HoldSeconds}, endpoint={options.Host}:{options.Port}, external-server={options.ExternalServer}, use-control-server={options.UseControlServer}, message-test={options.MessageTest}, message-rounds={options.MessageRounds}");
+            $"Starting load test: clients={options.Clients}, batch-size={options.BatchSize}, hold-seconds={options.HoldSeconds}, endpoint={options.Host}:{options.Port}, external-server={options.ExternalServer}, use-control-server={options.UseControlServer}, message-test={options.MessageTest}, message-rounds={options.MessageRounds}, ramp-delay-ms={options.RampDelayMilliseconds}, expected-connected={options.ExpectedConnected}");
 
         Stopwatch stopwatch = Stopwatch.StartNew();
         LoadTestCounters counters = new();
@@ -63,6 +63,10 @@ internal static class Program
                 }
 
                 PrintProgress(counters, stopwatch.Elapsed);
+                if (options.RampDelayMilliseconds > 0)
+                {
+                    await Task.Delay(options.RampDelayMilliseconds);
+                }
             }
 
             if (options.MessageTest)
@@ -94,6 +98,12 @@ internal static class Program
 
         stopwatch.Stop();
         PrintSummary(counters, stopwatch.Elapsed);
+        if (options.ExpectedConnected > 0 && counters.Connected < options.ExpectedConnected)
+        {
+            Console.Error.WriteLine($"Expected at least {options.ExpectedConnected} connected clients, but {counters.Connected} connected.");
+            return 2;
+        }
+
         return counters.HealthCheckFail == 0 &&
             counters.ConnectFail == 0 &&
             counters.RegisterFail == 0 &&
@@ -153,7 +163,7 @@ internal static class Program
             }
 
             Interlocked.Increment(ref counters.Connected);
-            bool healthCheckSucceeded = await SendAndReceiveHealthCheckAsync(client);
+            bool healthCheckSucceeded = await SendAndReceiveHealthCheckAsync(client, options.HealthCheckTimeoutSeconds);
             if (healthCheckSucceeded)
             {
                 Interlocked.Increment(ref counters.HealthCheckSuccess);
@@ -205,7 +215,7 @@ internal static class Program
             {
                 ConnectedLoadClient source = clients[pairIndex * 2];
                 ConnectedLoadClient target = clients[(pairIndex * 2) + 1];
-                tasks[pairIndex] = RunMessagePairAsync(round, source, target, counters);
+                tasks[pairIndex] = RunMessagePairAsync(options, round, source, target, counters);
             }
 
             await Task.WhenAll(tasks);
@@ -213,6 +223,7 @@ internal static class Program
     }
 
     private static async Task RunMessagePairAsync(
+        LoadTestOptions options,
         int round,
         ConnectedLoadClient source,
         ConnectedLoadClient target,
@@ -228,10 +239,10 @@ internal static class Program
 
         Task completedReceiveTask = await Task.WhenAny(
             receiveTask,
-            Task.Delay(TimeSpan.FromSeconds(MessageTimeoutSeconds)));
+            Task.Delay(TimeSpan.FromSeconds(options.MessageTimeoutSeconds)));
         Task completedSendTask = await Task.WhenAny(
             sendTask,
-            Task.Delay(TimeSpan.FromSeconds(MessageTimeoutSeconds)));
+            Task.Delay(TimeSpan.FromSeconds(options.MessageTimeoutSeconds)));
 
         if (completedReceiveTask != receiveTask || completedSendTask != sendTask)
         {
@@ -257,7 +268,7 @@ internal static class Program
         Interlocked.Increment(ref counters.MessageSuccess);
     }
 
-    private static async Task<bool> SendAndReceiveHealthCheckAsync(TcpClient client)
+    private static async Task<bool> SendAndReceiveHealthCheckAsync(TcpClient client, int timeoutSeconds = HealthCheckTimeoutSeconds)
     {
         if (!await client.SendHealthCheckAsync())
         {
@@ -268,7 +279,7 @@ internal static class Program
             client.TryReceiveHealthCheckAsync();
         Task completedTask = await Task.WhenAny(
             receiveTask,
-            Task.Delay(TimeSpan.FromSeconds(HealthCheckTimeoutSeconds)));
+            Task.Delay(TimeSpan.FromSeconds(timeoutSeconds)));
 
         if (completedTask != receiveTask)
         {
@@ -323,7 +334,7 @@ internal static class Program
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: dotnet run --project SocketLoadTest -- [--clients N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--external-server] [--use-control-server] [--message-test] [--message-rounds N]");
+            "Usage: dotnet run --project SocketLoadTest -- [--clients N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--external-server] [--use-control-server] [--message-test] [--message-rounds N] [--ramp-delay-ms N] [--expected-connected N] [--healthcheck-timeout-seconds N] [--message-timeout-seconds N]");
     }
 }
 
@@ -356,7 +367,11 @@ internal sealed record LoadTestOptions(
     bool ExternalServer,
     bool UseControlServer,
     bool MessageTest,
-    int MessageRounds)
+    int MessageRounds,
+    int RampDelayMilliseconds,
+    int ExpectedConnected,
+    int HealthCheckTimeoutSeconds,
+    int MessageTimeoutSeconds)
 {
     public static bool TryParse(string[] args, out LoadTestOptions options, out string error)
     {
@@ -369,7 +384,11 @@ internal sealed record LoadTestOptions(
             ExternalServer: false,
             UseControlServer: false,
             MessageTest: false,
-            MessageRounds: 1);
+            MessageRounds: 1,
+            RampDelayMilliseconds: 0,
+            ExpectedConnected: 0,
+            HealthCheckTimeoutSeconds: 10,
+            MessageTimeoutSeconds: 10);
         error = string.Empty;
 
         for (int index = 0; index < args.Length; index++)
@@ -467,6 +486,42 @@ internal sealed record LoadTestOptions(
                     }
 
                     options = options with { MessageRounds = messageRounds };
+                    break;
+
+                case "--ramp-delay-ms":
+                    if (!TryReadInt(args, ref index, value, arg, 0, int.MaxValue, out int rampDelayMilliseconds, out error))
+                    {
+                        return false;
+                    }
+
+                    options = options with { RampDelayMilliseconds = rampDelayMilliseconds };
+                    break;
+
+                case "--expected-connected":
+                    if (!TryReadInt(args, ref index, value, arg, 0, int.MaxValue, out int expectedConnected, out error))
+                    {
+                        return false;
+                    }
+
+                    options = options with { ExpectedConnected = expectedConnected };
+                    break;
+
+                case "--healthcheck-timeout-seconds":
+                    if (!TryReadInt(args, ref index, value, arg, 1, int.MaxValue, out int healthCheckTimeoutSeconds, out error))
+                    {
+                        return false;
+                    }
+
+                    options = options with { HealthCheckTimeoutSeconds = healthCheckTimeoutSeconds };
+                    break;
+
+                case "--message-timeout-seconds":
+                    if (!TryReadInt(args, ref index, value, arg, 1, int.MaxValue, out int messageTimeoutSeconds, out error))
+                    {
+                        return false;
+                    }
+
+                    options = options with { MessageTimeoutSeconds = messageTimeoutSeconds };
                     break;
 
                 default:

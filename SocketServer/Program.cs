@@ -19,6 +19,10 @@ class Program
         string configPath = args.FirstOrDefault(arg => arg.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) ?? "config.json";
         SocketServerConfigFile config = SocketConfigLoader.Load<SocketServerConfigFile>(configPath);
         SecureSocketConnection.Configure(config.Security);
+        SocketCommon.Model.SocketAsyncEventArgsFactory.Configure(
+            config.SocketAsyncEventArgsPool.InitialSize,
+            config.SocketAsyncEventArgsPool.GrowthSize,
+            config.SocketAsyncEventArgsPool.MaxRetained);
         int? selectedServerId = ReadServerId(args);
         bool runAll = args.Contains("--all", StringComparer.OrdinalIgnoreCase) || !selectedServerId.HasValue;
 
@@ -64,8 +68,8 @@ class Program
             Console.WriteLine($"SocketServer {server.InstanceId} started at {server.GetIpAddress()}:{server.GetPort()}");
         }
 
-        Console.WriteLine("Press Enter to stop.");
-        Console.ReadLine();
+        Console.WriteLine("Press Ctrl+C to stop.");
+        await WaitForShutdownAsync();
 
         foreach (ControlServerReporter reporter in reporters)
         {
@@ -76,6 +80,20 @@ class Program
         {
             server.Dispose();
         }
+    }
+
+    private static Task WaitForShutdownAsync()
+    {
+        TaskCompletionSource completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        ConsoleCancelEventHandler handler = (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            completion.TrySetResult();
+        };
+
+        Console.CancelKeyPress += handler;
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => completion.TrySetResult();
+        return completion.Task;
     }
 
     private static int? ReadServerId(string[] args)

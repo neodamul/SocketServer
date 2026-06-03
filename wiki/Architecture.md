@@ -70,12 +70,17 @@ SocketServer는 ControlServer와 persistent control channel을 유지합니다. 
 
 클라이언트가 `CLIENT_REGISTER` 또는 다른 메시지를 보내면 SocketServer는 `clientId -> session` 인덱스를 갱신하고 ControlServer에 session/client location을 전파합니다. 연결 종료, read 실패, idle timeout, delivery send 실패는 session close로 정규화되어 location 제거 이벤트로 이어집니다.
 
+SocketServer의 session event는 bounded queue를 통해 ControlServerReporter가 순차 전송합니다. 이벤트 폭주 시 무제한 task/memory 증가를 막고, reporter worker에서 전송 실패를 기록합니다.
+
 서버 기본 정책:
 
 - `maxConnections`: 기본 10,000
 - `pendingAcceptCount`: 기본 100
 - `idleTimeoutSeconds`: 기본 90
 - healthcheck interval: 기본 30초
+- `SocketAsyncEventArgs` pool: 초기 1,000개, 100개 단위 증가
+
+콘솔 실행 프로젝트는 Ctrl+C/프로세스 종료 신호를 받아 reporter와 서버 소켓을 정리합니다.
 
 ## ControlServer Active-Active
 

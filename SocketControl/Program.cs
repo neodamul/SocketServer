@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Threading.Tasks;
 using SocketCommon.Configuration;
 using SocketCommon.Logging;
 using SocketCommon.Model;
@@ -8,7 +9,7 @@ namespace SocketControl;
 
 internal static class Program
 {
-    private static void Main(string[] args)
+    private static async Task Main(string[] args)
     {
         LogConfigurator.Configure();
         string configPath = args.Length > 0 ? args[0] : "config.json";
@@ -23,7 +24,21 @@ internal static class Program
         }
 
         Console.WriteLine($"ControlServer started at {config.ControlServer.Host}:{server.Port}");
-        Console.WriteLine("Press Enter to stop.");
-        Console.ReadLine();
+        Console.WriteLine("Press Ctrl+C to stop.");
+        await WaitForShutdownAsync();
+    }
+
+    private static Task WaitForShutdownAsync()
+    {
+        TaskCompletionSource completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        ConsoleCancelEventHandler handler = (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            completion.TrySetResult();
+        };
+
+        Console.CancelKeyPress += handler;
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => completion.TrySetResult();
+        return completion.Task;
     }
 }

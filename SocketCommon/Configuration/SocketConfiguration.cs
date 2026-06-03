@@ -60,6 +60,8 @@ public class SocketServerConfigFile
 {
     public SocketSecurityConfig Security { get; set; } = new();
 
+    public SocketAsyncEventArgsPoolConfig SocketAsyncEventArgsPool { get; set; } = new();
+
     public List<EndpointConfig> ControlServers { get; set; } = new()
     {
         new EndpointConfig { Host = Constants.LocalHostIpAddress, Port = Constants.LocalHostPort }
@@ -107,6 +109,15 @@ public class SocketSecurityConfig
     public string CertificateDirectory { get; set; } = "";
 
     public int AuthenticationTimeoutMilliseconds { get; set; } = 5000;
+}
+
+public class SocketAsyncEventArgsPoolConfig
+{
+    public int InitialSize { get; set; } = 1000;
+
+    public int GrowthSize { get; set; } = 100;
+
+    public int MaxRetained { get; set; } = 20000;
 }
 
 public class SocketClientConnectionConfig

@@ -91,6 +91,11 @@ Certificates/SocketDashboard.pfx
 
 ```json
 {
+  "socketAsyncEventArgsPool": {
+    "initialSize": 1000,
+    "growthSize": 100,
+    "maxRetained": 20000
+  },
   "controlServers": [
     {
       "host": "127.0.0.1",
@@ -115,6 +120,8 @@ Certificates/SocketDashboard.pfx
 ```
 
 `portRangeStart=0`, `portRangeEnd=0`이면 OS 동적 포트 바인딩을 사용합니다. 운영 설정은 명시적인 port range 사용을 권장합니다.
+
+`socketAsyncEventArgsPool`은 accept/send/receive에 사용하는 `SocketAsyncEventArgs` pool을 설정합니다. 운영에서는 목표 동접과 메시지 빈도에 맞춰 `initialSize`, `growthSize`, `maxRetained`를 조정합니다.
 
 ## SocketClient
 

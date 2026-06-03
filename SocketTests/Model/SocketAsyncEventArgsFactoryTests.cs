@@ -31,4 +31,18 @@ public class SocketAsyncEventArgsFactoryTests
         SocketAsyncEventArgsFactory.Return(args);
         Assert.AreEqual(initialInUse, SocketAsyncEventArgsFactory.InUseCount);
     }
+
+    [TestMethod]
+    public void ConfigurePoolSettingsTest()
+    {
+        int targetSize = SocketAsyncEventArgsFactory.TotalCreatedCount + 10;
+
+        SocketAsyncEventArgsFactory.Configure(targetSize, 25, 30000);
+
+        Assert.IsTrue(SocketAsyncEventArgsFactory.TotalCreatedCount >= targetSize);
+        Assert.AreEqual(25, SocketAsyncEventArgsFactory.ConfiguredGrowthSize);
+        Assert.AreEqual(30000, SocketAsyncEventArgsFactory.MaxRetainedCount);
+
+        SocketAsyncEventArgsFactory.Configure(SocketAsyncEventArgsFactory.InitialPoolSize, SocketAsyncEventArgsFactory.GrowthSize, 20000);
+    }
 }

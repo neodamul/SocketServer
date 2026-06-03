@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using SocketCommon.Configuration;
 using SocketCommon.Diagnostics;
@@ -22,6 +23,15 @@ public class ControlServerReporter : IDisposable
     private readonly int portRangeEnd;
     private readonly ResourceUsageProvider resourceUsageProvider = new();
     private readonly IReadOnlyCollection<ControlEndpointConnection> connections;
+    private readonly Channel<ControlReportMessage> reportChannel = Channel.CreateBounded<ControlReportMessage>(
+        new BoundedChannelOptions(10000)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+            SingleReader = true,
+            SingleWriter = false
+        });
+    private readonly CancellationTokenSource reportCancellation = new();
+    private readonly Task reportWorkerTask;
     private CancellationTokenSource cancellation;
     private Task heartbeatTask;
     private bool disposedValue;
@@ -43,6 +53,7 @@ public class ControlServerReporter : IDisposable
         this.server.SessionOpenedAsync += this.SendSessionOpenedAsync;
         this.server.SessionUpdatedAsync += this.SendSessionUpdatedAsync;
         this.server.SessionClosedAsync += this.SendSessionClosedAsync;
+        this.reportWorkerTask = this.RunReportWorkerAsync(this.reportCancellation.Token);
     }
 
     public async Task RegisterAsync()
@@ -164,7 +175,25 @@ public class ControlServerReporter : IDisposable
             Version = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
 
-        await BroadcastAsync(0, messageId, message);
+        await this.reportChannel.Writer.WriteAsync(new ControlReportMessage(messageId, message), this.reportCancellation.Token);
+    }
+
+    private async Task RunReportWorkerAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (ControlReportMessage report in this.reportChannel.Reader.ReadAllAsync(cancellationToken))
+            {
+                await BroadcastAsync(0, report.MessageId, report.Message);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Logger.Warn("ControlServer report worker stopped unexpectedly.", exception);
+        }
     }
 
     private async Task BroadcastAsync<T>(uint clientId, uint messageId, T payload)
@@ -194,6 +223,17 @@ public class ControlServerReporter : IDisposable
             this.server.SessionOpenedAsync -= this.SendSessionOpenedAsync;
             this.server.SessionUpdatedAsync -= this.SendSessionUpdatedAsync;
             this.server.SessionClosedAsync -= this.SendSessionClosedAsync;
+            this.reportChannel.Writer.TryComplete();
+            this.reportCancellation.CancelAfter(TimeSpan.FromSeconds(5));
+            try
+            {
+                this.reportWorkerTask.Wait(TimeSpan.FromSeconds(5));
+            }
+            catch (AggregateException)
+            {
+            }
+
+            this.reportCancellation.Dispose();
             foreach (ControlEndpointConnection connection in this.connections)
             {
                 connection.Dispose();
@@ -203,6 +243,8 @@ public class ControlServerReporter : IDisposable
             GC.SuppressFinalize(this);
         }
     }
+
+    private sealed record ControlReportMessage(uint MessageId, SessionEventMessage Message);
 
     private static IReadOnlyCollection<ControlEndpointConnection> CreateConnections(IReadOnlyCollection<EndpointConfig> endpoints)
     {

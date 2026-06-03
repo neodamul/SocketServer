@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System;
 using System.Net.Sockets;
 using System.Threading;
 
@@ -16,6 +17,8 @@ public static class SocketAsyncEventArgsFactory
     private static int inUseCount;
     private static int highWatermarkInUseCount;
     private static int growthCount;
+    private static int configuredGrowthSize = GrowthSize;
+    private static int maxRetainedCount = 20000;
 
     static SocketAsyncEventArgsFactory()
     {
@@ -34,6 +37,29 @@ public static class SocketAsyncEventArgsFactory
 
     public static int GrowthCount => Volatile.Read(ref growthCount);
 
+    public static int ConfiguredGrowthSize => Volatile.Read(ref configuredGrowthSize);
+
+    public static int MaxRetainedCount => Volatile.Read(ref maxRetainedCount);
+
+    public static void Configure(int initialSize, int growthSize, int maxRetained)
+    {
+        Interlocked.Exchange(ref configuredGrowthSize, Math.Max(1, growthSize));
+        Interlocked.Exchange(ref maxRetainedCount, Math.Max(InitialPoolSize, maxRetained));
+        EnsureCapacity(Math.Max(InitialPoolSize, initialSize));
+    }
+
+    public static void EnsureCapacity(int targetTotalCreatedCount)
+    {
+        lock (GrowLock)
+        {
+            int missing = targetTotalCreatedCount - TotalCreatedCount;
+            if (missing > 0)
+            {
+                Grow(missing);
+            }
+        }
+    }
+
     public static SocketAsyncEventArgs Rent()
     {
         if (!Pool.TryTake(out SocketAsyncEventArgs args))
@@ -42,7 +68,7 @@ public static class SocketAsyncEventArgsFactory
             {
                 if (Pool.IsEmpty)
                 {
-                    Grow(GrowthSize);
+                    Grow(ConfiguredGrowthSize);
                 }
             }
 
@@ -70,6 +96,12 @@ public static class SocketAsyncEventArgsFactory
         args.UserToken = null;
         args.SetBuffer(null, 0, 0);
         Interlocked.Decrement(ref inUseCount);
+        if (Pool.Count >= MaxRetainedCount)
+        {
+            args.Dispose();
+            return;
+        }
+
         Pool.Add(args);
     }
 

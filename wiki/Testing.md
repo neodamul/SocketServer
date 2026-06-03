@@ -50,6 +50,10 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --b
 - `--use-control-server`: ControlServer route를 통해 SocketServer에 접속
 - `--message-test`: 클라이언트 간 메시지 delivery/ack 부하 검증
 - `--message-rounds`: source/target 쌍별 메시지 반복 횟수
+- `--ramp-delay-ms`: batch 사이 대기 시간
+- `--expected-connected`: 최소 연결 성공 수
+- `--healthcheck-timeout-seconds`: healthcheck 응답 timeout
+- `--message-timeout-seconds`: client message delivery/ack timeout
 
 기본 batch size는 100개 단위 증가입니다. 10,000개 이상 검증은 OS와 장비 설정을 먼저 확인해야 합니다.
 

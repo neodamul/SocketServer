@@ -5,6 +5,11 @@
     "certificateDirectory": "",
     "authenticationTimeoutMilliseconds": 5000
   },
+  "socketAsyncEventArgsPool": {
+    "initialSize": 1000,
+    "growthSize": 100,
+    "maxRetained": 20000
+  },
   "controlServers": [
     {
       "host": "127.0.0.1",

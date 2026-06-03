@@ -18,7 +18,11 @@ public class SocketLoadTestTests
                 "--hold-seconds", "0",
                 "--port", "0",
                 "--message-test",
-                "--message-rounds", "3"
+                "--message-rounds", "3",
+                "--ramp-delay-ms", "5",
+                "--expected-connected", "10",
+                "--healthcheck-timeout-seconds", "3",
+                "--message-timeout-seconds", "4"
             },
             out LoadTestOptions options,
             out string error));
@@ -30,6 +34,10 @@ public class SocketLoadTestTests
         Assert.AreEqual(0, options.Port);
         Assert.IsTrue(options.MessageTest);
         Assert.AreEqual(3, options.MessageRounds);
+        Assert.AreEqual(5, options.RampDelayMilliseconds);
+        Assert.AreEqual(10, options.ExpectedConnected);
+        Assert.AreEqual(3, options.HealthCheckTimeoutSeconds);
+        Assert.AreEqual(4, options.MessageTimeoutSeconds);
     }
 
     [TestMethod]
