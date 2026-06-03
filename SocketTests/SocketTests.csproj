@@ -25,6 +25,7 @@
     <ProjectReference Include="..\SocketDashboard\SocketDashboard.csproj" />
     <ProjectReference Include="..\SocketLoadTest\SocketLoadTest.csproj" />
     <ProjectReference Include="..\SocketServer\SocketServer.csproj" />
+    <ProjectReference Include="..\Samples\SocketSample.Shared\SocketSample.Shared.csproj" />
   </ItemGroup>
 
   <ItemGroup>

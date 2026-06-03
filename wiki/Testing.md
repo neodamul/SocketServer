@@ -30,6 +30,7 @@ dotnet test SocketTests/SocketTests.csproj
 - degraded resource route exclusion
 - dashboard cluster snapshot
 - dashboard liveness, readiness, metrics models
+- sample client settings and client-to-client message flow
 
 ## Load Test
 

@@ -154,3 +154,21 @@ Root CA와 모듈 인증서는 `certificateRenewBeforeDays` 이내로 만료가 
 ```
 
 `controlEndpoints`는 여러 개 설정할 수 있습니다. 클라이언트는 ControlServer 장애 시 다음 endpoint로 route 요청을 시도할 수 있습니다.
+
+## Sample Clients
+
+샘플 클라이언트 설정:
+
+```text
+Samples/SocketSample.Net/appsettings.json
+Samples/SocketSample.Mobile/Resources/Raw/config.json
+```
+
+공통 설정 항목:
+
+- `clientId`: 샘플 클라이언트 ID
+- `clientName`: 화면과 로그에서 사용할 이름
+- `host`, `port`: 직접 SocketServer 또는 ControlServer endpoint
+- `useControlServer`: `true`이면 ControlServer route 요청 후 SocketServer에 연결
+- `receiveTimeoutSeconds`: receive 버튼 대기 시간
+- `security`: TLS/mTLS 설정

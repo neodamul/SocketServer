@@ -12,7 +12,8 @@ SocketServer.sln
 ├── SocketServer      TCP 서버 실행 프로젝트
 ├── SocketDashboard   상태 API와 웹 대시보드
 ├── SocketLoadTest    대량 접속 검증 도구
-└── SocketTests       MSTest 통합 테스트
+├── SocketTests       MSTest 통합 테스트
+└── Samples           .NET, iOS/macOS, Android 샘플 클라이언트
 ```
 
 ## 핵심 기능
@@ -72,6 +73,14 @@ dotnet run --project SocketDashboard/SocketDashboard.csproj
 ```
 
 기본 대시보드 주소는 `http://127.0.0.1:5080`입니다.
+
+Sample Client:
+
+```bash
+dotnet run --project Samples/SocketSample.Net/SocketSample.Net.csproj
+```
+
+기본 샘플 클라이언트 주소는 `http://127.0.0.1:5090`입니다. 모바일 샘플은 [Samples](Samples/README.md)를 참고합니다.
 
 ## 부하 테스트
 

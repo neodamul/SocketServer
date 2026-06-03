@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="SocketSample.Mobile.MainPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="Socket Sample Client"
+    BackgroundColor="{StaticResource PageBackgroundColor}">
+    <ScrollView>
+        <VerticalStackLayout Padding="20" Spacing="14">
+            <Border BackgroundColor="{StaticResource PanelBackgroundColor}" Stroke="#D7DCE2" StrokeShape="RoundRectangle 8" Padding="14">
+                <VerticalStackLayout Spacing="10">
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="10" RowDefinitions="Auto,Auto,Auto">
+                        <VerticalStackLayout Grid.Row="0" Grid.Column="0" Spacing="4">
+                            <Label Text="Client ID" FontAttributes="Bold" />
+                            <Entry x:Name="ClientIdEntry" Keyboard="Numeric" />
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Row="0" Grid.Column="1" Spacing="4">
+                            <Label Text="Client Name" FontAttributes="Bold" />
+                            <Entry x:Name="ClientNameEntry" />
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Row="1" Grid.Column="0" Spacing="4">
+                            <Label Text="Host" FontAttributes="Bold" />
+                            <Entry x:Name="HostEntry" />
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Row="1" Grid.Column="1" Spacing="4">
+                            <Label Text="Port" FontAttributes="Bold" />
+                            <Entry x:Name="PortEntry" Keyboard="Numeric" />
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Row="2" Grid.Column="0" Spacing="4">
+                            <Label Text="Receive Timeout" FontAttributes="Bold" />
+                            <Entry x:Name="ReceiveTimeoutEntry" Keyboard="Numeric" />
+                        </VerticalStackLayout>
+                        <HorizontalStackLayout Grid.Row="2" Grid.Column="1" Spacing="8" VerticalOptions="End">
+                            <CheckBox x:Name="UseControlServerCheckBox" />
+                            <Label Text="Use ControlServer" VerticalOptions="Center" />
+                        </HorizontalStackLayout>
+                    </Grid>
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                        <Button Text="Save" Clicked="OnSaveClicked" />
+                        <Button Grid.Column="1" Text="Connect" Clicked="OnConnectClicked" BackgroundColor="{StaticResource PrimaryColor}" />
+                    </Grid>
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                        <Button Text="Register" Clicked="OnRegisterClicked" />
+                        <Button Grid.Column="1" Text="Disconnect" Clicked="OnDisconnectClicked" BackgroundColor="#4B5563" />
+                    </Grid>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border BackgroundColor="{StaticResource PanelBackgroundColor}" Stroke="#D7DCE2" StrokeShape="RoundRectangle 8" Padding="14">
+                <VerticalStackLayout Spacing="10">
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                        <VerticalStackLayout Spacing="4">
+                            <Label Text="Target Client ID" FontAttributes="Bold" />
+                            <Entry x:Name="TargetClientIdEntry" Keyboard="Numeric" />
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Column="1" Spacing="4">
+                            <Label Text="Message" FontAttributes="Bold" />
+                            <Entry x:Name="MessageEntry" Text="hello" />
+                        </VerticalStackLayout>
+                    </Grid>
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                        <Button Text="Send" Clicked="OnSendClicked" />
+                        <Button Grid.Column="1" Text="Receive" Clicked="OnReceiveClicked" BackgroundColor="#4B5563" />
+                    </Grid>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border BackgroundColor="#111827" Stroke="#111827" StrokeShape="RoundRectangle 8" Padding="14">
+                <VerticalStackLayout Spacing="8">
+                    <Label Text="Status" TextColor="#E5E7EB" FontAttributes="Bold" />
+                    <Label x:Name="StatusLabel" TextColor="#E5E7EB" LineBreakMode="WordWrap" />
+                </VerticalStackLayout>
+            </Border>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

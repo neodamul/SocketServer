@@ -1,0 +1,102 @@
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System;
+using System.Threading.Tasks;
+using SocketCommon.Configuration;
+using SocketSample.Shared;
+using SocketServer.Model;
+
+namespace SocketTests.Model;
+
+[TestClass]
+public class SocketSampleClientTests
+{
+    [TestMethod]
+    public void SampleClientSettingsCloneCopiesSecuritySettingsTest()
+    {
+        SampleClientSettings settings = new()
+        {
+            ClientId = 12,
+            ClientName = "sample",
+            Host = "127.0.0.1",
+            Port = 5001,
+            UseControlServer = false,
+            ReceiveTimeoutSeconds = 3,
+            Security = new SocketSecurityConfig
+            {
+                TlsProtocol = "Auto",
+                RequireTls13 = false,
+                RequireClientCertificate = true,
+                CertificateDirectory = "/tmp/socket-sample",
+                CertificatePasswordEnvironmentVariable = "SOCKET_SAMPLE_PASSWORD",
+                CertificateRenewBeforeDays = 7,
+                RootCertificateLifetimeYears = 9,
+                ModuleCertificateLifetimeYears = 4,
+                AuthenticationTimeoutMilliseconds = 1500
+            }
+        };
+
+        SampleClientSettings clone = settings.Clone();
+        clone.Security.TlsProtocol = "Tls13";
+
+        Assert.AreEqual(12, clone.ClientId);
+        Assert.AreEqual("Auto", settings.Security.TlsProtocol);
+        Assert.AreEqual("Tls13", clone.Security.TlsProtocol);
+        Assert.IsTrue(clone.Security.RequireClientCertificate);
+    }
+
+    [TestMethod]
+    public async Task SampleClientSessionSendsAndReceivesMessageTest()
+    {
+        using TcpServer server = new(
+            30,
+            "sample-server",
+            "127.0.0.1",
+            0,
+            maxConnections: 10,
+            pendingAcceptCount: 2,
+            idleTimeout: TimeSpan.FromSeconds(30),
+            instanceId: "sample-server");
+        Assert.IsTrue(server.BindInPortRange(0, 0));
+        Assert.IsTrue(server.Listen());
+        Assert.IsTrue(server.StartClientAcceptLoop());
+
+        using SampleSocketClientSession source = new();
+        using SampleSocketClientSession target = new();
+        source.Configure(CreateSettings(301, server.GetPort()));
+        target.Configure(CreateSettings(302, server.GetPort()));
+
+        Assert.IsTrue(await source.ConnectAsync());
+        Assert.IsTrue(await target.ConnectAsync());
+        Assert.IsTrue(await source.RegisterAsync());
+        Assert.IsTrue(await target.RegisterAsync());
+
+        Assert.IsTrue(await source.SendMessageAsync(302, "sample-message"));
+        SocketCommon.Model.ClientMessageDelivery? delivery = await target.ReceiveMessageAsync();
+
+        Assert.IsNotNull(delivery);
+        Assert.AreEqual((uint)301, delivery.SourceClientId);
+        Assert.AreEqual((uint)302, delivery.TargetClientId);
+        Assert.AreEqual("sample-message", delivery.Content);
+        Assert.AreEqual("302", target.GetState().ClientId.ToString());
+        Assert.AreEqual("301: sample-message", target.GetState().LastReceivedMessage);
+    }
+
+    private static SampleClientSettings CreateSettings(int clientId, int port)
+    {
+        return new SampleClientSettings
+        {
+            ClientId = clientId,
+            ClientName = $"sample-client-{clientId}",
+            Host = "127.0.0.1",
+            Port = port,
+            UseControlServer = false,
+            ReceiveTimeoutSeconds = 3,
+            Security = new SocketSecurityConfig
+            {
+                TlsProtocol = "Auto",
+                RequireTls13 = false,
+                AuthenticationTimeoutMilliseconds = 5000
+            }
+        };
+    }
+}
