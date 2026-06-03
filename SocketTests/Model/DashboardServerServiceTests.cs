@@ -73,6 +73,10 @@ public class DashboardServerServiceTests
         string appJs = File.ReadAllText(Path.Combine(solutionRoot, "SocketDashboard/wwwroot/app.js"));
 
         Assert.IsTrue(indexHtml.Contains("id=\"refreshIntervalSeconds\"", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("id=\"controlServerCount\"", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("id=\"socketServerCount\"", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("id=\"dashboardServerCount\"", StringComparison.Ordinal));
+        Assert.IsFalse(indexHtml.Contains("id=\"serverInventoryCount\"", StringComparison.Ordinal));
         Assert.IsFalse(indexHtml.Contains("id=\"controlServerInventoryCount\"", StringComparison.Ordinal));
         Assert.IsFalse(indexHtml.Contains("id=\"controlServers\"", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<th>Instance</th>", StringComparison.Ordinal));
@@ -90,6 +94,9 @@ public class DashboardServerServiceTests
         Assert.IsFalse(appJs.Contains("renderControlServers(status.controlServers)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("function buildControlServerRow(server)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("renderServers(status.cluster.servers, server, status.controlServers)", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("fields.controlServerCount.textContent = controlRows.length;", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("fields.socketServerCount.textContent = socketRows.length;", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("fields.dashboardServerCount.textContent = dashboardRow ? 1 : 0;", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("function healthText(value)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains(".map(buildSocketServerRow)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("getRefreshIntervalMilliseconds()", StringComparison.Ordinal));

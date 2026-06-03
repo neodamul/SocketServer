@@ -15,7 +15,9 @@ const fields = {
   totalMaxConnections: document.getElementById("totalMaxConnections"),
   totalCurrentConnections: document.getElementById("totalCurrentConnections"),
   totalAvailableConnections: document.getElementById("totalAvailableConnections"),
-  serverInventoryCount: document.getElementById("serverInventoryCount"),
+  controlServerCount: document.getElementById("controlServerCount"),
+  socketServerCount: document.getElementById("socketServerCount"),
+  dashboardServerCount: document.getElementById("dashboardServerCount"),
   clusterServers: document.getElementById("clusterServers"),
   address: document.getElementById("address"),
   backlog: document.getElementById("backlog"),
@@ -121,7 +123,9 @@ function renderServers(clusterServers, dashboardServer, controlServers) {
     .filter(server => !sameEndpoint(server, dashboardRow))
     .map(buildSocketServerRow);
   const rows = [...controlRows, ...socketRows, dashboardRow];
-  fields.serverInventoryCount.textContent = rows.length;
+  fields.controlServerCount.textContent = controlRows.length;
+  fields.socketServerCount.textContent = socketRows.length;
+  fields.dashboardServerCount.textContent = dashboardRow ? 1 : 0;
 
   if (rows.length === 0) {
     fields.clusterServers.innerHTML = "<tr><td colspan=\"10\">-</td></tr>";

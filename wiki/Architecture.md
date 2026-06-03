@@ -115,6 +115,7 @@ Dashboard는 설정된 ControlServer 목록을 조회하고 Server Inventory에 
 - 전체 수용 가능 클라이언트 수
 - 현재 접속 수
 - 접속 가능 수
+- ControlServer, SocketServer, Dashboard 수 분리 표시
 - ControlServer/SocketServer/Dashboard type별 endpoint와 상태
 - 서버별 health
 - 서버별 endpoint
