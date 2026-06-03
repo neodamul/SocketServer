@@ -106,7 +106,17 @@ public class SocketSecurityConfig
 
     public bool RequireTls13 { get; set; } = true;
 
+    public bool RequireClientCertificate { get; set; }
+
     public string CertificateDirectory { get; set; } = "";
+
+    public string CertificatePasswordEnvironmentVariable { get; set; } = "SOCKET_CERTIFICATE_PASSWORD";
+
+    public int CertificateRenewBeforeDays { get; set; } = 30;
+
+    public int RootCertificateLifetimeYears { get; set; } = 10;
+
+    public int ModuleCertificateLifetimeYears { get; set; } = 2;
 
     public int AuthenticationTimeoutMilliseconds { get; set; } = 5000;
 }

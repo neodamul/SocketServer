@@ -55,6 +55,18 @@ GET /api/server/status
 
 ControlServer가 실행 중이면 cluster registry snapshot을 표시합니다. ControlServer가 없으면 로컬 fallback SocketServer 상태를 표시합니다.
 
+## Certificates
+
+로컬 인증서는 기본적으로 솔루션 루트의 `Certificates/`에 생성됩니다. 운영이나 장비별 격리가 필요하면 각 프로젝트의 `config.json`에서 `security.certificateDirectory`를 지정하거나 `SOCKET_CERTIFICATE_DIR` 환경 변수를 설정합니다.
+
+PFX 비밀번호는 코드에 고정하지 않고 `security.certificatePasswordEnvironmentVariable`에 지정한 환경 변수에서 읽습니다. 기본 변수명은 `SOCKET_CERTIFICATE_PASSWORD`입니다.
+
+```bash
+export SOCKET_CERTIFICATE_PASSWORD='change-this-local-secret'
+```
+
+`certificateRenewBeforeDays` 이내로 만료가 가까운 Root CA 또는 모듈 인증서는 다음 시작/연결 시 재생성됩니다. `requireClientCertificate=true`를 사용하면 mTLS 모드로 동작하므로 모든 모듈이 같은 Root CA 체인을 사용해야 합니다.
+
 ## Load Test
 
 직접 서버 접속:

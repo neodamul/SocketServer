@@ -21,8 +21,13 @@ public sealed class SecureSocketConnection : IDisposable
     private static readonly object OptionsLock = new();
     private static SslProtocols configuredProtocols = SslProtocols.None;
     private static bool requireTls13;
+    private static bool requireClientCertificate;
     private static int authenticationTimeoutMilliseconds = 5000;
     private static string certificateDirectory = "";
+    private static string certificatePasswordEnvironmentVariable = "SOCKET_CERTIFICATE_PASSWORD";
+    private static int certificateRenewBeforeDays = 30;
+    private static int rootCertificateLifetimeYears = 10;
+    private static int moduleCertificateLifetimeYears = 2;
 
     private readonly NetworkStream networkStream;
     private readonly SslStream sslStream;
@@ -66,6 +71,17 @@ public sealed class SecureSocketConnection : IDisposable
         }
     }
 
+    public static bool RequireClientCertificate
+    {
+        get
+        {
+            lock (OptionsLock)
+            {
+                return requireClientCertificate;
+            }
+        }
+    }
+
     public static int AuthenticationTimeoutMilliseconds
     {
         get
@@ -88,8 +104,15 @@ public sealed class SecureSocketConnection : IDisposable
         {
             configuredProtocols = ParseProtocols(config.TlsProtocol);
             requireTls13 = config.RequireTls13;
+            requireClientCertificate = config.RequireClientCertificate;
             authenticationTimeoutMilliseconds = Math.Max(1000, config.AuthenticationTimeoutMilliseconds);
             certificateDirectory = config.CertificateDirectory?.Trim() ?? "";
+            certificatePasswordEnvironmentVariable = string.IsNullOrWhiteSpace(config.CertificatePasswordEnvironmentVariable)
+                ? "SOCKET_CERTIFICATE_PASSWORD"
+                : config.CertificatePasswordEnvironmentVariable.Trim();
+            certificateRenewBeforeDays = Math.Max(0, config.CertificateRenewBeforeDays);
+            rootCertificateLifetimeYears = Math.Max(1, config.RootCertificateLifetimeYears);
+            moduleCertificateLifetimeYears = Math.Max(1, config.ModuleCertificateLifetimeYears);
         }
     }
 
@@ -105,6 +128,7 @@ public sealed class SecureSocketConnection : IDisposable
         {
             TargetHost = TargetHost,
             EnabledSslProtocols = ConfiguredProtocols,
+            ClientCertificates = GetClientCertificates(moduleName),
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck
         }));
         EnsureTls13IfRequired(sslStream);
@@ -122,7 +146,10 @@ public sealed class SecureSocketConnection : IDisposable
         {
             ServerCertificate = certificate,
             EnabledSslProtocols = ConfiguredProtocols,
-            ClientCertificateRequired = false,
+            ClientCertificateRequired = RequireClientCertificate,
+            RemoteCertificateValidationCallback = RequireClientCertificate
+                ? (_, clientCertificate, _, _) => IsTrustedLocalCertificate(clientCertificate)
+                : null,
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck
         }));
         EnsureTls13IfRequired(sslStream);
@@ -239,7 +266,21 @@ public sealed class SecureSocketConnection : IDisposable
         }
 
         using X509Certificate2 rootCertificate = LocalCertificateStore.GetOrCreateRootAuthority();
-            return LocalCertificateStore.IsSignedByRoot(certificate2, rootCertificate);
+        return LocalCertificateStore.IsSignedByRoot(certificate2, rootCertificate);
+    }
+
+    private static X509CertificateCollection GetClientCertificates(string moduleName)
+    {
+        if (!RequireClientCertificate)
+        {
+            return null;
+        }
+
+        X509CertificateCollection certificates = new()
+        {
+            LocalCertificateStore.GetOrCreate(moduleName)
+        };
+        return certificates;
     }
 
     private static async Task WaitForAuthenticationAsync(Task authenticationTask)
@@ -295,11 +336,54 @@ public sealed class SecureSocketConnection : IDisposable
             }
         }
     }
+
+    internal static string CertificatePasswordEnvironmentVariable
+    {
+        get
+        {
+            lock (OptionsLock)
+            {
+                return certificatePasswordEnvironmentVariable;
+            }
+        }
+    }
+
+    internal static int CertificateRenewBeforeDays
+    {
+        get
+        {
+            lock (OptionsLock)
+            {
+                return certificateRenewBeforeDays;
+            }
+        }
+    }
+
+    internal static int RootCertificateLifetimeYears
+    {
+        get
+        {
+            lock (OptionsLock)
+            {
+                return rootCertificateLifetimeYears;
+            }
+        }
+    }
+
+    internal static int ModuleCertificateLifetimeYears
+    {
+        get
+        {
+            lock (OptionsLock)
+            {
+                return moduleCertificateLifetimeYears;
+            }
+        }
+    }
 }
 
 public static class LocalCertificateStore
 {
-    private const string Password = "socket-local-cert";
     private const string RootCertificateFileName = "SocketServerLocalRootCA.pfx";
 
     public static X509Certificate2 GetOrCreate(string moduleName)
@@ -310,20 +394,24 @@ public static class LocalCertificateStore
 
         if (File.Exists(path))
         {
-            X509Certificate2 existingCertificate = Load(path);
-            if (IsModuleCertificateValid(existingCertificate, rootCertificate))
+            X509Certificate2 existingCertificate = TryLoad(path);
+            if (existingCertificate != null && IsModuleCertificateValid(existingCertificate, rootCertificate))
             {
                 return existingCertificate;
             }
 
-            existingCertificate.Dispose();
+            if (existingCertificate != null)
+            {
+                existingCertificate.Dispose();
+            }
+
             File.Delete(path);
         }
 
         if (!File.Exists(path))
         {
             using X509Certificate2 certificate = CreateModuleCertificate(moduleName, rootCertificate);
-            File.WriteAllBytes(path, certificate.Export(X509ContentType.Pfx, Password));
+            File.WriteAllBytes(path, certificate.Export(X509ContentType.Pfx, GetCertificatePassword()));
         }
 
         return Load(path);
@@ -336,18 +424,22 @@ public static class LocalCertificateStore
 
         if (File.Exists(path))
         {
-            X509Certificate2 existingCertificate = Load(path);
-            if (IsRootCertificateValid(existingCertificate))
+            X509Certificate2 existingCertificate = TryLoad(path);
+            if (existingCertificate != null && IsRootCertificateValid(existingCertificate))
             {
                 return existingCertificate;
             }
 
-            existingCertificate.Dispose();
+            if (existingCertificate != null)
+            {
+                existingCertificate.Dispose();
+            }
+
             File.Delete(path);
         }
 
         using X509Certificate2 certificate = CreateRootAuthorityCertificate();
-        File.WriteAllBytes(path, certificate.Export(X509ContentType.Pfx, Password));
+        File.WriteAllBytes(path, certificate.Export(X509ContentType.Pfx, GetCertificatePassword()));
         return Load(path);
     }
 
@@ -355,8 +447,35 @@ public static class LocalCertificateStore
     {
         return X509CertificateLoader.LoadPkcs12FromFile(
             path,
-            Password,
+            GetCertificatePassword(),
             X509KeyStorageFlags.Exportable);
+    }
+
+    private static X509Certificate2 TryLoad(string path)
+    {
+        try
+        {
+            return Load(path);
+        }
+        catch (CryptographicException)
+        {
+            return null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+
+    private static string GetCertificatePassword()
+    {
+        string variableName = SecureSocketConnection.CertificatePasswordEnvironmentVariable;
+        if (string.IsNullOrWhiteSpace(variableName))
+        {
+            return "";
+        }
+
+        return Environment.GetEnvironmentVariable(variableName) ?? "";
     }
 
     public static string GetCertificateDirectory()
@@ -416,7 +535,7 @@ public static class LocalCertificateStore
 
         return request.CreateSelfSigned(
             DateTimeOffset.UtcNow.AddDays(-1),
-            DateTimeOffset.UtcNow.AddYears(10));
+            DateTimeOffset.UtcNow.AddYears(SecureSocketConnection.RootCertificateLifetimeYears));
     }
 
     private static X509Certificate2 CreateModuleCertificate(string moduleName, X509Certificate2 rootCertificate)
@@ -444,7 +563,7 @@ public static class LocalCertificateStore
         using X509Certificate2 certificate = request.Create(
             rootCertificate,
             DateTimeOffset.UtcNow.AddDays(-1),
-            DateTimeOffset.UtcNow.AddYears(2),
+            DateTimeOffset.UtcNow.AddYears(SecureSocketConnection.ModuleCertificateLifetimeYears),
             CreateSerialNumber(moduleName));
         return certificate.CopyWithPrivateKey(ecdsa);
     }
@@ -476,6 +595,7 @@ public static class LocalCertificateStore
     {
         return certificate.GetECDsaPrivateKey() != null &&
             certificate.Subject.Contains(SecureSocketConnection.LocalCertificateSubject, StringComparison.Ordinal) &&
+            IsWithinRotationWindow(certificate) &&
             HasSubjectAlternativeName(certificate) &&
             IsSignedByRoot(certificate, rootCertificate);
     }
@@ -484,7 +604,15 @@ public static class LocalCertificateStore
     {
         return certificate.GetECDsaPrivateKey() != null &&
             certificate.Subject.Contains(SecureSocketConnection.LocalRootCertificateSubject, StringComparison.Ordinal) &&
+            IsWithinRotationWindow(certificate) &&
             IsCertificateAuthority(certificate);
+    }
+
+    private static bool IsWithinRotationWindow(X509Certificate2 certificate)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset renewAt = now.AddDays(SecureSocketConnection.CertificateRenewBeforeDays);
+        return certificate.NotBefore <= now.UtcDateTime && certificate.NotAfter > renewAt.UtcDateTime;
     }
 
     private static bool IsCertificateAuthority(X509Certificate2 certificate)

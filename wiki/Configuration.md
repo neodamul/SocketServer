@@ -31,13 +31,19 @@ SocketTests/log4net.config
   "security": {
     "tlsProtocol": "Tls13",
     "requireTls13": true,
+    "requireClientCertificate": false,
     "certificateDirectory": "",
+    "certificatePasswordEnvironmentVariable": "SOCKET_CERTIFICATE_PASSWORD",
+    "certificateRenewBeforeDays": 30,
+    "rootCertificateLifetimeYears": 10,
+    "moduleCertificateLifetimeYears": 2,
     "authenticationTimeoutMilliseconds": 5000
   }
 }
 ```
 
 `tlsProtocol`은 기본 `Tls13`입니다. `Auto` 또는 `None`으로 설정하면 OS/.NET 기본 협상을 사용합니다. 운영 설정은 TLS 1.3 강제를 기본으로 둡니다.
+`requireClientCertificate=true`로 설정하면 mTLS를 사용하며, 클라이언트도 같은 Root CA로 서명된 모듈 인증서를 제시해야 합니다.
 
 ## Certificates
 
@@ -51,7 +57,9 @@ Certificates/SocketControl.pfx
 Certificates/SocketDashboard.pfx
 ```
 
-기본 저장 위치는 솔루션 루트의 `Certificates/`입니다. `security.certificateDirectory` 또는 `SOCKET_CERTIFICATE_DIR` 환경 변수를 설정하면 다른 로컬 경로를 사용할 수 있습니다. 인증서는 로컬 개발/테스트용이며 leaf subject는 `CN=SocketServerLocal`, SAN은 `SocketServerLocal`, `localhost`입니다. TLS 1.3을 필수로 검증해야 하는 환경은 `security.requireTls13=true` 또는 `SOCKET_REQUIRE_TLS13=true`를 설정합니다. 플랫폼이 TLS 1.3을 협상하지 못하면 연결은 실패합니다.
+기본 저장 위치는 솔루션 루트의 `Certificates/`입니다. `security.certificateDirectory` 또는 `SOCKET_CERTIFICATE_DIR` 환경 변수를 설정하면 다른 로컬 경로를 사용할 수 있습니다. PFX 비밀번호는 `security.certificatePasswordEnvironmentVariable`에 지정한 환경 변수에서 읽으며, 기본 변수명은 `SOCKET_CERTIFICATE_PASSWORD`입니다. 인증서는 로컬 개발/테스트용이며 leaf subject는 `CN=SocketServerLocal`, SAN은 `SocketServerLocal`, `localhost`입니다. TLS 1.3을 필수로 검증해야 하는 환경은 `security.requireTls13=true` 또는 `SOCKET_REQUIRE_TLS13=true`를 설정합니다. 플랫폼이 TLS 1.3을 협상하지 못하면 연결은 실패합니다.
+
+Root CA와 모듈 인증서는 `certificateRenewBeforeDays` 이내로 만료가 가까워지거나, 현재 설정된 PFX 비밀번호로 읽을 수 없으면 삭제 후 재생성됩니다.
 
 ## ControlServer
 

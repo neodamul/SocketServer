@@ -2,7 +2,12 @@
   "security": {
     "tlsProtocol": "Tls13",
     "requireTls13": true,
+    "requireClientCertificate": false,
     "certificateDirectory": "",
+    "certificatePasswordEnvironmentVariable": "SOCKET_CERTIFICATE_PASSWORD",
+    "certificateRenewBeforeDays": 30,
+    "rootCertificateLifetimeYears": 10,
+    "moduleCertificateLifetimeYears": 2,
     "authenticationTimeoutMilliseconds": 5000
   },
   "controlServer": {

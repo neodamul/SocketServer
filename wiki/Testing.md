@@ -15,6 +15,7 @@ dotnet test SocketTests/SocketTests.csproj
 - healthcheck protocol
 - HelloWorld protocol
 - TLS secure connection, shared local Root CA, module certificate creation
+- certificate password environment variable and optional mTLS handshake
 - SocketAsyncEventArgs pool
 - TcpClient/TcpServer 기본 송수신
 - port range binding

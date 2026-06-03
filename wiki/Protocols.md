@@ -13,7 +13,7 @@
 
 payload 최대 길이는 4KB입니다. payload는 JSON 문자열이 아니라 `SocketCommon/Proto/SocketMessages.proto`에 정의된 protobuf 모델로 직렬화합니다.
 
-`SocketClient`, `SocketServer`, `SocketControl`, `SocketDashboard` 간 연결은 `SecureSocketConnection`을 통해 인증된 뒤 common frame을 송수신합니다. 로컬 Root CA가 모듈별 leaf 인증서를 서명하고, 클라이언트는 해당 Root CA 체인을 검증합니다. 기본 모드는 런타임/OS가 지원하는 가장 적절한 TLS 버전을 협상하고, `SOCKET_REQUIRE_TLS13=true` 환경 변수를 설정하면 TLS 1.3이 아닌 협상 결과를 연결 실패로 처리합니다.
+`SocketClient`, `SocketServer`, `SocketControl`, `SocketDashboard` 간 연결은 `SecureSocketConnection`을 통해 인증된 뒤 common frame을 송수신합니다. 로컬 Root CA가 모듈별 leaf 인증서를 서명하고, 클라이언트는 해당 Root CA 체인을 검증합니다. `security.requireClientCertificate=true`이면 서버도 클라이언트 인증서를 같은 Root CA 기준으로 검증합니다. 기본 모드는 런타임/OS가 지원하는 가장 적절한 TLS 버전을 협상하고, `SOCKET_REQUIRE_TLS13=true` 환경 변수를 설정하면 TLS 1.3이 아닌 협상 결과를 연결 실패로 처리합니다.
 
 ## HealthCheck
 
