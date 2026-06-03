@@ -22,7 +22,7 @@ SocketServer.sln
 - TLS 기반 소켓 연결, optional mTLS, TLS 비활성 시 AES-GCM/HMAC 메시지 보호
 - healthcheck, HelloWorld, ControlServer route 프로토콜
 - 클라이언트 간 메시지 전송과 SocketServer 간 relay
-- `SocketAsyncEventArgs` 기반 비동기 송수신과 객체 풀
+- `SocketAsyncEventArgs` 기반 비동기 송수신, 객체 풀, 고정 슬랩 버퍼
 - SocketServer port range 바인딩과 서버별 최대/현재/접속가능 수 관리
 - ControlServer 브로커 기반 서버 등록, heartbeat, route 응답, registry 파일 저장
 - ControlServer client location 조회와 서버-control 연결 단절 감지

@@ -277,6 +277,9 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             SocketAsyncEventArgsInUseCount = SocketAsyncEventArgsFactory.InUseCount,
             SocketAsyncEventArgsHighWatermarkInUseCount = SocketAsyncEventArgsFactory.HighWatermarkInUseCount,
             SocketAsyncEventArgsGrowthCount = SocketAsyncEventArgsFactory.GrowthCount,
+            SocketAsyncEventArgsBufferSize = SocketAsyncEventArgsFactory.BufferSize,
+            SocketAsyncEventArgsBufferSlabCount = SocketAsyncEventArgsFactory.BufferSlabCount,
+            SocketAsyncEventArgsBufferBytesAllocated = SocketAsyncEventArgsFactory.BufferBytesAllocated,
             StartedAt = this.startedAt,
             UpdatedAt = DateTimeOffset.UtcNow
         };

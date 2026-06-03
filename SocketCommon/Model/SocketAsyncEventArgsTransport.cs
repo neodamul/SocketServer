@@ -1,5 +1,4 @@
-﻿using System;
-using System.Buffers;
+using System;
 using System.IO;
 using System.Net.Sockets;
 using System.Text;
@@ -48,28 +47,28 @@ public static class SocketAsyncEventArgsTransport
     public static async Task<string> ReceiveLineAsync(Socket socket, int maxMessageLength)
     {
         using MemoryStream stream = new();
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
 
         try
         {
             while (stream.Length < maxMessageLength)
             {
                 int remaining = maxMessageLength - (int)stream.Length;
-                int count = Math.Min(buffer.Length, remaining);
-                int received = await ReceiveChunkAsync(socket, buffer, 0, count);
-                if (received <= 0)
+                int count = Math.Min(BufferSize, remaining);
+                using SocketMappedReceiveBuffer receiveBuffer = await ReceiveMappedAsync(socket, count);
+                if (receiveBuffer == null || receiveBuffer.Count <= 0)
                 {
                     return null;
                 }
 
-                int newlineIndex = Array.IndexOf(buffer, (byte)'\n', 0, received);
+                ArraySegment<byte> segment = receiveBuffer.Segment;
+                int newlineIndex = Array.IndexOf(segment.Array, (byte)'\n', segment.Offset, receiveBuffer.Count);
                 if (newlineIndex >= 0)
                 {
-                    stream.Write(buffer, 0, newlineIndex + 1);
+                    stream.Write(segment.Array, segment.Offset, newlineIndex - segment.Offset + 1);
                     return Encoding.UTF8.GetString(stream.ToArray());
                 }
 
-                stream.Write(buffer, 0, received);
+                stream.Write(segment.Array, segment.Offset, receiveBuffer.Count);
             }
         }
         catch (SocketException exception)
@@ -82,10 +81,6 @@ public static class SocketAsyncEventArgsTransport
             Logger.Warn("Socket line receive failed because socket is disposed.", exception);
             return null;
         }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(buffer);
-        }
 
         return null;
     }
@@ -97,7 +92,7 @@ public static class SocketAsyncEventArgsTransport
             return Array.Empty<byte>();
         }
 
-        byte[] buffer = ArrayPool<byte>.Shared.Rent(length);
+        byte[] result = new byte[length];
         int offset = 0;
 
         try
@@ -105,17 +100,17 @@ public static class SocketAsyncEventArgsTransport
             while (offset < length)
             {
                 int count = Math.Min(BufferSize, length - offset);
-                int received = await ReceiveChunkAsync(socket, buffer, offset, count);
-                if (received <= 0)
+                using SocketMappedReceiveBuffer receiveBuffer = await ReceiveMappedAsync(socket, count);
+                if (receiveBuffer == null || receiveBuffer.Count <= 0)
                 {
                     return null;
                 }
 
-                offset += received;
+                ArraySegment<byte> segment = receiveBuffer.Segment;
+                Buffer.BlockCopy(segment.Array, segment.Offset, result, offset, receiveBuffer.Count);
+                offset += receiveBuffer.Count;
             }
 
-            byte[] result = new byte[length];
-            Buffer.BlockCopy(buffer, 0, result, 0, length);
             return result;
         }
         catch (SocketException exception)
@@ -128,15 +123,42 @@ public static class SocketAsyncEventArgsTransport
             Logger.Warn("Socket receive failed because socket is disposed.", exception);
             return null;
         }
-        finally
+    }
+
+    public static async Task<SocketMappedReceiveBuffer> ReceiveMappedAsync(Socket socket, int maxLength)
+    {
+        if (maxLength <= 0)
         {
-            ArrayPool<byte>.Shared.Return(buffer);
+            throw new ArgumentOutOfRangeException(nameof(maxLength), "Receive length must be greater than zero.");
+        }
+
+        SocketAsyncEventArgs args = SocketAsyncEventArgsFactory.Rent();
+        SocketBufferLease lease = SocketAsyncEventArgsFactory.GetBufferLease(args);
+        int count = Math.Min(maxLength, lease.Length);
+        args.SetBuffer(lease.Buffer, lease.Offset, count);
+
+        try
+        {
+            int received = await RunAsyncWithoutReturn(socket, args, static (s, a) => s.ReceiveAsync(a));
+            if (received <= 0)
+            {
+                SocketAsyncEventArgsFactory.Return(args);
+                return null;
+            }
+
+            return new SocketMappedReceiveBuffer(args, new ArraySegment<byte>(lease.Buffer, lease.Offset, received));
+        }
+        catch
+        {
+            SocketAsyncEventArgsFactory.Return(args);
+            throw;
         }
     }
 
     public static Task<Socket> AcceptAsync(Socket socket)
     {
         SocketAsyncEventArgs args = SocketAsyncEventArgsFactory.Rent();
+        args.SetBuffer(null, 0, 0);
         TaskCompletionSource<Socket> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         EventHandler<SocketAsyncEventArgs> handler = null;
 
@@ -185,12 +207,6 @@ public static class SocketAsyncEventArgsTransport
         return RunAsync(socket, args, static (s, a) => s.SendAsync(a));
     }
 
-    private static Task<int> ReceiveChunkAsync(Socket socket, byte[] buffer, int offset, int count)
-    {
-        SocketAsyncEventArgs args = CreateArgs(buffer, offset, count);
-        return RunAsync(socket, args, static (s, a) => s.ReceiveAsync(a));
-    }
-
     private static SocketAsyncEventArgs CreateArgs(byte[] buffer, int offset, int count)
     {
         SocketAsyncEventArgs args = SocketAsyncEventArgsFactory.Rent();
@@ -235,5 +251,73 @@ public static class SocketAsyncEventArgsTransport
         }
 
         return completion.Task;
+    }
+
+    private static Task<int> RunAsyncWithoutReturn(Socket socket, SocketAsyncEventArgs args, Func<Socket, SocketAsyncEventArgs, bool> operation)
+    {
+        TaskCompletionSource<int> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        EventHandler<SocketAsyncEventArgs> handler = null;
+
+        void Complete(SocketAsyncEventArgs completedArgs)
+        {
+            int bytesTransferred = completedArgs.SocketError == SocketError.Success
+                ? completedArgs.BytesTransferred
+                : -1;
+
+            completedArgs.Completed -= handler;
+            completion.TrySetResult(bytesTransferred);
+        }
+
+        handler = (_, completedArgs) => Complete(completedArgs);
+        args.Completed += handler;
+
+        bool pending;
+        try
+        {
+            pending = operation(socket, args);
+        }
+        catch
+        {
+            args.Completed -= handler;
+            throw;
+        }
+
+        if (!pending)
+        {
+            Complete(args);
+        }
+
+        return completion.Task;
+    }
+}
+
+public sealed class SocketMappedReceiveBuffer : IDisposable
+{
+    private SocketAsyncEventArgs args;
+
+    internal SocketMappedReceiveBuffer(SocketAsyncEventArgs args, ArraySegment<byte> segment)
+    {
+        this.args = args;
+        Segment = segment;
+        Count = segment.Count;
+    }
+
+    public ArraySegment<byte> Segment { get; }
+
+    public int Count { get; }
+
+    public Memory<byte> Memory => Segment.Array.AsMemory(Segment.Offset, Count);
+
+    public ReadOnlyMemory<byte> ReadOnlyMemory => Segment.Array.AsMemory(Segment.Offset, Count);
+
+    public void Dispose()
+    {
+        if (this.args == null)
+        {
+            return;
+        }
+
+        SocketAsyncEventArgsFactory.Return(this.args);
+        this.args = null;
     }
 }

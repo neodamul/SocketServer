@@ -9,6 +9,7 @@ public static class SocketAsyncEventArgsFactory
 {
     public const int InitialPoolSize = 1000;
     public const int GrowthSize = 100;
+    public const int BufferSize = SocketAsyncEventArgsTransport.BufferSize;
 
     private static readonly ConcurrentBag<SocketAsyncEventArgs> Pool = new();
     private static readonly object GrowLock = new();
@@ -40,6 +41,10 @@ public static class SocketAsyncEventArgsFactory
     public static int ConfiguredGrowthSize => Volatile.Read(ref configuredGrowthSize);
 
     public static int MaxRetainedCount => Volatile.Read(ref maxRetainedCount);
+
+    public static int BufferSlabCount => SocketBufferPool.SlabCount;
+
+    public static long BufferBytesAllocated => SocketBufferPool.TotalBytesAllocated;
 
     public static void Configure(int initialSize, int growthSize, int maxRetained)
     {
@@ -74,7 +79,7 @@ public static class SocketAsyncEventArgsFactory
 
             if (!Pool.TryTake(out args))
             {
-                args = new SocketAsyncEventArgs();
+                args = CreateArgs();
                 Interlocked.Increment(ref totalCreatedCount);
             }
         }
@@ -93,11 +98,11 @@ public static class SocketAsyncEventArgsFactory
         }
 
         args.AcceptSocket = null;
-        args.UserToken = null;
-        args.SetBuffer(null, 0, 0);
+        RestoreMappedBuffer(args);
         Interlocked.Decrement(ref inUseCount);
         if (Pool.Count >= MaxRetainedCount)
         {
+            ReturnMappedBufferLease(args);
             args.Dispose();
             return;
         }
@@ -105,13 +110,65 @@ public static class SocketAsyncEventArgsFactory
         Pool.Add(args);
     }
 
+    public static bool TryGetBufferSegment(SocketAsyncEventArgs args, out ArraySegment<byte> segment)
+    {
+        if (args?.UserToken is SocketAsyncEventArgsContext context)
+        {
+            segment = context.BufferLease.Segment;
+            return true;
+        }
+
+        segment = default;
+        return false;
+    }
+
+    internal static SocketBufferLease GetBufferLease(SocketAsyncEventArgs args)
+    {
+        if (args?.UserToken is SocketAsyncEventArgsContext context)
+        {
+            return context.BufferLease;
+        }
+
+        throw new InvalidOperationException("SocketAsyncEventArgs does not have a mapped buffer lease.");
+    }
+
     private static void Grow(int count)
     {
         Interlocked.Increment(ref growthCount);
         for (int i = 0; i < count; i++)
         {
-            Pool.Add(new SocketAsyncEventArgs());
+            Pool.Add(CreateArgs());
             Interlocked.Increment(ref totalCreatedCount);
+        }
+    }
+
+    private static SocketAsyncEventArgs CreateArgs()
+    {
+        SocketAsyncEventArgs args = new();
+        SocketBufferLease lease = SocketBufferPool.Rent(BufferSize);
+        args.UserToken = new SocketAsyncEventArgsContext(lease);
+        args.SetBuffer(lease.Buffer, lease.Offset, lease.Length);
+        return args;
+    }
+
+    private static void RestoreMappedBuffer(SocketAsyncEventArgs args)
+    {
+        if (args.UserToken is not SocketAsyncEventArgsContext context)
+        {
+            args.SetBuffer(null, 0, 0);
+            return;
+        }
+
+        SocketBufferLease lease = context.BufferLease;
+        args.SetBuffer(lease.Buffer, lease.Offset, lease.Length);
+    }
+
+    private static void ReturnMappedBufferLease(SocketAsyncEventArgs args)
+    {
+        if (args.UserToken is SocketAsyncEventArgsContext context)
+        {
+            SocketBufferPool.Return(context.BufferLease);
+            args.UserToken = null;
         }
     }
 
@@ -130,5 +187,15 @@ public static class SocketAsyncEventArgsFactory
                 return;
             }
         }
+    }
+
+    private sealed class SocketAsyncEventArgsContext
+    {
+        public SocketAsyncEventArgsContext(SocketBufferLease bufferLease)
+        {
+            BufferLease = bufferLease;
+        }
+
+        public SocketBufferLease BufferLease { get; }
     }
 }

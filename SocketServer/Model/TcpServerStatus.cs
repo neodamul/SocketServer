@@ -58,6 +58,12 @@ public class TcpServerStatus
 
     public int SocketAsyncEventArgsGrowthCount { get; init; }
 
+    public int SocketAsyncEventArgsBufferSize { get; init; }
+
+    public int SocketAsyncEventArgsBufferSlabCount { get; init; }
+
+    public long SocketAsyncEventArgsBufferBytesAllocated { get; init; }
+
     public DateTimeOffset? StartedAt { get; init; }
 
     public DateTimeOffset UpdatedAt { get; init; }

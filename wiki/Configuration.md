@@ -139,7 +139,7 @@ Root CA와 모듈 인증서는 `certificateRenewBeforeDays` 이내로 만료가 
 
 `portRangeStart=0`, `portRangeEnd=0`이면 OS 동적 포트 바인딩을 사용합니다. 운영 설정은 명시적인 port range 사용을 권장합니다.
 
-`socketAsyncEventArgsPool`은 accept/send/receive에 사용하는 `SocketAsyncEventArgs` pool을 설정합니다. 운영에서는 목표 동접과 메시지 빈도에 맞춰 `initialSize`, `growthSize`, `maxRetained`를 조정합니다.
+`socketAsyncEventArgsPool`은 accept/send/receive에 사용하는 `SocketAsyncEventArgs` pool을 설정합니다. 운영에서는 목표 동접과 메시지 빈도에 맞춰 `initialSize`, `growthSize`, `maxRetained`를 조정합니다. 각 SAEA는 8KB 고정 receive buffer segment를 유지하며, segment는 슬랩 단위로 선할당됩니다.
 
 ## SocketClient
 

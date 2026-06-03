@@ -108,6 +108,9 @@ public class DashboardServerService : IDisposable
             SocketAsyncEventArgsInUseCount = status.Server.SocketAsyncEventArgsInUseCount,
             SocketAsyncEventArgsHighWatermarkInUseCount = status.Server.SocketAsyncEventArgsHighWatermarkInUseCount,
             SocketAsyncEventArgsGrowthCount = status.Server.SocketAsyncEventArgsGrowthCount,
+            SocketAsyncEventArgsBufferSize = status.Server.SocketAsyncEventArgsBufferSize,
+            SocketAsyncEventArgsBufferSlabCount = status.Server.SocketAsyncEventArgsBufferSlabCount,
+            SocketAsyncEventArgsBufferBytesAllocated = status.Server.SocketAsyncEventArgsBufferBytesAllocated,
             RequireTls13 = SecureSocketConnection.RequireTls13,
             RequireClientCertificate = SecureSocketConnection.RequireClientCertificate
         };
@@ -269,6 +272,12 @@ public class DashboardMetrics
     public int SocketAsyncEventArgsHighWatermarkInUseCount { get; init; }
 
     public int SocketAsyncEventArgsGrowthCount { get; init; }
+
+    public int SocketAsyncEventArgsBufferSize { get; init; }
+
+    public int SocketAsyncEventArgsBufferSlabCount { get; init; }
+
+    public long SocketAsyncEventArgsBufferBytesAllocated { get; init; }
 
     public bool RequireTls13 { get; init; }
 
