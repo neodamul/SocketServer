@@ -1,10 +1,12 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using SocketClient.Model;
 using SocketCommon.Configuration;
 using SocketCommon.Model;
 using SocketControl.Model;
+using SocketSample.Shared;
 using SocketServer.Model;
 
 namespace SocketTests.Model;
@@ -268,6 +270,130 @@ public class ControlServerIntegrationTests
         Assert.AreEqual(0, disconnectedStatus.TotalAvailableConnections);
     }
 
+    [TestMethod]
+    public async Task ActiveActiveControlsRouteThreeServersAndPlatformSampleClientsMessageTest()
+    {
+        SocketSecurityConfig security = new()
+        {
+            TransportMode = "Tls",
+            TlsProtocol = "Auto",
+            RequireTls13 = false,
+            AuthenticationTimeoutMilliseconds = 5000
+        };
+        SecureSocketConnection.Configure(security);
+
+        using ControlServer controlA = new(new ControlServerConfigFile
+        {
+            Security = security,
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-active-a",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0,
+                RouteReservationSeconds = 5
+            }
+        });
+        Assert.IsTrue(controlA.Start());
+
+        using ControlServer controlB = new(new ControlServerConfigFile
+        {
+            Security = security,
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-active-b",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0,
+                RouteReservationSeconds = 5
+            },
+            Peers = { new EndpointConfig { Host = "127.0.0.1", Port = controlA.Port } }
+        });
+        Assert.IsTrue(controlB.Start());
+
+        EndpointConfig[] controlEndpoints =
+        {
+            new() { Host = "127.0.0.1", Port = controlA.Port },
+            new() { Host = "127.0.0.1", Port = controlB.Port }
+        };
+
+        using TcpServer serverA = CreateStartedSocketServer(80, "server-active-a");
+        using TcpServer serverB = CreateStartedSocketServer(81, "server-active-b");
+        using TcpServer serverC = CreateStartedSocketServer(82, "server-active-c");
+        using ControlServerReporter reporterA = CreateReporter(serverA, controlEndpoints);
+        using ControlServerReporter reporterB = CreateReporter(serverB, controlEndpoints);
+        using ControlServerReporter reporterC = CreateReporter(serverC, controlEndpoints);
+
+        await Task.WhenAll(reporterA.RegisterAsync(), reporterB.RegisterAsync(), reporterC.RegisterAsync());
+        reporterA.StartHeartbeatLoop(TimeSpan.FromMilliseconds(100));
+        reporterB.StartHeartbeatLoop(TimeSpan.FromMilliseconds(100));
+        reporterC.StartHeartbeatLoop(TimeSpan.FromMilliseconds(100));
+
+        await WaitForClusterAsync(controlA, status => status.ServerCount == 3 && status.TotalAvailableConnections == 30);
+        await WaitForClusterAsync(controlB, status => status.ServerCount == 3 && status.TotalAvailableConnections == 30);
+
+        using SampleSocketClientSession dotnetClient = new();
+        using SampleSocketClientSession iosClient = new();
+        using SampleSocketClientSession macosClient = new();
+        using SampleSocketClientSession androidClient = new();
+
+        dotnetClient.Configure(CreatePlatformClientSettings(901, "sample-dotnet-client", controlA.Port, security));
+        iosClient.Configure(CreatePlatformClientSettings(902, "sample-ios-client", controlB.Port, security));
+        macosClient.Configure(CreatePlatformClientSettings(903, "sample-macos-client", controlA.Port, security));
+        androidClient.Configure(CreatePlatformClientSettings(904, "sample-android-client", controlB.Port, security));
+
+        bool[] connectResults = await Task.WhenAll(
+            dotnetClient.ConnectAsync(),
+            iosClient.ConnectAsync(),
+            macosClient.ConnectAsync(),
+            androidClient.ConnectAsync());
+        Assert.IsTrue(connectResults.All(result => result));
+
+        bool[] registerResults = await Task.WhenAll(
+            dotnetClient.RegisterAsync(),
+            iosClient.RegisterAsync(),
+            macosClient.RegisterAsync(),
+            androidClient.RegisterAsync());
+        Assert.IsTrue(registerResults.All(result => result));
+
+        await WaitForClusterAsync(controlA, status => status.TotalSessionCount == 4 && status.TotalCurrentConnections == 4);
+        await WaitForClusterAsync(controlB, status => status.TotalSessionCount == 4 && status.TotalCurrentConnections == 4);
+        await WaitForClientLocationCountAsync(controlA, 4);
+        await WaitForClientLocationCountAsync(controlB, 4);
+
+        Task<ClientMessageDelivery?> iosReceiveTask = iosClient.ReceiveMessageAsync();
+        Task<ClientMessageDelivery?> macosReceiveTask = macosClient.ReceiveMessageAsync();
+        Task<bool> dotnetSendTask = dotnetClient.SendMessageAsync(902, "dotnet-to-ios");
+        Task<bool> androidSendTask = androidClient.SendMessageAsync(903, "android-to-macos");
+
+        Assert.IsTrue(await WithTimeoutAsync(dotnetSendTask));
+        Assert.IsTrue(await WithTimeoutAsync(androidSendTask));
+
+        ClientMessageDelivery? iosDelivery = await WithTimeoutAsync(iosReceiveTask);
+        ClientMessageDelivery? macosDelivery = await WithTimeoutAsync(macosReceiveTask);
+
+        Assert.IsNotNull(iosDelivery);
+        Assert.AreEqual((uint)901, iosDelivery!.SourceClientId);
+        Assert.AreEqual((uint)902, iosDelivery.TargetClientId);
+        Assert.AreEqual("dotnet-to-ios", iosDelivery.Content);
+        Assert.AreEqual("901: dotnet-to-ios", iosClient.GetState().LastReceivedMessage);
+
+        Assert.IsNotNull(macosDelivery);
+        Assert.AreEqual((uint)904, macosDelivery!.SourceClientId);
+        Assert.AreEqual((uint)903, macosDelivery.TargetClientId);
+        Assert.AreEqual("android-to-macos", macosDelivery.Content);
+        Assert.AreEqual("904: android-to-macos", macosClient.GetState().LastReceivedMessage);
+
+        ClusterStatusSnapshot finalStatus = await WaitForClusterAsync(
+            controlA,
+            status => status.TotalSessionCount == 4 && status.TotalCurrentConnections == 4);
+        Assert.AreEqual(3, finalStatus.ServerCount);
+        Assert.AreEqual(4, finalStatus.TotalCurrentConnections);
+        Assert.AreEqual(26, finalStatus.TotalAvailableConnections);
+    }
+
     private static async Task<ClusterStatusSnapshot> WaitForClusterAsync(
         ControlServer controlServer,
         Func<ClusterStatusSnapshot, bool> predicate)
@@ -305,6 +431,34 @@ public class ControlServerIntegrationTests
         Assert.IsTrue(socketServer.Listen());
         Assert.IsTrue(socketServer.StartClientAcceptLoop());
         return socketServer;
+    }
+
+    private static ControlServerReporter CreateReporter(TcpServer server, EndpointConfig[] controlEndpoints)
+    {
+        return new ControlServerReporter(
+            server,
+            controlEndpoints,
+            "socket-cluster-1",
+            0,
+            0);
+    }
+
+    private static SampleClientSettings CreatePlatformClientSettings(
+        int clientId,
+        string clientName,
+        int controlPort,
+        SocketSecurityConfig security)
+    {
+        return new SampleClientSettings
+        {
+            ClientId = clientId,
+            ClientName = clientName,
+            Host = "127.0.0.1",
+            Port = controlPort,
+            UseControlServer = true,
+            ReceiveTimeoutSeconds = 5,
+            Security = security
+        };
     }
 
     private static async Task WaitForClientLocationCountAsync(ControlServer controlServer, int expectedCount)
