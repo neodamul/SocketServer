@@ -73,9 +73,32 @@ function buildDashboardServerRow(server) {
   };
 }
 
+function healthText(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  const labels = ["Unknown", "Healthy", "Degraded", "Unhealthy"];
+  return labels[Number(value)] || "Unknown";
+}
+
+function buildSocketServerRow(server) {
+  return {
+    type: "SocketServer",
+    instanceId: server.instanceId || server.name || "-",
+    health: healthText(server.health),
+    host: server.host || server.ipAddress || "-",
+    port: server.port ?? "-",
+    maxConnections: server.maxConnections ?? "-",
+    currentConnections: server.currentConnections ?? server.connectedClientCount ?? "-",
+    availableConnections: server.availableConnections ?? "-",
+    resourceUsage: server.resourceUsage || null
+  };
+}
+
 function sameEndpoint(left, right) {
   return left.instanceId === right.instanceId &&
-    left.host === right.host &&
+    (left.host || left.ipAddress) === right.host &&
     Number(left.port) === Number(right.port);
 }
 
@@ -83,7 +106,7 @@ function renderServers(clusterServers, dashboardServer) {
   const dashboardRow = buildDashboardServerRow(dashboardServer);
   const socketRows = (clusterServers || [])
     .filter(server => !sameEndpoint(server, dashboardRow))
-    .map(server => ({ ...server, type: "SocketServer" }));
+    .map(buildSocketServerRow);
   const rows = [...socketRows, dashboardRow];
   fields.serverInventoryCount.textContent = rows.length;
 

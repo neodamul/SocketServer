@@ -76,6 +76,10 @@ public class DashboardServerServiceTests
         Assert.IsTrue(indexHtml.Contains("Control Servers", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("id=\"controlServerInventoryCount\"", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("id=\"controlServers\"", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("<th>Instance</th>", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("<th>Max Conn</th>", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("<th>Current Conn</th>", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("<th>Available Conn</th>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<option value=\"30\" selected>30s</option>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<option value=\"5\">5s</option>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<option value=\"10\">10s</option>", StringComparison.Ordinal));
@@ -85,6 +89,8 @@ public class DashboardServerServiceTests
                 indexHtml.IndexOf("Server Inventory", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("const DEFAULT_REFRESH_SECONDS = 30;", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("renderControlServers(status.controlServers)", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("function healthText(value)", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains(".map(buildSocketServerRow)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("getRefreshIntervalMilliseconds()", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("scheduleRefresh()", StringComparison.Ordinal));
         Assert.IsFalse(appJs.Contains("setInterval(refresh, 1000)", StringComparison.Ordinal));
