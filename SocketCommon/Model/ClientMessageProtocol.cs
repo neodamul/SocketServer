@@ -1,7 +1,5 @@
 using System;
 using System.Net.Sockets;
-using System.Text;
-using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace SocketCommon.Model;
@@ -120,11 +118,6 @@ public class ServerRelayMessage
 
 public static class ClientMessageProtocol
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     public static ClientMessageSendRequest CreateSendRequest(
         uint sourceClientId,
         uint targetClientId,
@@ -145,7 +138,7 @@ public static class ClientMessageProtocol
 
     public static SocketMessageFrame CreateFrame<T>(uint clientId, uint messageId, T payload)
     {
-        byte[] bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, JsonOptions));
+        byte[] bytes = ProtobufPayloadSerializer.Encode(payload);
         return new SocketMessageFrame(clientId, messageId, bytes);
     }
 
@@ -313,15 +306,7 @@ public static class ClientMessageProtocol
             return false;
         }
 
-        try
-        {
-            payload = JsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(frame.Payload), JsonOptions);
-            return payload != null;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
+        return ProtobufPayloadSerializer.TryDecode(frame.Payload, out payload);
     }
 
     private static Task<bool> SendAsync<T>(Socket socket, uint clientId, uint messageId, T payload)

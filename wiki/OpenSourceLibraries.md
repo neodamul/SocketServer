@@ -6,8 +6,7 @@
 | --- | --- | --- | --- |
 | `log4net` | `3.3.1` | 공통 로깅 | Apache-2.0 |
 | `Google.Protobuf` | `3.20.1` | Protocol Buffers 지원 | BSD-3-Clause |
-| `Grpc.Net.Client` | `2.46.0` | gRPC 클라이언트 지원 | Apache-2.0 |
-| `Grpc.Tools` | `2.46.1` | gRPC/Protobuf 빌드 도구 | Apache-2.0 |
+| `Grpc.Tools` | `2.46.1` | Protobuf 모델 코드 생성 | Apache-2.0 |
 | `Microsoft.NET.Test.Sdk` | `17.2.0` | .NET 테스트 실행 | Microsoft Software License Terms (.NET Library) |
 | `MSTest.TestAdapter` | `2.2.10` | MSTest 어댑터 | MIT |
 | `MSTest.TestFramework` | `2.2.10` | MSTest 프레임워크 | MIT |

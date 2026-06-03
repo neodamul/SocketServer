@@ -339,11 +339,11 @@ public class ControlServer : IDisposable
         }
 
         this.registry.UpsertPeerSnapshot(snapshot);
-        await ControlProtocol.SendAsync(connection, frame.ClientId, ControlMessageIds.ControlRegisterAck, new
+        await ControlProtocol.SendAsync(connection, frame.ClientId, ControlMessageIds.ControlRegisterAck, new ControlAckMessage
         {
-            clusterId = this.config.ClusterId,
-            controlNodeId = this.config.NodeId,
-            receivedAt = DateTimeOffset.UtcNow
+            ClusterId = this.config.ClusterId,
+            ControlNodeId = this.config.NodeId,
+            ReceivedAt = DateTimeOffset.UtcNow
         });
     }
 
@@ -489,11 +489,11 @@ public class ControlServer : IDisposable
 
     private Task SendPeerAckAsync(SecureSocketConnection connection, uint clientId)
     {
-        return ControlProtocol.SendAsync(connection, clientId, ControlMessageIds.ControlRegisterAck, new
+        return ControlProtocol.SendAsync(connection, clientId, ControlMessageIds.ControlRegisterAck, new ControlAckMessage
         {
-            clusterId = this.config.ClusterId,
-            controlNodeId = this.config.NodeId,
-            receivedAt = DateTimeOffset.UtcNow
+            ClusterId = this.config.ClusterId,
+            ControlNodeId = this.config.NodeId,
+            ReceivedAt = DateTimeOffset.UtcNow
         });
     }
 

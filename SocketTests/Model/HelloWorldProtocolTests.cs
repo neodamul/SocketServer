@@ -35,10 +35,10 @@ public class HelloWorldProtocolTests
     {
         byte[] bytes = HelloWorldProtocol.Encode(HelloWorldProtocol.CreateRequest(TestClientId));
 
-        Assert.AreEqual(SocketMessageFrame.HeaderLength, bytes.Length);
+        Assert.IsTrue(bytes.Length > SocketMessageFrame.HeaderLength);
         Assert.AreEqual(TestClientId, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(0, 4)));
         Assert.AreEqual(HelloWorldProtocol.RequestMessageId, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(4, 4)));
-        Assert.AreEqual((uint)0, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(8, 4)));
+        Assert.IsTrue(BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(8, 4)) > 0);
     }
 
     [TestMethod]
@@ -46,10 +46,10 @@ public class HelloWorldProtocolTests
     {
         byte[] bytes = HelloWorldProtocol.Encode(HelloWorldProtocol.CreateResponse(TestClientId));
 
-        Assert.AreEqual(SocketMessageFrame.HeaderLength + HelloWorldProtocol.DefaultMessage.Length, bytes.Length);
+        Assert.IsTrue(bytes.Length > SocketMessageFrame.HeaderLength + HelloWorldProtocol.DefaultMessage.Length);
         Assert.AreEqual(TestClientId, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(0, 4)));
         Assert.AreEqual(HelloWorldProtocol.ResponseMessageId, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(4, 4)));
-        Assert.AreEqual((uint)HelloWorldProtocol.DefaultMessage.Length, BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(8, 4)));
+        Assert.IsTrue(BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(8, 4)) > HelloWorldProtocol.DefaultMessage.Length);
     }
 
     [TestMethod]

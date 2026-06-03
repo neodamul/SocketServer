@@ -90,7 +90,7 @@ public class DashboardServerService : IDisposable
             connection,
             0,
             ControlMessageIds.RegistrySnapshotRequest,
-            new { requestedAt = DateTimeOffset.UtcNow });
+            new RegistrySnapshotRequest { RequestedAt = DateTimeOffset.UtcNow });
         if (!success ||
             !ControlProtocol.TryDecode(frame, ControlMessageIds.RegistrySnapshotResponse, out ClusterStatusSnapshot snapshot))
         {

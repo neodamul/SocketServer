@@ -1,5 +1,7 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Text;
+using System.Text.Json;
 using SocketCommon.Configuration;
 using SocketCommon.Diagnostics;
 using SocketCommon.Model;
@@ -24,9 +26,27 @@ public class ControlProtocolTests
         bool decoded = ControlProtocol.TryDecode(frame, ControlMessageIds.RouteRequest, out RouteRequest decodedRequest);
 
         Assert.IsTrue(decoded);
+        Assert.AreNotEqual((byte)'{', frame.Payload[0]);
+        Assert.IsTrue(frame.Payload.Length < Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(request)));
         Assert.AreEqual((uint)77, decodedRequest.ClientId);
         Assert.AreEqual(2, decodedRequest.PreferredServerId);
         Assert.AreEqual("MostAvailableConnections", decodedRequest.RoutingPolicy);
+    }
+
+    [TestMethod]
+    public void ClientMessageEncodeDecodeUsesBinaryPayloadTest()
+    {
+        ClientMessageSendRequest request = ClientMessageProtocol.CreateSendRequest(11, 12, "hello");
+
+        SocketMessageFrame frame = ClientMessageProtocol.CreateFrame(11, ClientMessageIds.ClientMessageSend, request);
+        bool decoded = ClientMessageProtocol.TryDecodeSendRequest(frame, out ClientMessageSendRequest decodedRequest);
+
+        Assert.IsTrue(decoded);
+        Assert.AreNotEqual((byte)'{', frame.Payload[0]);
+        Assert.IsTrue(frame.Payload.Length < Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(request)));
+        Assert.AreEqual((uint)11, decodedRequest.SourceClientId);
+        Assert.AreEqual((uint)12, decodedRequest.TargetClientId);
+        Assert.AreEqual("hello", decodedRequest.Content);
     }
 
     [TestMethod]

@@ -11,7 +11,7 @@
 12..   payload       byte[payloadLength]
 ```
 
-payload 최대 길이는 4KB입니다.
+payload 최대 길이는 4KB입니다. payload는 JSON 문자열이 아니라 `SocketCommon/Proto/SocketMessages.proto`에 정의된 protobuf 모델로 직렬화합니다.
 
 `SocketClient`, `SocketServer`, `SocketControl`, `SocketDashboard` 간 연결은 `SecureSocketConnection`을 통해 인증된 뒤 common frame을 송수신합니다. 로컬 Root CA가 모듈별 leaf 인증서를 서명하고, 클라이언트는 해당 Root CA 체인을 검증합니다. 기본 모드는 런타임/OS가 지원하는 가장 적절한 TLS 버전을 협상하고, `SOCKET_REQUIRE_TLS13=true` 환경 변수를 설정하면 TLS 1.3이 아닌 협상 결과를 연결 실패로 처리합니다.
 
@@ -22,7 +22,7 @@ payload 최대 길이는 4KB입니다.
 2 PONG
 ```
 
-`PING`은 payload가 없습니다. `PONG` payload는 `OK`입니다.
+`PING`, `PONG`은 `ProtoHealthCheckMessage` payload를 사용합니다. `PONG`의 `status`는 `OK`입니다.
 
 클라이언트는 `StartHealthCheckLoop()`로 기본 30초 간격 keepalive를 실행할 수 있습니다.
 
@@ -33,7 +33,7 @@ payload 최대 길이는 4KB입니다.
 101 HelloWorldResponse
 ```
 
-`HelloWorldResponse` payload는 기본 `Hello, World!`입니다.
+`HelloWorldRequest`, `HelloWorldResponse`는 protobuf payload를 사용합니다. `HelloWorldResponse.message` 기본값은 `Hello, World!`입니다.
 
 ## Client Message
 
@@ -48,17 +48,16 @@ payload 최대 길이는 4KB입니다.
 2005 CLIENT_MESSAGE_ERROR
 ```
 
-`CLIENT_MESSAGE_SEND`:
+`CLIENT_MESSAGE_SEND` payload:
 
-```json
-{
-  "messageToken": "f1f0c3...",
-  "sourceClientId": 10001,
-  "targetClientId": 10002,
-  "content": "hello",
-  "ttlSeconds": 10,
-  "createdAt": "2026-06-03T00:00:00Z"
-}
+```text
+ProtoClientMessageSendRequest
+message_token     string
+source_client_id  uint32
+target_client_id  uint32
+content           string
+ttl_seconds       int32
+created_at_unix_ms int64
 ```
 
 `CLIENT_MESSAGE_DELIVER`는 source/target/client content를 target client에 전달합니다. Source client는 delivery 결과를 `CLIENT_MESSAGE_ACK` 또는 `CLIENT_MESSAGE_ERROR`로 받습니다.
@@ -77,7 +76,7 @@ Source 서버는 ControlServer에서 target client 위치를 조회한 뒤 targe
 
 ## Control Plane
 
-ControlServer, SocketServer, SocketClient는 common frame 위에 JSON payload를 사용합니다.
+ControlServer, SocketServer, SocketClient는 common frame 위에 protobuf payload를 사용합니다.
 
 Server-Control:
 
@@ -125,50 +124,49 @@ Control-Control:
 
 `SERVER_HEARTBEAT`는 서버별 capacity와 리소스 사용률을 포함합니다.
 
-```json
-{
-  "clusterId": "socket-cluster-1",
-  "serverId": 1,
-  "instanceId": "server-1-a",
-  "host": "127.0.0.1",
-  "port": 5100,
-  "health": "Healthy",
-  "maxConnections": 10000,
-  "currentConnections": 5231,
-  "reservedConnections": 37,
-  "availableConnections": 4728,
-  "resourceUsage": {
-    "cpuUsagePercent": 42.8,
-    "memoryUsagePercent": 67.1,
-    "storageUsagePercent": 51.4
-  }
-}
+```text
+ProtoServerHeartbeatRequest
+cluster_id                 string
+server_id                  int32
+instance_id                string
+host                       string
+port                       int32
+health                     ProtoServerHealthState
+max_connections            int32
+current_connections        int32
+reserved_connections       int32
+available_connections      int32
+resource_usage             ProtoResourceUsageSnapshot
+total_accepted_clients     int64
+total_closed_clients       int64
+total_rejected_clients     int64
+total_idle_timeout_clients int64
+sent_at_unix_ms            int64
 ```
 
 ## Route
 
 `ROUTE_REQUEST`:
 
-```json
-{
-  "clientId": 10001,
-  "preferredServerId": null,
-  "routingPolicy": "MostAvailableConnections"
-}
+```text
+ProtoRouteRequest
+client_id           uint32
+preferred_server_id optional int32
+routing_policy      string
 ```
 
 `ROUTE_RESPONSE`:
 
-```json
-{
-  "success": true,
-  "reservationId": "control-1-100",
-  "serverId": 1,
-  "instanceId": "server-1-a",
-  "host": "127.0.0.1",
-  "port": 5100,
-  "expiresAt": "2026-06-03T00:00:10Z"
-}
+```text
+ProtoRouteResponse
+success            bool
+reservation_id     string
+server_id          int32
+instance_id        string
+host               string
+port               int32
+expires_at_unix_ms int64
+error_message      string
 ```
 
 클라이언트는 응답받은 SocketServer endpoint로 직접 TCP 연결을 생성합니다.

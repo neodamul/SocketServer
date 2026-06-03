@@ -1,0 +1,258 @@
+syntax = "proto3";
+
+package socketcommon;
+
+option csharp_namespace = "SocketCommon.Protobuf";
+
+enum ProtoServerHealthState {
+  PROTO_SERVER_HEALTH_UNKNOWN = 0;
+  PROTO_SERVER_HEALTH_HEALTHY = 1;
+  PROTO_SERVER_HEALTH_DEGRADED = 2;
+  PROTO_SERVER_HEALTH_UNHEALTHY = 3;
+}
+
+message ProtoHealthCheckMessage {
+  string status = 1;
+  int64 created_at_unix_ms = 2;
+}
+
+message ProtoHelloWorldRequest {
+  int64 created_at_unix_ms = 1;
+}
+
+message ProtoHelloWorldResponse {
+  string message = 1;
+  int64 created_at_unix_ms = 2;
+}
+
+message ProtoResourceUsageSnapshot {
+  double cpu_usage_percent = 1;
+  double memory_usage_percent = 2;
+  double storage_usage_percent = 3;
+  int64 captured_at_unix_ms = 4;
+}
+
+message ProtoServerRegisterRequest {
+  string cluster_id = 1;
+  int32 server_id = 2;
+  string instance_id = 3;
+  string name = 4;
+  string host = 5;
+  int32 port = 6;
+  int32 port_range_start = 7;
+  int32 port_range_end = 8;
+  int32 max_connections = 9;
+  int32 pending_accept_count = 10;
+  int32 idle_timeout_seconds = 11;
+  int64 started_at_unix_ms = 12;
+}
+
+message ProtoServerRegisterAck {
+  string cluster_id = 1;
+  string control_node_id = 2;
+  int32 server_id = 3;
+  string instance_id = 4;
+  int64 received_at_unix_ms = 5;
+}
+
+message ProtoServerHeartbeatRequest {
+  string cluster_id = 1;
+  int32 server_id = 2;
+  string instance_id = 3;
+  string host = 4;
+  int32 port = 5;
+  ProtoServerHealthState health = 6;
+  int32 max_connections = 7;
+  int32 current_connections = 8;
+  int32 reserved_connections = 9;
+  int32 available_connections = 10;
+  ProtoResourceUsageSnapshot resource_usage = 11;
+  int64 total_accepted_clients = 12;
+  int64 total_closed_clients = 13;
+  int64 total_rejected_clients = 14;
+  int64 total_idle_timeout_clients = 15;
+  int64 sent_at_unix_ms = 16;
+}
+
+message ProtoServerHeartbeatAck {
+  string cluster_id = 1;
+  string control_node_id = 2;
+  int32 server_id = 3;
+  string instance_id = 4;
+  int64 received_at_unix_ms = 5;
+}
+
+message ProtoSessionEventMessage {
+  string cluster_id = 1;
+  int64 session_id = 2;
+  uint32 client_id = 3;
+  int32 server_id = 4;
+  string instance_id = 5;
+  string remote_end_point = 6;
+  int64 connected_at_unix_ms = 7;
+  int64 last_received_at_unix_ms = 8;
+  string state = 9;
+  int64 version = 10;
+}
+
+message ProtoRouteRequest {
+  uint32 client_id = 1;
+  optional int32 preferred_server_id = 2;
+  string routing_policy = 3;
+}
+
+message ProtoRouteResponse {
+  bool success = 1;
+  string reservation_id = 2;
+  int32 server_id = 3;
+  string instance_id = 4;
+  string host = 5;
+  int32 port = 6;
+  int64 expires_at_unix_ms = 7;
+  string error_message = 8;
+}
+
+message ProtoClientLocationRequest {
+  uint32 source_client_id = 1;
+  uint32 target_client_id = 2;
+}
+
+message ProtoClientLocationResponse {
+  bool success = 1;
+  uint32 target_client_id = 2;
+  int32 server_id = 3;
+  string instance_id = 4;
+  string host = 5;
+  int32 port = 6;
+  int64 session_id = 7;
+  string state = 8;
+  string error_message = 9;
+  int64 updated_at_unix_ms = 10;
+}
+
+message ProtoBackendServerSnapshot {
+  string cluster_id = 1;
+  string source_control_node_id = 2;
+  int32 server_id = 3;
+  string instance_id = 4;
+  string name = 5;
+  string host = 6;
+  int32 port = 7;
+  int32 port_range_start = 8;
+  int32 port_range_end = 9;
+  int32 max_connections = 10;
+  int32 current_connections = 11;
+  int32 reserved_connections = 12;
+  int32 available_connections = 13;
+  ProtoServerHealthState health = 14;
+  ProtoResourceUsageSnapshot resource_usage = 15;
+  int64 version = 16;
+  int64 started_at_unix_ms = 17;
+  int64 last_heartbeat_at_unix_ms = 18;
+  int64 updated_at_unix_ms = 19;
+}
+
+message ProtoRouteReservationMessage {
+  string reservation_id = 1;
+  uint32 client_id = 2;
+  int32 server_id = 3;
+  string instance_id = 4;
+  int64 expires_at_unix_ms = 5;
+  string source_control_node_id = 6;
+}
+
+message ProtoClientLocationMessage {
+  string cluster_id = 1;
+  uint32 client_id = 2;
+  int32 server_id = 3;
+  string instance_id = 4;
+  string host = 5;
+  int32 port = 6;
+  int64 session_id = 7;
+  string state = 8;
+  int64 version = 9;
+  int64 updated_at_unix_ms = 10;
+}
+
+message ProtoClusterStatusSnapshot {
+  int32 server_count = 1;
+  int32 healthy_server_count = 2;
+  int32 total_max_connections = 3;
+  int32 total_current_connections = 4;
+  int32 total_reserved_connections = 5;
+  int32 total_available_connections = 6;
+  int32 total_session_count = 7;
+  double average_cpu_usage_percent = 8;
+  double average_memory_usage_percent = 9;
+  double average_storage_usage_percent = 10;
+  repeated ProtoBackendServerSnapshot servers = 11;
+  int64 updated_at_unix_ms = 12;
+}
+
+message ProtoControlAckMessage {
+  string cluster_id = 1;
+  string control_node_id = 2;
+  int64 received_at_unix_ms = 3;
+}
+
+message ProtoRegistrySnapshotRequest {
+  int64 requested_at_unix_ms = 1;
+}
+
+message ProtoClientRegisterRequest {
+  uint32 client_id = 1;
+  int64 registered_at_unix_ms = 2;
+}
+
+message ProtoClientRegisterAck {
+  uint32 client_id = 1;
+  bool success = 2;
+  string error_message = 3;
+  int64 registered_at_unix_ms = 4;
+}
+
+message ProtoClientMessageSendRequest {
+  string message_token = 1;
+  uint32 source_client_id = 2;
+  uint32 target_client_id = 3;
+  string content = 4;
+  int32 ttl_seconds = 5;
+  int64 created_at_unix_ms = 6;
+}
+
+message ProtoClientMessageDelivery {
+  string message_token = 1;
+  uint32 source_client_id = 2;
+  uint32 target_client_id = 3;
+  string content = 4;
+  int64 created_at_unix_ms = 5;
+}
+
+message ProtoClientMessageAck {
+  string message_token = 1;
+  uint32 source_client_id = 2;
+  uint32 target_client_id = 3;
+  bool delivered = 4;
+  string target_instance_id = 5;
+  int64 delivered_at_unix_ms = 6;
+}
+
+message ProtoClientMessageError {
+  string message_token = 1;
+  uint32 source_client_id = 2;
+  uint32 target_client_id = 3;
+  string error_code = 4;
+  string error_message = 5;
+  int64 failed_at_unix_ms = 6;
+}
+
+message ProtoServerRelayMessage {
+  string cluster_id = 1;
+  string source_instance_id = 2;
+  string message_token = 3;
+  uint32 source_client_id = 4;
+  uint32 target_client_id = 5;
+  string content = 6;
+  int32 ttl_seconds = 7;
+  int64 created_at_unix_ms = 8;
+}

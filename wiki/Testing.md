@@ -11,6 +11,7 @@ dotnet test SocketTests/SocketTests.csproj
 검증 범위:
 
 - frame encode/decode
+- protobuf payload encode/decode
 - healthcheck protocol
 - HelloWorld protocol
 - TLS secure connection, shared local Root CA, module certificate creation

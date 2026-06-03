@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace SocketCommon.Model;
@@ -38,7 +37,7 @@ public static class HealthCheckProtocol
     public const uint PingMessageId = 1;
     public const uint PongMessageId = 2;
 
-    private const string PongPayload = "OK";
+    public const string PongPayload = "OK";
 
     public static HealthCheckMessage CreatePing(uint clientId = 0)
     {
@@ -114,16 +113,17 @@ public static class HealthCheckProtocol
     {
         message = null;
 
-        if (frame.MessageId == PingMessageId && frame.Payload.Length == 0)
+        if (frame.MessageId == PingMessageId &&
+            ProtobufPayloadSerializer.TryDecode(frame.Payload, out HealthCheckMessage ping))
         {
-            message = CreatePing(frame.ClientId);
+            message = new HealthCheckMessage(frame.ClientId, HealthCheckMessageType.Ping, ping.Status);
             return true;
         }
 
-        if (frame.MessageId == PongMessageId)
+        if (frame.MessageId == PongMessageId &&
+            ProtobufPayloadSerializer.TryDecode(frame.Payload, out HealthCheckMessage pong))
         {
-            string status = Encoding.UTF8.GetString(frame.Payload);
-            if (status != PongPayload)
+            if (pong.Status != PongPayload)
             {
                 return false;
             }
@@ -144,10 +144,6 @@ public static class HealthCheckProtocol
             _ => throw new ArgumentOutOfRangeException(nameof(message))
         };
 
-        byte[] payload = message.Type == HealthCheckMessageType.Pong
-            ? Encoding.UTF8.GetBytes(message.Status)
-            : Array.Empty<byte>();
-
-        return new SocketMessageFrame(message.ClientId, messageId, payload);
+        return new SocketMessageFrame(message.ClientId, messageId, ProtobufPayloadSerializer.Encode(message));
     }
 }

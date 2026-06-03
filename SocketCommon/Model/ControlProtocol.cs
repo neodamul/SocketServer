@@ -1,7 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Net.Sockets;
-using System.Text;
-using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace SocketCommon.Model;
@@ -304,16 +303,52 @@ public class ClientLocationMessage
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
+public class ClusterStatusSnapshot
+{
+    public int ServerCount { get; init; }
+
+    public int HealthyServerCount { get; init; }
+
+    public int TotalMaxConnections { get; init; }
+
+    public int TotalCurrentConnections { get; init; }
+
+    public int TotalReservedConnections { get; init; }
+
+    public int TotalAvailableConnections { get; init; }
+
+    public int TotalSessionCount { get; init; }
+
+    public double AverageCpuUsagePercent { get; init; }
+
+    public double AverageMemoryUsagePercent { get; init; }
+
+    public double AverageStorageUsagePercent { get; init; }
+
+    public IReadOnlyCollection<BackendServerSnapshot> Servers { get; init; } = Array.Empty<BackendServerSnapshot>();
+
+    public DateTimeOffset UpdatedAt { get; init; }
+}
+
+public class ControlAckMessage
+{
+    public string ClusterId { get; set; } = "";
+
+    public string ControlNodeId { get; set; } = "";
+
+    public DateTimeOffset ReceivedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class RegistrySnapshotRequest
+{
+    public DateTimeOffset RequestedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
 public static class ControlProtocol
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     public static SocketMessageFrame CreateFrame<T>(uint clientId, uint messageId, T payload)
     {
-        byte[] bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, JsonOptions));
+        byte[] bytes = ProtobufPayloadSerializer.Encode(payload);
         return new SocketMessageFrame(clientId, messageId, bytes);
     }
 
@@ -325,15 +360,7 @@ public static class ControlProtocol
             return false;
         }
 
-        try
-        {
-            payload = JsonSerializer.Deserialize<T>(Encoding.UTF8.GetString(frame.Payload), JsonOptions);
-            return payload != null;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
+        return ProtobufPayloadSerializer.TryDecode(frame.Payload, out payload);
     }
 
     public static Task<bool> SendAsync<T>(Socket socket, uint clientId, uint messageId, T payload)

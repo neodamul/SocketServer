@@ -448,30 +448,3 @@ public class ControlHealthThreshold
 
     public double DegradedStoragePercent { get; init; } = 90;
 }
-
-public class ClusterStatusSnapshot
-{
-    public int ServerCount { get; init; }
-
-    public int HealthyServerCount { get; init; }
-
-    public int TotalMaxConnections { get; init; }
-
-    public int TotalCurrentConnections { get; init; }
-
-    public int TotalReservedConnections { get; init; }
-
-    public int TotalAvailableConnections { get; init; }
-
-    public int TotalSessionCount { get; init; }
-
-    public double AverageCpuUsagePercent { get; init; }
-
-    public double AverageMemoryUsagePercent { get; init; }
-
-    public double AverageStorageUsagePercent { get; init; }
-
-    public IReadOnlyCollection<BackendServerSnapshot> Servers { get; init; } = Array.Empty<BackendServerSnapshot>();
-
-    public DateTimeOffset UpdatedAt { get; init; }
-}

@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace SocketCommon.Model;
@@ -57,7 +56,7 @@ public static class HelloWorldProtocol
         return new SocketMessageFrame(
             request.ClientId,
             RequestMessageId,
-            Array.Empty<byte>()).Encode();
+            ProtobufPayloadSerializer.Encode(request)).Encode();
     }
 
     public static byte[] Encode(HelloWorldResponse response)
@@ -65,7 +64,7 @@ public static class HelloWorldProtocol
         return new SocketMessageFrame(
             response.ClientId,
             ResponseMessageId,
-            Encoding.UTF8.GetBytes(response.Message)).Encode();
+            ProtobufPayloadSerializer.Encode(response)).Encode();
     }
 
     public static bool Send(Socket socket, HelloWorldRequest request)
@@ -78,7 +77,7 @@ public static class HelloWorldProtocol
         return SocketMessageFrame.SendAsync(socket, new SocketMessageFrame(
             request.ClientId,
             RequestMessageId,
-            Array.Empty<byte>()));
+            ProtobufPayloadSerializer.Encode(request)));
     }
 
     public static Task<bool> SendAsync(SecureSocketConnection connection, HelloWorldRequest request)
@@ -86,7 +85,7 @@ public static class HelloWorldProtocol
         return SocketMessageFrame.SendAsync(connection, new SocketMessageFrame(
             request.ClientId,
             RequestMessageId,
-            Array.Empty<byte>()));
+            ProtobufPayloadSerializer.Encode(request)));
     }
 
     public static bool Send(Socket socket, HelloWorldResponse response)
@@ -96,7 +95,7 @@ public static class HelloWorldProtocol
 
     public static Task<bool> SendAsync(Socket socket, HelloWorldResponse response)
     {
-        byte[] payload = Encoding.UTF8.GetBytes(response.Message);
+        byte[] payload = ProtobufPayloadSerializer.Encode(response);
         if (payload.Length > SocketMessageFrame.MaxPayloadLength)
         {
             return Task.FromResult(false);
@@ -110,7 +109,7 @@ public static class HelloWorldProtocol
 
     public static Task<bool> SendAsync(SecureSocketConnection connection, HelloWorldResponse response)
     {
-        byte[] payload = Encoding.UTF8.GetBytes(response.Message);
+        byte[] payload = ProtobufPayloadSerializer.Encode(response);
         if (payload.Length > SocketMessageFrame.MaxPayloadLength)
         {
             return Task.FromResult(false);
@@ -194,7 +193,8 @@ public static class HelloWorldProtocol
     public static bool TryDecodeRequest(SocketMessageFrame frame, out HelloWorldRequest request)
     {
         request = null;
-        if (frame.MessageId != RequestMessageId || frame.Payload.Length != 0)
+        if (frame.MessageId != RequestMessageId ||
+            !ProtobufPayloadSerializer.TryDecode(frame.Payload, out HelloWorldRequest _))
         {
             return false;
         }
@@ -217,12 +217,13 @@ public static class HelloWorldProtocol
     public static bool TryDecodeResponse(SocketMessageFrame frame, out HelloWorldResponse response)
     {
         response = null;
-        if (frame.MessageId != ResponseMessageId || frame.Payload.Length == 0)
+        if (frame.MessageId != ResponseMessageId ||
+            !ProtobufPayloadSerializer.TryDecode(frame.Payload, out HelloWorldResponse decodedResponse))
         {
             return false;
         }
 
-        response = new HelloWorldResponse(frame.ClientId, Encoding.UTF8.GetString(frame.Payload));
+        response = new HelloWorldResponse(frame.ClientId, decodedResponse.Message);
         return true;
     }
 }
