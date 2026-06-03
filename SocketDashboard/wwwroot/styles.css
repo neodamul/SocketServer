@@ -116,6 +116,15 @@ p {
   gap: 12px;
 }
 
+.summary-capacity,
+.summary-counts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.summary-counts {
+  margin-top: 12px;
+}
+
 .metrics article,
 .details div {
   min-height: 86px;

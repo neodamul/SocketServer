@@ -73,6 +73,8 @@ public class DashboardServerServiceTests
         string appJs = File.ReadAllText(Path.Combine(solutionRoot, "SocketDashboard/wwwroot/app.js"));
 
         Assert.IsTrue(indexHtml.Contains("id=\"refreshIntervalSeconds\"", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("class=\"metrics summary-capacity\"", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("class=\"metrics summary-counts\"", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("id=\"controlServerCount\"", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("id=\"socketServerCount\"", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("id=\"dashboardServerCount\"", StringComparison.Ordinal));
@@ -90,6 +92,9 @@ public class DashboardServerServiceTests
         Assert.IsTrue(indexHtml.Contains("Selected Server", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("Selected Details", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("id=\"selectedServerName\"", StringComparison.Ordinal));
+        Assert.IsTrue(
+            indexHtml.IndexOf("summary-capacity", StringComparison.Ordinal) <
+                indexHtml.IndexOf("summary-counts", StringComparison.Ordinal));
         Assert.IsTrue(
             indexHtml.IndexOf("Server Inventory", StringComparison.Ordinal) <
                 indexHtml.IndexOf("Selected Server", StringComparison.Ordinal));
