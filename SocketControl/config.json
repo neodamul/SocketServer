@@ -20,8 +20,8 @@
   },
   "peers": [],
   "registry": {
-    "provider": "InMemory",
+    "provider": "File",
     "syncMode": "ActiveActive",
-    "connectionString": ""
+    "connectionString": "control-registry.json"
   }
 }

@@ -368,3 +368,7 @@ FodyWeavers.xsd
 # Local IDE settings
 .idea/
 .vscode/
+
+# Runtime registry state
+control-registry*.json
+*-registry.json

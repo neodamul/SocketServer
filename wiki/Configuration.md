@@ -72,9 +72,9 @@ Certificates/SocketDashboard.pfx
   },
   "peers": [],
   "registry": {
-    "provider": "InMemory",
+    "provider": "File",
     "syncMode": "ActiveActive",
-    "connectionString": ""
+    "connectionString": "control-registry.json"
   }
 }
 ```
@@ -86,6 +86,10 @@ Certificates/SocketDashboard.pfx
 - `heartbeatTimeoutSeconds`: timeout이 지난 서버는 route 후보에서 제외
 - `routeReservationSeconds`: route 응답 후 실제 접속 전까지의 짧은 예약 TTL
 - `degraded*Percent`: resource threshold 초과 시 `Degraded`
+- `registry.provider`: `InMemory` 또는 `File`
+- `registry.connectionString`: `File` provider의 저장 경로. 비어 있으면 실행 디렉터리의 `{nodeId}-registry.json`을 사용
+
+기본 실행 config는 `File` provider로 ControlServer registry를 저장합니다. 테스트나 임시 실행처럼 상태 공유가 필요 없으면 `InMemory`를 사용합니다. registry 파일에는 서버 snapshot, route reservation, session summary, client location이 저장되며 메시지 payload 프로토콜은 계속 protobuf를 사용합니다.
 
 ## SocketServer
 

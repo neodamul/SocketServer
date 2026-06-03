@@ -15,6 +15,7 @@ public class BackendServerRegistry
     private readonly ConcurrentDictionary<string, SessionEventMessage> sessions = new();
     private readonly ConcurrentDictionary<uint, ClientLocationMessage> clientLocations = new();
     private readonly TimeSpan heartbeatTimeout;
+    private readonly IBackendRegistryStore store;
     private long version;
 
     public BackendServerRegistry()
@@ -23,10 +24,17 @@ public class BackendServerRegistry
     }
 
     public BackendServerRegistry(TimeSpan heartbeatTimeout)
+        : this(heartbeatTimeout, new InMemoryBackendRegistryStore())
+    {
+    }
+
+    public BackendServerRegistry(TimeSpan heartbeatTimeout, IBackendRegistryStore store)
     {
         this.heartbeatTimeout = heartbeatTimeout <= TimeSpan.Zero
             ? TimeSpan.FromSeconds(90)
             : heartbeatTimeout;
+        this.store = store ?? new InMemoryBackendRegistryStore();
+        this.LoadState(this.store.Load());
     }
 
     public IReadOnlyCollection<BackendServerSnapshot> Servers => this.servers.Values.ToArray();
@@ -81,6 +89,7 @@ public class BackendServerRegistry
             });
 
             UpdateAvailable(snapshot);
+            this.SaveState();
             return snapshot;
         }
     }
@@ -124,6 +133,7 @@ public class BackendServerRegistry
 
             snapshot.Health = EvaluateHealth(snapshot, threshold);
             UpdateAvailable(snapshot);
+            this.SaveState();
             return snapshot;
         }
     }
@@ -132,7 +142,7 @@ public class BackendServerRegistry
     {
         lock (this.syncRoot)
         {
-            this.servers.AddOrUpdate(
+            BackendServerSnapshot stored = this.servers.AddOrUpdate(
                 snapshot.InstanceId,
                 snapshot,
                 (_, existing) =>
@@ -145,6 +155,13 @@ public class BackendServerRegistry
 
                     return existing;
                 });
+
+            this.version = Math.Max(this.version, stored.Version);
+            UpdateAvailable(stored);
+            if (ReferenceEquals(stored, snapshot))
+            {
+                this.SaveState();
+            }
         }
     }
 
@@ -161,6 +178,8 @@ public class BackendServerRegistry
             {
                 this.UpsertPeerSnapshot(server);
             }
+
+            this.SaveState();
         }
     }
 
@@ -200,6 +219,7 @@ public class BackendServerRegistry
             this.reservations[reservation.ReservationId] = reservation;
             selected.ReservedConnections++;
             UpdateAvailable(selected);
+            this.SaveState();
 
             return new RouteResponse
             {
@@ -224,6 +244,8 @@ public class BackendServerRegistry
                 server.ReservedConnections++;
                 UpdateAvailable(server);
             }
+
+            this.SaveState();
         }
     }
 
@@ -242,6 +264,8 @@ public class BackendServerRegistry
                 server.ReservedConnections--;
                 UpdateAvailable(server);
             }
+
+            this.SaveState();
         }
     }
 
@@ -269,6 +293,7 @@ public class BackendServerRegistry
             this.sessions[CreateSessionKey(session)] = session;
             if (session.ClientId == 0 || !this.servers.TryGetValue(session.InstanceId, out BackendServerSnapshot? server))
             {
+                this.SaveState();
                 return;
             }
 
@@ -285,6 +310,7 @@ public class BackendServerRegistry
                 Version = session.Version,
                 UpdatedAt = DateTimeOffset.UtcNow
             });
+            this.SaveState();
         }
     }
 
@@ -297,6 +323,8 @@ public class BackendServerRegistry
             {
                 RemoveClientLocation(session);
             }
+
+            this.SaveState();
         }
     }
 
@@ -313,6 +341,7 @@ public class BackendServerRegistry
                 location.ClientId,
                 location,
                 (_, existing) => IsNewer(location, existing) ? location : existing);
+            this.SaveState();
         }
     }
 
@@ -335,6 +364,7 @@ public class BackendServerRegistry
                 session.Version >= existing.Version)
             {
                 this.clientLocations.TryRemove(session.ClientId, out _);
+                this.SaveState();
             }
         }
     }
@@ -358,6 +388,7 @@ public class BackendServerRegistry
                 location.Version >= existing.Version)
             {
                 this.clientLocations.TryRemove(location.ClientId, out _);
+                this.SaveState();
             }
         }
     }
@@ -424,8 +455,65 @@ public class BackendServerRegistry
                 location.UpdatedAt = DateTimeOffset.UtcNow;
             }
 
+            this.SaveState();
             return server;
         }
+    }
+
+    public BackendRegistryState SnapshotState()
+    {
+        lock (this.syncRoot)
+        {
+            ExpireReservations();
+            bool normalized = NormalizeExpiredServers();
+            if (normalized)
+            {
+                this.SaveState();
+            }
+
+            return CreateState();
+        }
+    }
+
+    private void LoadState(BackendRegistryState state)
+    {
+        if (state == null)
+        {
+            return;
+        }
+
+        foreach (BackendServerSnapshot server in state.Servers ?? Enumerable.Empty<BackendServerSnapshot>())
+        {
+            this.servers[server.InstanceId] = server;
+            this.version = Math.Max(this.version, server.Version);
+        }
+
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        foreach (RouteReservationMessage reservation in (state.Reservations ?? Enumerable.Empty<RouteReservationMessage>()).Where(item => item.ExpiresAt > now))
+        {
+            this.reservations[reservation.ReservationId] = reservation;
+        }
+
+        foreach (SessionEventMessage session in state.Sessions ?? Enumerable.Empty<SessionEventMessage>())
+        {
+            this.sessions[CreateSessionKey(session)] = session;
+            this.version = Math.Max(this.version, session.Version);
+        }
+
+        foreach (ClientLocationMessage location in state.ClientLocations ?? Enumerable.Empty<ClientLocationMessage>())
+        {
+            this.clientLocations[location.ClientId] = location;
+            this.version = Math.Max(this.version, location.Version);
+        }
+
+        this.version = Math.Max(this.version, state.Version);
+        RecalculateReservations();
+        NormalizeExpiredServers();
+    }
+
+    private void SaveState()
+    {
+        this.store.Save(CreateState());
     }
 
     public ClusterStatusSnapshot GetStatus()
@@ -433,12 +521,19 @@ public class BackendServerRegistry
         lock (this.syncRoot)
         {
             ExpireReservations();
+            bool normalized = NormalizeExpiredServers();
+            if (normalized)
+            {
+                this.SaveState();
+            }
+
             BackendServerSnapshot[] currentServers = this.servers.Values.ToArray();
             return new ClusterStatusSnapshot
             {
                 Servers = currentServers,
                 ServerCount = currentServers.Length,
-                HealthyServerCount = currentServers.Count(server => server.Health == ServerHealthState.Healthy),
+                HealthyServerCount = currentServers.Count(server =>
+                    server.Health == ServerHealthState.Healthy && !IsHeartbeatExpired(server)),
                 TotalMaxConnections = currentServers.Sum(server => server.MaxConnections),
                 TotalCurrentConnections = currentServers.Sum(server => server.CurrentConnections),
                 TotalReservedConnections = currentServers.Sum(server => server.ReservedConnections),
@@ -464,6 +559,96 @@ public class BackendServerRegistry
 
             ReleaseReservation(reservation.ReservationId);
         }
+    }
+
+    private void RecalculateReservations()
+    {
+        foreach (BackendServerSnapshot server in this.servers.Values)
+        {
+            server.ReservedConnections = 0;
+        }
+
+        foreach (RouteReservationMessage reservation in this.reservations.Values)
+        {
+            if (this.servers.TryGetValue(reservation.InstanceId, out BackendServerSnapshot? server))
+            {
+                server.ReservedConnections++;
+            }
+        }
+
+        foreach (BackendServerSnapshot server in this.servers.Values)
+        {
+            UpdateAvailable(server);
+        }
+    }
+
+    private bool NormalizeExpiredServers()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        bool changed = false;
+        foreach (BackendServerSnapshot server in this.servers.Values)
+        {
+            if (now - server.LastHeartbeatAt <= this.heartbeatTimeout)
+            {
+                UpdateAvailable(server);
+                continue;
+            }
+
+            if (server.Health != ServerHealthState.Unhealthy ||
+                server.CurrentConnections != 0 ||
+                server.ReservedConnections != 0 ||
+                server.AvailableConnections != 0)
+            {
+                changed = true;
+            }
+
+            server.Health = ServerHealthState.Unhealthy;
+            server.CurrentConnections = 0;
+            server.ReservedConnections = 0;
+            server.AvailableConnections = 0;
+
+            foreach (SessionEventMessage session in this.sessions.Values.Where(item => item.InstanceId == server.InstanceId))
+            {
+                if (session.State != "ServerDisconnected")
+                {
+                    changed = true;
+                }
+
+                session.State = "ServerDisconnected";
+                session.Version = Math.Max(session.Version, server.Version);
+            }
+
+            foreach (ClientLocationMessage location in this.clientLocations.Values.Where(item => item.InstanceId == server.InstanceId))
+            {
+                if (location.State != "ServerDisconnected")
+                {
+                    changed = true;
+                }
+
+                location.State = "ServerDisconnected";
+                location.Version = Math.Max(location.Version, server.Version);
+                location.UpdatedAt = now;
+            }
+
+            foreach (RouteReservationMessage reservation in this.reservations.Values.Where(item => item.InstanceId == server.InstanceId))
+            {
+                changed |= this.reservations.TryRemove(reservation.ReservationId, out _);
+            }
+        }
+
+        return changed;
+    }
+
+    private BackendRegistryState CreateState()
+    {
+        return new BackendRegistryState
+        {
+            Version = this.version,
+            Servers = this.servers.Values.ToList(),
+            Reservations = this.reservations.Values.ToList(),
+            Sessions = this.sessions.Values.ToList(),
+            ClientLocations = this.clientLocations.Values.ToList()
+        };
     }
 
     private bool IsHeartbeatExpired(BackendServerSnapshot snapshot)

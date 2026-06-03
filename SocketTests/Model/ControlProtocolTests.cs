@@ -1,5 +1,7 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using SocketCommon.Configuration;
@@ -96,6 +98,153 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void BackendRegistryFileStoreRestoresServerReservationAndClientLocationTest()
+    {
+        string path = CreateRegistryPath();
+        try
+        {
+            BackendServerRegistry registry = new(TimeSpan.FromSeconds(90), new FileBackendRegistryStore(path));
+            registry.Upsert(CreateRegister(1, "server-1", 5101, 10), "control-1");
+            registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 3, 10), "control-1", new ControlHealthThreshold());
+            registry.UpsertSession(new SessionEventMessage
+            {
+                ClusterId = "socket-cluster-1",
+                ClientId = 77,
+                ServerId = 1,
+                InstanceId = "server-1",
+                SessionId = 700,
+                State = "Connected",
+                Version = 10
+            });
+            RouteResponse route = registry.Resolve(new RouteRequest { ClientId = 88 }, "control-1", TimeSpan.FromMinutes(1));
+
+            Assert.IsTrue(route.Success);
+
+            BackendServerRegistry restored = new(TimeSpan.FromSeconds(90), new FileBackendRegistryStore(path));
+            ClusterStatusSnapshot status = restored.GetStatus();
+            ClientLocationResponse location = restored.ResolveClientLocation(new ClientLocationRequest
+            {
+                SourceClientId = 1,
+                TargetClientId = 77
+            });
+
+            Assert.AreEqual(1, status.ServerCount);
+            Assert.AreEqual(1, status.HealthyServerCount);
+            Assert.AreEqual(3, status.TotalCurrentConnections);
+            Assert.AreEqual(1, status.TotalReservedConnections);
+            Assert.AreEqual(6, status.TotalAvailableConnections);
+            Assert.IsTrue(location.Success);
+            Assert.AreEqual("server-1", location.InstanceId);
+        }
+        finally
+        {
+            DeleteRegistryPath(path);
+        }
+    }
+
+    [TestMethod]
+    public void BackendRegistryFileStoreNormalizesExpiredServersOnRestoreTest()
+    {
+        string path = CreateRegistryPath();
+        try
+        {
+            DateTimeOffset staleHeartbeat = DateTimeOffset.UtcNow.AddMinutes(-5);
+            FileBackendRegistryStore store = new(path);
+            store.Save(new BackendRegistryState
+            {
+                Version = 500,
+                Servers =
+                {
+                    new BackendServerSnapshot
+                    {
+                        ClusterId = "socket-cluster-1",
+                        SourceControlNodeId = "control-1",
+                        ServerId = 1,
+                        InstanceId = "server-1",
+                        Host = "127.0.0.1",
+                        Port = 5101,
+                        MaxConnections = 10,
+                        CurrentConnections = 5,
+                        ReservedConnections = 1,
+                        AvailableConnections = 4,
+                        Health = ServerHealthState.Healthy,
+                        ResourceUsage = new ResourceUsageSnapshot(),
+                        Version = 300,
+                        StartedAt = staleHeartbeat,
+                        LastHeartbeatAt = staleHeartbeat,
+                        UpdatedAt = staleHeartbeat
+                    }
+                },
+                Reservations =
+                {
+                    new RouteReservationMessage
+                    {
+                        ReservationId = "control-1-501",
+                        ClientId = 88,
+                        ServerId = 1,
+                        InstanceId = "server-1",
+                        SourceControlNodeId = "control-1",
+                        ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(1)
+                    }
+                },
+                Sessions =
+                {
+                    new SessionEventMessage
+                    {
+                        ClusterId = "socket-cluster-1",
+                        ClientId = 77,
+                        ServerId = 1,
+                        InstanceId = "server-1",
+                        SessionId = 700,
+                        State = "Connected",
+                        Version = 10
+                    }
+                },
+                ClientLocations =
+                {
+                    new ClientLocationMessage
+                    {
+                        ClusterId = "socket-cluster-1",
+                        ClientId = 77,
+                        ServerId = 1,
+                        InstanceId = "server-1",
+                        Host = "127.0.0.1",
+                        Port = 5101,
+                        SessionId = 700,
+                        State = "Connected",
+                        Version = 10,
+                        UpdatedAt = staleHeartbeat
+                    }
+                }
+            });
+
+            BackendServerRegistry restored = new(TimeSpan.FromSeconds(1), new FileBackendRegistryStore(path));
+            ClusterStatusSnapshot status = restored.GetStatus();
+            ClientLocationResponse location = restored.ResolveClientLocation(new ClientLocationRequest
+            {
+                SourceClientId = 1,
+                TargetClientId = 77
+            });
+            BackendRegistryState restoredState = restored.SnapshotState();
+
+            Assert.AreEqual(1, status.ServerCount);
+            Assert.AreEqual(0, status.HealthyServerCount);
+            Assert.AreEqual(0, status.TotalCurrentConnections);
+            Assert.AreEqual(0, status.TotalReservedConnections);
+            Assert.AreEqual(0, status.TotalAvailableConnections);
+            Assert.IsFalse(location.Success);
+            Assert.AreEqual(0, restoredState.Reservations.Count);
+            Assert.AreEqual("ServerDisconnected", restoredState.Sessions.Single().State);
+            Assert.AreEqual("ServerDisconnected", restoredState.ClientLocations.Single().State);
+            Assert.IsTrue(restoredState.Version >= 500);
+        }
+        finally
+        {
+            DeleteRegistryPath(path);
+        }
+    }
+
+    [TestMethod]
     public void ResourceUsageProviderReturnsPercentValuesTest()
     {
         ResourceUsageSnapshot snapshot = new ResourceUsageProvider().Capture();
@@ -168,5 +317,24 @@ public class ControlProtocolTests
             },
             SentAt = sentAt
         };
+    }
+
+    private static string CreateRegistryPath()
+    {
+        return Path.Combine(Path.GetTempPath(), $"socket-registry-{Guid.NewGuid():N}.json");
+    }
+
+    private static void DeleteRegistryPath(string path)
+    {
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+
+        string temporaryPath = $"{path}.tmp";
+        if (File.Exists(temporaryPath))
+        {
+            File.Delete(temporaryPath);
+        }
     }
 }

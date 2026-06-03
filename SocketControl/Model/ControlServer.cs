@@ -30,7 +30,9 @@ public class ControlServer : IDisposable
     {
         this.config = config.ControlServer;
         this.peers = config.Peers;
-        this.registry = new BackendServerRegistry(TimeSpan.FromSeconds(config.ControlServer.HeartbeatTimeoutSeconds));
+        this.registry = new BackendServerRegistry(
+            TimeSpan.FromSeconds(config.ControlServer.HeartbeatTimeoutSeconds),
+            BackendRegistryStoreFactory.Create(config.Registry, this.config.NodeId));
         this.healthThreshold = new ControlHealthThreshold
         {
             DegradedCpuPercent = this.config.DegradedCpuPercent,

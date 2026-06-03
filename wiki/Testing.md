@@ -20,6 +20,7 @@ dotnet test SocketTests/SocketTests.csproj
 - port range binding
 - ControlServer route
 - ControlServer peer registry sync
+- ControlServer registry file persistence and stale heartbeat normalization
 - client-to-client local delivery
 - SocketServer-to-SocketServer client message relay
 - SocketServer control channel disconnect detection
