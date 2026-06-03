@@ -1,5 +1,6 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.IO;
 using System.Threading.Tasks;
 using SocketCommon.Configuration;
 using SocketSample.Shared;
@@ -81,6 +82,18 @@ public class SocketSampleClientTests
         Assert.AreEqual("301: sample-message", target.GetState().LastReceivedMessage);
     }
 
+    [TestMethod]
+    public void NativeSampleProjectFilesAreIncludedTest()
+    {
+        string root = FindRepositoryRoot();
+
+        Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.iOS/SocketSampleiOS.xcodeproj/project.pbxproj")));
+        Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.macOS/SocketSampleMac.xcodeproj/project.pbxproj")));
+        Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/MainActivity.java")));
+        Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/NativeSocketClient.java")));
+        Assert.IsFalse(File.Exists(Path.Combine(root, "Samples/SocketSample.Mobile/SocketSample.Mobile.csproj")));
+    }
+
     private static SampleClientSettings CreateSettings(int clientId, int port)
     {
         return new SampleClientSettings
@@ -98,5 +111,21 @@ public class SocketSampleClientTests
                 AuthenticationTimeoutMilliseconds = 5000
             }
         };
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
+        while (directory != null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "SocketServer.sln")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Repository root was not found.");
     }
 }

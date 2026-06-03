@@ -13,7 +13,7 @@ SocketServer.sln
 ├── SocketDashboard   상태 API와 웹 대시보드
 ├── SocketLoadTest    대량 접속 검증 도구
 ├── SocketTests       MSTest 통합 테스트
-└── Samples           .NET, iOS/macOS, Android 샘플 클라이언트
+└── Samples           .NET, iOS, macOS, Android 네이티브 샘플 클라이언트
 ```
 
 ## 핵심 기능
@@ -80,7 +80,7 @@ Sample Client:
 dotnet run --project Samples/SocketSample.Net/SocketSample.Net.csproj
 ```
 
-기본 샘플 클라이언트 주소는 `http://127.0.0.1:5090`입니다. 모바일 샘플은 [Samples](Samples/README.md)를 참고합니다.
+기본 샘플 클라이언트 주소는 `http://127.0.0.1:5090`입니다. iOS, macOS, Android 네이티브 샘플은 [Samples](Samples/README.md)를 참고합니다.
 
 ## 부하 테스트
 

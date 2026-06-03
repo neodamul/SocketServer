@@ -33,7 +33,7 @@ SocketServer      TCP backend server
 SocketDashboard   status API and web dashboard
 SocketLoadTest    load test tool
 SocketTests       MSTest suite
-Samples           sample clients for .NET, iOS/macOS, Android
+Samples           native sample clients for .NET, iOS, macOS, Android
 ```
 
 ## ControlServer

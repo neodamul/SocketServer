@@ -1,0 +1,23 @@
+name: SocketSampleiOS
+options:
+  bundleIdPrefix: com.neodamul
+targets:
+  SocketSampleiOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - Sources
+      - ../SocketSample.AppleShared/SampleConfig.swift
+      - ../SocketSample.AppleShared/SocketFrame.swift
+      - ../SocketSample.AppleShared/ProtoCodec.swift
+      - ../SocketSample.AppleShared/NativeSocketClient.swift
+      - ../SocketSample.AppleShared/SampleContentView.swift
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.neodamul.socketsample.ios
+      PRODUCT_NAME: SocketSampleiOS
+      GENERATE_INFOPLIST_FILE: YES
+      INFOPLIST_KEY_UILaunchScreen_Generation: YES
+      INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+      INFOPLIST_KEY_NSLocalNetworkUsageDescription: Socket sample client connects to a local SocketServer.
+      CODE_SIGN_STYLE: Automatic

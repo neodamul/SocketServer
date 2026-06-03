@@ -161,7 +161,7 @@ Root CA와 모듈 인증서는 `certificateRenewBeforeDays` 이내로 만료가 
 
 ```text
 Samples/SocketSample.Net/appsettings.json
-Samples/SocketSample.Mobile/Resources/Raw/config.json
+Samples/SocketSample.Android/app/src/main/res/raw/config.json
 ```
 
 공통 설정 항목:
@@ -172,3 +172,5 @@ Samples/SocketSample.Mobile/Resources/Raw/config.json
 - `useControlServer`: `true`이면 ControlServer route 요청 후 SocketServer에 연결
 - `receiveTimeoutSeconds`: receive 버튼 대기 시간
 - `security`: TLS/mTLS 설정
+
+iOS/macOS 샘플은 화면에서 `Client ID`, `Host`, `Port`, local self-signed certificate 허용 여부를 설정합니다. Swift 샘플 프로젝트 파일은 `Samples/SocketSample.iOS/project.yml`, `Samples/SocketSample.macOS/project.yml`에서 XcodeGen으로 생성합니다.

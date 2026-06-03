@@ -1,0 +1,20 @@
+name: SocketSampleMac
+options:
+  bundleIdPrefix: com.neodamul
+targets:
+  SocketSampleMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - Sources
+      - ../SocketSample.AppleShared/SampleConfig.swift
+      - ../SocketSample.AppleShared/SocketFrame.swift
+      - ../SocketSample.AppleShared/ProtoCodec.swift
+      - ../SocketSample.AppleShared/NativeSocketClient.swift
+      - ../SocketSample.AppleShared/SampleContentView.swift
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.neodamul.socketsample.mac
+      PRODUCT_NAME: SocketSampleMac
+      GENERATE_INFOPLIST_FILE: YES
+      CODE_SIGN_STYLE: Automatic

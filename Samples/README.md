@@ -16,15 +16,31 @@ http://127.0.0.1:5090
 
 서버 정보는 `Samples/SocketSample.Net/appsettings.json`의 `sampleClient` 섹션에서 기본값을 관리하고, 화면에서도 `Host`, `Port`, `Use ControlServer`, `Client ID`를 수정할 수 있습니다.
 
-## iOS, macOS, Android
+## iOS
 
-모바일 샘플은 .NET MAUI 프로젝트입니다.
+SwiftUI + Network.framework 기반 네이티브 앱입니다.
 
 ```bash
-dotnet workload install maui
-dotnet build Samples/SocketSample.Mobile/SocketSample.Mobile.csproj -f net9.0-android
-dotnet build Samples/SocketSample.Mobile/SocketSample.Mobile.csproj -f net9.0-ios
-dotnet build Samples/SocketSample.Mobile/SocketSample.Mobile.csproj -f net9.0-maccatalyst
+xcodegen generate --spec Samples/SocketSample.iOS/project.yml
+xcodebuild -project Samples/SocketSample.iOS/SocketSampleiOS.xcodeproj -scheme SocketSampleiOS -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build
 ```
 
-기본 설정 파일은 `Samples/SocketSample.Mobile/Resources/Raw/config.json`입니다. 실제 Android/iOS 기기에서 `127.0.0.1`은 기기 자신을 의미하므로, 개발 PC나 서버의 접근 가능한 IP로 `Host`를 변경해야 합니다.
+## macOS
+
+SwiftUI + Network.framework 기반 네이티브 앱입니다.
+
+```bash
+xcodegen generate --spec Samples/SocketSample.macOS/project.yml
+xcodebuild -project Samples/SocketSample.macOS/SocketSampleMac.xcodeproj -scheme SocketSampleMac -configuration Debug CODE_SIGNING_ALLOWED=NO build
+```
+
+## Android
+
+Java + Android SDK 기반 네이티브 앱입니다.
+
+```bash
+cd Samples/SocketSample.Android
+gradle :app:assembleDebug
+```
+
+기본 설정 파일은 `Samples/SocketSample.Android/app/src/main/res/raw/config.json`입니다. Android emulator에서 개발 PC의 localhost에 접근하려면 host `10.0.2.2`를 사용합니다. 실제 기기에서는 SocketServer 또는 ControlServer가 실행 중인 장비의 LAN IP로 바꿔야 합니다.

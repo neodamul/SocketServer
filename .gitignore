@@ -372,3 +372,8 @@ FodyWeavers.xsd
 # Runtime registry state
 control-registry*.json
 *-registry.json
+
+# Native sample build output
+**/.gradle/
+**/build/
+!**/build.gradle.kts
