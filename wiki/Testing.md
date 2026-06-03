@@ -13,7 +13,7 @@ dotnet test SocketTests/SocketTests.csproj
 - frame encode/decode
 - healthcheck protocol
 - HelloWorld protocol
-- TLS secure connection and local certificate creation
+- TLS secure connection, shared local Root CA, module certificate creation
 - SocketAsyncEventArgs pool
 - TcpClient/TcpServer 기본 송수신
 - port range binding

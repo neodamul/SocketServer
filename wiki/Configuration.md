@@ -24,16 +24,17 @@ SocketTests/log4net.config
 
 ## Certificates
 
-각 모듈은 최초 TLS 연결 시 로컬 자체 서명 인증서를 자동 생성합니다.
+각 모듈은 최초 TLS 연결 시 로컬 인증서를 자동 생성합니다. Root CA는 하나만 만들고, 모듈별 leaf 인증서는 이 Root CA로 서명합니다.
 
 ```text
-{module output}/Certificates/SocketClient.pfx
-{module output}/Certificates/SocketServer.pfx
-{module output}/Certificates/SocketControl.pfx
-{module output}/Certificates/SocketDashboard.pfx
+Certificates/SocketServerLocalRootCA.pfx
+Certificates/SocketClient.pfx
+Certificates/SocketServer.pfx
+Certificates/SocketControl.pfx
+Certificates/SocketDashboard.pfx
 ```
 
-인증서는 로컬 개발/테스트용이며 subject는 `CN=SocketServerLocal`, SAN은 `SocketServerLocal`, `localhost`입니다. TLS 1.3을 필수로 검증해야 하는 환경은 `SOCKET_REQUIRE_TLS13=true`를 설정합니다. 플랫폼이 TLS 1.3을 협상하지 못하면 연결은 실패합니다.
+기본 저장 위치는 솔루션 루트의 `Certificates/`입니다. `SOCKET_CERTIFICATE_DIR` 환경 변수를 설정하면 다른 로컬 경로를 사용할 수 있습니다. 인증서는 로컬 개발/테스트용이며 leaf subject는 `CN=SocketServerLocal`, SAN은 `SocketServerLocal`, `localhost`입니다. TLS 1.3을 필수로 검증해야 하는 환경은 `SOCKET_REQUIRE_TLS13=true`를 설정합니다. 플랫폼이 TLS 1.3을 협상하지 못하면 연결은 실패합니다.
 
 ## ControlServer
 

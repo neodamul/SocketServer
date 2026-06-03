@@ -12,7 +12,9 @@ namespace SocketCommon.Model;
 public sealed class SecureSocketConnection : IDisposable
 {
     public const string LocalCertificateSubject = "CN=SocketServerLocal";
+    public const string LocalRootCertificateSubject = "CN=SocketServerLocalRootCA";
     public const string TargetHost = "SocketServerLocal";
+    public const string CertificateDirectoryEnvironmentVariable = "SOCKET_CERTIFICATE_DIR";
     public const string RequireTls13EnvironmentVariable = "SOCKET_REQUIRE_TLS13";
     private const int AuthenticationTimeoutMilliseconds = 5000;
 
@@ -42,7 +44,7 @@ public sealed class SecureSocketConnection : IDisposable
         SslStream sslStream = new(
             networkStream,
             leaveInnerStreamOpen: false,
-            (_, certificate, _, _) => IsLocalCertificate(certificate));
+            (_, certificate, _, _) => IsTrustedLocalCertificate(certificate));
 
         await WaitForAuthenticationAsync(sslStream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
         {
@@ -167,7 +169,7 @@ public sealed class SecureSocketConnection : IDisposable
         this.Close();
     }
 
-    private static bool IsLocalCertificate(X509Certificate certificate)
+    private static bool IsTrustedLocalCertificate(X509Certificate certificate)
     {
         if (certificate == null)
         {
@@ -175,7 +177,14 @@ public sealed class SecureSocketConnection : IDisposable
         }
 
         using X509Certificate2 certificate2 = new(certificate);
-        return certificate2.Subject.Contains(LocalCertificateSubject, StringComparison.Ordinal);
+        if (!certificate2.Subject.Contains(LocalCertificateSubject, StringComparison.Ordinal) ||
+            !LocalCertificateStore.HasSubjectAlternativeName(certificate2))
+        {
+            return false;
+        }
+
+        using X509Certificate2 rootCertificate = LocalCertificateStore.GetOrCreateRootAuthority();
+        return LocalCertificateStore.IsSignedByRoot(certificate2, rootCertificate);
     }
 
     private static async Task WaitForAuthenticationAsync(Task authenticationTask)
@@ -204,16 +213,18 @@ public sealed class SecureSocketConnection : IDisposable
 public static class LocalCertificateStore
 {
     private const string Password = "socket-local-cert";
+    private const string RootCertificateFileName = "SocketServerLocalRootCA.pfx";
 
     public static X509Certificate2 GetOrCreate(string moduleName)
     {
         string path = GetCertificatePath(moduleName);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using X509Certificate2 rootCertificate = GetOrCreateRootAuthority();
 
         if (File.Exists(path))
         {
             X509Certificate2 existingCertificate = Load(path);
-            if (existingCertificate.GetECDsaPrivateKey() != null && HasSubjectAlternativeName(existingCertificate))
+            if (IsModuleCertificateValid(existingCertificate, rootCertificate))
             {
                 return existingCertificate;
             }
@@ -224,10 +235,32 @@ public static class LocalCertificateStore
 
         if (!File.Exists(path))
         {
-            using X509Certificate2 certificate = CreateCertificate();
+            using X509Certificate2 certificate = CreateModuleCertificate(moduleName, rootCertificate);
             File.WriteAllBytes(path, certificate.Export(X509ContentType.Pfx, Password));
         }
 
+        return Load(path);
+    }
+
+    public static X509Certificate2 GetOrCreateRootAuthority()
+    {
+        string path = GetRootCertificatePath();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+
+        if (File.Exists(path))
+        {
+            X509Certificate2 existingCertificate = Load(path);
+            if (IsRootCertificateValid(existingCertificate))
+            {
+                return existingCertificate;
+            }
+
+            existingCertificate.Dispose();
+            File.Delete(path);
+        }
+
+        using X509Certificate2 certificate = CreateRootAuthorityCertificate();
+        File.WriteAllBytes(path, certificate.Export(X509ContentType.Pfx, Password));
         return Load(path);
     }
 
@@ -239,15 +272,61 @@ public static class LocalCertificateStore
             X509KeyStorageFlags.Exportable);
     }
 
+    public static string GetCertificateDirectory()
+    {
+        string configuredDirectory = Environment.GetEnvironmentVariable(
+            SecureSocketConnection.CertificateDirectoryEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(configuredDirectory))
+        {
+            return configuredDirectory;
+        }
+
+        DirectoryInfo directory = new(AppContext.BaseDirectory);
+        while (directory != null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "SocketServer.sln")))
+            {
+                return Path.Combine(directory.FullName, "Certificates");
+            }
+
+            directory = directory.Parent;
+        }
+
+        return Path.Combine(AppContext.BaseDirectory, "Certificates");
+    }
+
+    public static string GetRootCertificatePath()
+    {
+        return Path.Combine(GetCertificateDirectory(), RootCertificateFileName);
+    }
+
     public static string GetCertificatePath(string moduleName)
     {
         string safeModuleName = string.IsNullOrWhiteSpace(moduleName)
             ? "SocketCommon"
             : moduleName.Trim();
-        return Path.Combine(AppContext.BaseDirectory, "Certificates", $"{safeModuleName}.pfx");
+        return Path.Combine(GetCertificateDirectory(), $"{safeModuleName}.pfx");
     }
 
-    private static X509Certificate2 CreateCertificate()
+    private static X509Certificate2 CreateRootAuthorityCertificate()
+    {
+        using ECDsa ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        CertificateRequest request = new(
+            SecureSocketConnection.LocalRootCertificateSubject,
+            ecdsa,
+            HashAlgorithmName.SHA256);
+        request.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+        request.CertificateExtensions.Add(new X509KeyUsageExtension(
+            X509KeyUsageFlags.KeyCertSign | X509KeyUsageFlags.CrlSign,
+            true));
+        request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
+
+        return request.CreateSelfSigned(
+            DateTimeOffset.UtcNow.AddDays(-1),
+            DateTimeOffset.UtcNow.AddYears(10));
+    }
+
+    private static X509Certificate2 CreateModuleCertificate(string moduleName, X509Certificate2 rootCertificate)
     {
         using ECDsa ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         CertificateRequest request = new(
@@ -256,19 +335,28 @@ public static class LocalCertificateStore
             HashAlgorithmName.SHA256);
         request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, false));
         request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, false));
+        request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(
+            new OidCollection
+            {
+                new("1.3.6.1.5.5.7.3.1"),
+                new("1.3.6.1.5.5.7.3.2")
+            },
+            false));
         request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
         SubjectAlternativeNameBuilder subjectAlternativeNameBuilder = new();
         subjectAlternativeNameBuilder.AddDnsName(SecureSocketConnection.TargetHost);
         subjectAlternativeNameBuilder.AddDnsName("localhost");
         request.CertificateExtensions.Add(subjectAlternativeNameBuilder.Build());
 
-        X509Certificate2 certificate = request.CreateSelfSigned(
+        using X509Certificate2 certificate = request.Create(
+            rootCertificate,
             DateTimeOffset.UtcNow.AddDays(-1),
-            DateTimeOffset.UtcNow.AddYears(10));
-        return certificate;
+            DateTimeOffset.UtcNow.AddYears(2),
+            CreateSerialNumber(moduleName));
+        return certificate.CopyWithPrivateKey(ecdsa);
     }
 
-    private static bool HasSubjectAlternativeName(X509Certificate2 certificate)
+    public static bool HasSubjectAlternativeName(X509Certificate2 certificate)
     {
         foreach (X509Extension extension in certificate.Extensions)
         {
@@ -279,5 +367,51 @@ public static class LocalCertificateStore
         }
 
         return false;
+    }
+
+    public static bool IsSignedByRoot(X509Certificate2 certificate, X509Certificate2 rootCertificate)
+    {
+        using X509Chain chain = new();
+        chain.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+        chain.ChainPolicy.CustomTrustStore.Add(rootCertificate);
+        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+        chain.ChainPolicy.VerificationTime = DateTime.UtcNow;
+        return chain.Build(certificate);
+    }
+
+    private static bool IsModuleCertificateValid(X509Certificate2 certificate, X509Certificate2 rootCertificate)
+    {
+        return certificate.GetECDsaPrivateKey() != null &&
+            certificate.Subject.Contains(SecureSocketConnection.LocalCertificateSubject, StringComparison.Ordinal) &&
+            HasSubjectAlternativeName(certificate) &&
+            IsSignedByRoot(certificate, rootCertificate);
+    }
+
+    private static bool IsRootCertificateValid(X509Certificate2 certificate)
+    {
+        return certificate.GetECDsaPrivateKey() != null &&
+            certificate.Subject.Contains(SecureSocketConnection.LocalRootCertificateSubject, StringComparison.Ordinal) &&
+            IsCertificateAuthority(certificate);
+    }
+
+    private static bool IsCertificateAuthority(X509Certificate2 certificate)
+    {
+        foreach (X509Extension extension in certificate.Extensions)
+        {
+            if (extension is X509BasicConstraintsExtension basicConstraints)
+            {
+                return basicConstraints.CertificateAuthority;
+            }
+        }
+
+        return false;
+    }
+
+    private static byte[] CreateSerialNumber(string moduleName)
+    {
+        byte[] serialNumber = new byte[16];
+        RandomNumberGenerator.Fill(serialNumber);
+        serialNumber[0] &= 0x7F;
+        return serialNumber;
     }
 }

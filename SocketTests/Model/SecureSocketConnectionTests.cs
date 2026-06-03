@@ -21,9 +21,13 @@ public class SecureSocketConnectionTests
         }
 
         using var certificate = LocalCertificateStore.GetOrCreate("SocketTests");
+        using var rootCertificate = LocalCertificateStore.GetOrCreateRootAuthority();
 
         Assert.IsTrue(File.Exists(path));
+        Assert.IsTrue(File.Exists(LocalCertificateStore.GetRootCertificatePath()));
         Assert.IsTrue(certificate.Subject.Contains(SecureSocketConnection.TargetHost));
+        Assert.AreEqual(rootCertificate.Subject, certificate.Issuer);
+        Assert.IsTrue(LocalCertificateStore.IsSignedByRoot(certificate, rootCertificate));
     }
 
     [TestMethod]
@@ -40,9 +44,9 @@ public class SecureSocketConnectionTests
         await connectTask;
 
         Task<SecureSocketConnection> serverTask =
-            SecureSocketConnection.AuthenticateServerAsync(serverSocket, "SocketTests");
+            SecureSocketConnection.AuthenticateServerAsync(serverSocket, "SocketTestsServer");
         Task<SecureSocketConnection> clientTask =
-            SecureSocketConnection.AuthenticateClientAsync(clientSocket, "SocketTests");
+            SecureSocketConnection.AuthenticateClientAsync(clientSocket, "SocketTestsClient");
         await Task.WhenAll(serverTask, clientTask);
 
         using SecureSocketConnection server = await serverTask;
