@@ -1,6 +1,8 @@
 # SocketServer
 
-TCP 소켓 서버/클라이언트, ControlServer 브로커, 대시보드, 부하 테스트를 포함한 C#/.NET 솔루션입니다.
+SocketServer는 TLS 또는 메시지 암호화를 사용하는 고성능 C#/.NET TCP 소켓 서버/클라이언트 솔루션입니다.
+ControlServer 브로커가 서버 등록, healthcheck, route 분배, 세션 위치 공유를 관리하며 여러 SocketServer 인스턴스와 클라이언트를 연결합니다.
+SAEA 기반 비동기 I/O, 고정 슬랩 버퍼, protobuf 프로토콜, 대시보드, 부하 테스트, 네이티브 샘플 클라이언트를 포함합니다.
 
 ## 구성
 
