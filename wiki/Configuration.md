@@ -22,6 +22,13 @@ SocketTests/log4net.config
 
 `SocketLoadTest`는 부하 테스트용 `log4net.load-test.config`를 우선 사용하고, 해당 파일이 없으면 `log4net.config`를 fallback으로 사용합니다.
 
+로그 파일은 프로젝트별 `logs/` 디렉터리에 분리 저장합니다.
+
+- 일반 로그: `logs/<project>.log`
+- relay 로그: `logs/<project>.relay.log`
+
+일반 로그는 서버 시작/종료, 연결, healthcheck, route, cleanup, 테스트 진행 상태를 기록합니다. Relay 로그는 `SocketRelay` logger로 분리되어 ControlServer peer relay/snapshot sync, SocketServer relay server refresh, client-to-client message relay, target location 조회, broadcast/targeted relay 결과를 기록합니다. 파일 로그는 DEBUG까지 저장하고 콘솔은 INFO 이상만 출력해 테스트 실행 중에는 핵심 진행 상태를 보고, 실패 분석은 로그 파일에서 상세 단계까지 확인합니다.
+
 ## Security
 
 실행 프로젝트는 `security` 설정을 통해 전송 보안 정책을 적용합니다. 기본값은 TLS입니다.

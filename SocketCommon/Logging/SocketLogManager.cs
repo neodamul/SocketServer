@@ -5,6 +5,8 @@ namespace SocketCommon.Logging;
 
 public static class SocketLogManager
 {
+    private const string RelayLoggerPrefix = "SocketRelay";
+
     public static SocketLogger GetLogger<T>()
     {
         return GetLogger(typeof(T));
@@ -14,6 +16,17 @@ public static class SocketLogManager
     {
         LogConfigurator.Configure();
         return new SocketLogger(LogManager.GetLogger(type));
+    }
+
+    public static SocketLogger GetRelayLogger<T>()
+    {
+        return GetRelayLogger(typeof(T));
+    }
+
+    public static SocketLogger GetRelayLogger(Type type)
+    {
+        LogConfigurator.Configure();
+        return new SocketLogger(LogManager.GetLogger($"{RelayLoggerPrefix}.{type.FullName}"));
     }
 }
 

@@ -23,6 +23,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     public const int DefaultIdleScanIntervalSeconds = 10;
 
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<TcpServer>();
+    private static readonly SocketLogger RelayLogger = SocketLogManager.GetRelayLogger<TcpServer>();
 
     private readonly ConcurrentDictionary<long, ConnectionSession> connectedClients = new();
     private readonly ConcurrentDictionary<uint, ConnectionSession> connectedClientsById = new();
@@ -123,10 +124,12 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     {
         Dictionary<string, BackendServerSnapshot> latestServers = new(StringComparer.Ordinal);
         bool receivedSnapshot = false;
+        RelayLogger.Debug($"Relay server snapshot refresh started. instanceId={this.instanceId}, controlServers={this.controlServers.Count}");
         foreach (EndpointConfig endpoint in this.controlServers)
         {
             try
             {
+                RelayLogger.Debug($"Relay server snapshot request started. instanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}");
                 Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
                 await SocketFactory.ConnectAsync(socket, IPAddress.Parse(endpoint.Host), endpoint.Port);
                 using SecureSocketConnection connection =
@@ -145,10 +148,12 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 }
 
                 receivedSnapshot = true;
+                RelayLogger.Info($"Relay server snapshot received. instanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}, servers={snapshot.ServerCount}");
                 foreach (BackendServerSnapshot server in snapshot.Servers)
                 {
                     if (!IsRelayCandidate(server))
                     {
+                        RelayLogger.Debug($"Relay server candidate skipped. sourceInstanceId={this.instanceId}, candidateInstanceId={server?.InstanceId}, host={server?.Host}, port={server?.Port}, health={server?.Health}");
                         continue;
                     }
 
@@ -163,23 +168,28 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             catch (SocketException exception)
             {
                 Logger.Warn($"Relay server snapshot refresh failed. endpoint={endpoint.Host}:{endpoint.Port}", exception);
+                RelayLogger.Warn($"Relay server snapshot refresh failed. instanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}", exception);
             }
             catch (IOException exception)
             {
                 Logger.Warn($"Relay server snapshot refresh I/O failed. endpoint={endpoint.Host}:{endpoint.Port}", exception);
+                RelayLogger.Warn($"Relay server snapshot refresh I/O failed. instanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}", exception);
             }
             catch (TimeoutException exception)
             {
                 Logger.Warn($"Relay server snapshot refresh timed out. endpoint={endpoint.Host}:{endpoint.Port}", exception);
+                RelayLogger.Warn($"Relay server snapshot refresh timed out. instanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}", exception);
             }
             catch (AuthenticationException exception)
             {
                 Logger.Warn($"Relay server snapshot refresh authentication failed. endpoint={endpoint.Host}:{endpoint.Port}", exception);
+                RelayLogger.Warn($"Relay server snapshot refresh authentication failed. instanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}", exception);
             }
         }
 
         if (!receivedSnapshot)
         {
+            RelayLogger.Warn($"Relay server snapshot refresh completed without response. instanceId={this.instanceId}, cachedRelayServers={this.relayServers.Count}");
             return this.relayServers.Count;
         }
 
@@ -188,15 +198,18 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             if (!latestServers.ContainsKey(instanceIdKey))
             {
                 this.relayServers.TryRemove(instanceIdKey, out _);
+                RelayLogger.Info($"Relay server removed from cache. sourceInstanceId={this.instanceId}, removedInstanceId={instanceIdKey}");
             }
         }
 
         foreach (KeyValuePair<string, BackendServerSnapshot> item in latestServers)
         {
             this.relayServers[item.Key] = item.Value;
+            RelayLogger.Debug($"Relay server cached. sourceInstanceId={this.instanceId}, relayInstanceId={item.Key}, endpoint={item.Value.Host}:{item.Value.Port}, health={item.Value.Health}, current={item.Value.CurrentConnections}, available={item.Value.AvailableConnections}");
         }
 
         Logger.Debug($"Relay server list refreshed. instanceId={this.instanceId}, relayServers={this.relayServers.Count}");
+        RelayLogger.Info($"Relay server list refreshed. instanceId={this.instanceId}, relayServers={this.relayServers.Count}");
         return this.relayServers.Count;
     }
 
@@ -662,8 +675,10 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     private async Task<bool> HandleClientMessageSendAsync(ConnectionSession sourceSession, ClientMessageSendRequest request)
     {
+        RelayLogger.Info($"Client message send requested. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, sourceClientId={request.SourceClientId}, targetClientId={request.TargetClientId}, ttlSeconds={request.TtlSeconds}");
         if (request.SourceClientId == 0 || request.TargetClientId == 0)
         {
+            RelayLogger.Warn($"Client message send rejected. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, sourceClientId={request.SourceClientId}, targetClientId={request.TargetClientId}, reason=InvalidClientId");
             return await this.SendClientMessageErrorAsync(sourceSession, request, "InvalidClientId", "Source and target client ids must be greater than zero.");
         }
 
@@ -672,19 +687,24 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         if (await this.DeliverToLocalClientAsync(request))
         {
+            RelayLogger.Info($"Client message delivered locally. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
             return await this.SendClientMessageAckAsync(sourceSession, request, this.instanceId);
         }
 
+        RelayLogger.Debug($"Client message local delivery missed. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
         (bool broadcastSuccess, string broadcastTargetInstanceId, string broadcastErrorMessage) =
             await this.BroadcastRelayToKnownServersAsync(request);
         if (broadcastSuccess)
         {
+            RelayLogger.Info($"Client message delivered by broadcast relay. sourceInstanceId={this.instanceId}, targetInstanceId={broadcastTargetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
             return await this.SendClientMessageAckAsync(sourceSession, request, broadcastTargetInstanceId);
         }
 
+        RelayLogger.Debug($"Client message broadcast relay failed. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, error={broadcastErrorMessage}");
         ClientLocationResponse location = await this.ResolveClientLocationAsync(request.SourceClientId, request.TargetClientId);
         if (location == null || !location.Success)
         {
+            RelayLogger.Warn($"Client message target location not found. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, error={location?.ErrorMessage ?? broadcastErrorMessage}");
             return await this.SendClientMessageErrorAsync(
                 sourceSession,
                 request,
@@ -696,20 +716,24 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         if (location != null && location.Success && location.InstanceId == this.instanceId)
         {
+            RelayLogger.Warn($"Client message location resolved to local instance but target is absent. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
             return await this.SendClientMessageErrorAsync(sourceSession, request, "TargetNotConnected", "Target client is not connected to this server.");
         }
 
         (bool success, string targetInstanceId, string errorMessage) = await this.RelayToRemoteServerAsync(location, request);
         if (!success)
         {
+            RelayLogger.Warn($"Client message targeted relay failed. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, error={errorMessage}");
             return await this.SendClientMessageErrorAsync(sourceSession, request, "RelayFailed", errorMessage);
         }
 
+        RelayLogger.Info($"Client message delivered by targeted relay. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
         return await this.SendClientMessageAckAsync(sourceSession, request, targetInstanceId);
     }
 
     private async Task HandleServerRelayAsync(ConnectionSession relaySession, ServerRelayMessage relayMessage)
     {
+        RelayLogger.Info($"Server relay received. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={relayMessage.MessageToken}, sourceClientId={relayMessage.SourceClientId}, targetClientId={relayMessage.TargetClientId}, ttlSeconds={relayMessage.TtlSeconds}");
         ClientMessageSendRequest request = new()
         {
             MessageToken = relayMessage.MessageToken,
@@ -722,6 +746,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         if (DateTimeOffset.UtcNow - request.CreatedAt > TimeSpan.FromSeconds(Math.Max(1, request.TtlSeconds)))
         {
+            RelayLogger.Warn($"Server relay expired. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
             await relaySession.SendAsync(ClientMessageProtocol.CreateFrame(
                 request.SourceClientId,
                 ServerRelayMessageIds.ServerRelayError,
@@ -731,6 +756,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         if (!await this.DeliverToLocalClientAsync(request))
         {
+            RelayLogger.Debug($"Server relay target not connected. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
             await relaySession.SendAsync(ClientMessageProtocol.CreateFrame(
                 request.SourceClientId,
                 ServerRelayMessageIds.ServerRelayError,
@@ -742,6 +768,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             request.SourceClientId,
             ServerRelayMessageIds.ServerRelayAck,
             CreateClientMessageAck(request, this.instanceId)));
+        RelayLogger.Info($"Server relay delivered. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
     }
 
     private async Task<bool> DeliverToLocalClientAsync(ClientMessageSendRequest request)
@@ -749,6 +776,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         if (!this.connectedClientsById.TryGetValue(request.TargetClientId, out ConnectionSession targetSession) ||
             targetSession.IsClosed)
         {
+            RelayLogger.Debug($"Local client delivery skipped. instanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, reason=TargetNotConnected");
             return false;
         }
 
@@ -759,9 +787,11 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         if (sent)
         {
             Interlocked.Increment(ref this.totalSentMessages);
+            RelayLogger.Debug($"Local client delivery sent. instanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, connectionId={targetSession.Id}");
             return true;
         }
 
+        RelayLogger.Warn($"Local client delivery failed. instanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, connectionId={targetSession.Id}");
         this.RemoveConnectedClient(targetSession);
         return false;
     }
@@ -772,6 +802,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         {
             try
             {
+                RelayLogger.Debug($"Client location request started. sourceInstanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}, sourceClientId={sourceClientId}, targetClientId={targetClientId}");
                 Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
                 await SocketFactory.ConnectAsync(socket, IPAddress.Parse(endpoint.Host), endpoint.Port);
                 using SecureSocketConnection connection =
@@ -791,19 +822,23 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                         frame.MessageId == ControlMessageIds.ClientLocationNotFound) &&
                     ControlProtocol.TryDecode(frame, frame.MessageId, out ClientLocationResponse response))
                 {
+                    RelayLogger.Info($"Client location response received. sourceInstanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}, targetClientId={targetClientId}, success={response.Success}, targetInstanceId={response.InstanceId}");
                     return response;
                 }
             }
             catch (SocketException exception)
             {
                 Logger.Warn($"Client location request failed. endpoint={endpoint.Host}:{endpoint.Port}, targetClientId={targetClientId}", exception);
+                RelayLogger.Warn($"Client location request failed. sourceInstanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}, targetClientId={targetClientId}", exception);
             }
             catch (TimeoutException exception)
             {
                 Logger.Warn($"Client location request timed out. endpoint={endpoint.Host}:{endpoint.Port}, targetClientId={targetClientId}", exception);
+                RelayLogger.Warn($"Client location request timed out. sourceInstanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}, targetClientId={targetClientId}", exception);
             }
         }
 
+        RelayLogger.Warn($"Client location request exhausted. sourceInstanceId={this.instanceId}, sourceClientId={sourceClientId}, targetClientId={targetClientId}");
         return new ClientLocationResponse
         {
             Success = false,
@@ -842,6 +877,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     {
         try
         {
+            RelayLogger.Info($"Server relay send started. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
             Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
             await SocketFactory.ConnectAsync(socket, IPAddress.Parse(host), port);
             using SecureSocketConnection connection =
@@ -851,41 +887,49 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 ClientMessageProtocol.CreateRelay(this.clusterId, this.instanceId, request));
             if (!success)
             {
+                RelayLogger.Warn($"Server relay send failed without response. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}");
                 return (false, targetInstanceId, "Target server did not respond to relay.");
             }
 
             if (frame.MessageId == ServerRelayMessageIds.ServerRelayAck &&
                 ClientMessageProtocol.TryDecode(frame, ServerRelayMessageIds.ServerRelayAck, out ClientMessageAck _))
             {
+                RelayLogger.Info($"Server relay send acknowledged. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}");
                 return (true, targetInstanceId, "");
             }
 
             if (frame.MessageId == ServerRelayMessageIds.ServerRelayError &&
                 ClientMessageProtocol.TryDecode(frame, ServerRelayMessageIds.ServerRelayError, out ClientMessageError error))
             {
+                RelayLogger.Warn($"Server relay send returned error. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}, errorCode={error.ErrorCode}, error={error.ErrorMessage}");
                 return (false, targetInstanceId, error.ErrorMessage);
             }
 
+            RelayLogger.Warn($"Server relay send returned invalid response. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}, messageId={frame.MessageId}");
             return (false, targetInstanceId, "Target server returned an invalid relay response.");
         }
         catch (SocketException exception)
         {
             Logger.Warn($"Server relay failed. target={host}:{port}, targetClientId={request.TargetClientId}", exception);
+            RelayLogger.Warn($"Server relay socket failed. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}", exception);
             return (false, targetInstanceId, "Target server relay socket failed.");
         }
         catch (IOException exception)
         {
             Logger.Warn($"Server relay I/O failed. target={host}:{port}, targetClientId={request.TargetClientId}", exception);
+            RelayLogger.Warn($"Server relay I/O failed. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}", exception);
             return (false, targetInstanceId, "Target server relay I/O failed.");
         }
         catch (AuthenticationException exception)
         {
             Logger.Warn($"Server relay authentication failed. target={host}:{port}, targetClientId={request.TargetClientId}", exception);
+            RelayLogger.Warn($"Server relay authentication failed. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}", exception);
             return (false, targetInstanceId, "Target server relay authentication failed.");
         }
         catch (TimeoutException exception)
         {
             Logger.Warn($"Server relay timed out. target={host}:{port}, targetClientId={request.TargetClientId}", exception);
+            RelayLogger.Warn($"Server relay timed out. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}", exception);
             return (false, targetInstanceId, "Target server relay timed out.");
         }
     }
@@ -897,8 +941,10 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         BackendServerSnapshot[] servers = this.relayServers.Values
             .Where(IsRelayCandidate)
             .ToArray();
+        RelayLogger.Info($"Broadcast relay started. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, candidateCount={servers.Length}");
         if (servers.Length == 0)
         {
+            RelayLogger.Warn($"Broadcast relay skipped. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, reason=NoRelayCandidates");
             return (false, "", "No known relay SocketServer instances.");
         }
 
@@ -910,10 +956,12 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             results.FirstOrDefault(result => result.Success);
         if (delivered.Success)
         {
+            RelayLogger.Info($"Broadcast relay delivered. sourceInstanceId={this.instanceId}, targetInstanceId={delivered.TargetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
             return delivered;
         }
 
         string errorMessage = results.FirstOrDefault(result => !string.IsNullOrWhiteSpace(result.ErrorMessage)).ErrorMessage;
+        RelayLogger.Warn($"Broadcast relay failed. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, candidateCount={servers.Length}, error={errorMessage}");
         return (false, "", string.IsNullOrWhiteSpace(errorMessage)
             ? "No relay SocketServer delivered the message."
             : errorMessage);

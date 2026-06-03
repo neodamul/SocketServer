@@ -4,7 +4,9 @@ using System.Reflection;
 using log4net;
 using log4net.Appender;
 using log4net.Config;
+using log4net.Core;
 using log4net.Layout;
+using log4net.Repository.Hierarchy;
 
 namespace SocketCommon.Logging;
 
@@ -30,20 +32,61 @@ public static class LogConfigurator
             }
             else
             {
-                PatternLayout layout = new("%date %-5level [%thread] %logger - %message%newline%exception");
-                layout.ActivateOptions();
-
-                ConsoleAppender appender = new()
-                {
-                    Layout = layout
-                };
-                appender.ActivateOptions();
-
-                BasicConfigurator.Configure(GetRepository(), appender);
+                ConfigureFallback(GetRepository());
             }
 
             configured = true;
         }
+    }
+
+    private static void ConfigureFallback(log4net.Repository.ILoggerRepository repository)
+    {
+        PatternLayout layout = CreateLayout();
+        ConsoleAppender consoleAppender = new()
+        {
+            Layout = layout,
+            Threshold = Level.Info
+        };
+        consoleAppender.ActivateOptions();
+
+        RollingFileAppender generalAppender = CreateRollingFileAppender("FallbackRollingFileAppender", "logs/socket.log");
+        BasicConfigurator.Configure(repository, consoleAppender, generalAppender);
+
+        if (repository is not Hierarchy hierarchy)
+        {
+            return;
+        }
+
+        RollingFileAppender relayAppender = CreateRollingFileAppender("FallbackRelayRollingFileAppender", "logs/socket.relay.log");
+        Logger relayLogger = (Logger)hierarchy.GetLogger("SocketRelay");
+        relayLogger.Level = Level.Debug;
+        relayLogger.Additivity = false;
+        relayLogger.AddAppender(relayAppender);
+        hierarchy.Configured = true;
+    }
+
+    private static PatternLayout CreateLayout()
+    {
+        PatternLayout layout = new("%date %-5level [%thread] %logger - %message%newline%exception");
+        layout.ActivateOptions();
+        return layout;
+    }
+
+    private static RollingFileAppender CreateRollingFileAppender(string name, string file)
+    {
+        RollingFileAppender appender = new()
+        {
+            Name = name,
+            File = file,
+            AppendToFile = true,
+            RollingStyle = RollingFileAppender.RollingMode.Size,
+            MaxSizeRollBackups = 5,
+            MaximumFileSize = "10MB",
+            StaticLogFileName = true,
+            Layout = CreateLayout()
+        };
+        appender.ActivateOptions();
+        return appender;
     }
 
     private static void EnsureLogDirectories()

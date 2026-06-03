@@ -139,6 +139,7 @@ public class TcpClient : IClient, IDisposable
         {
             try
             {
+                Logger.Info($"ControlServer route request started. clientId={this.ClientId}, endpoint={endpoint}");
                 Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family);
                 await SocketFactory.ConnectAsync(controlSocket, endpoint.Address, endpoint.Port);
                 using SecureSocketConnection controlConnection =
@@ -157,9 +158,11 @@ public class TcpClient : IClient, IDisposable
                     !ControlProtocol.TryDecode(frame, ControlMessageIds.RouteResponse, out RouteResponse response) ||
                     !response.Success)
                 {
+                    Logger.Warn($"ControlServer route request did not return usable server. clientId={this.ClientId}, endpoint={endpoint}, success={success}");
                     continue;
                 }
 
+                Logger.Info($"ControlServer route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={response.InstanceId}, serverEndpoint={response.Host}:{response.Port}, reservationId={response.ReservationId}");
                 this.SetIpAddress(response.Host);
                 this.SetPort(response.Port);
                 return this.Connect();
@@ -385,13 +388,17 @@ public class TcpClient : IClient, IDisposable
 
         if (!await ClientMessageProtocol.SendRegisterAsync(this.Connection, this.ClientId))
         {
+            Logger.Warn($"Client register send failed. clientId={this.ClientId}");
             return false;
         }
 
+        Logger.Info($"Client register request sent. clientId={this.ClientId}");
         (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Connection);
-        return success &&
+        bool registered = success &&
             ClientMessageProtocol.TryDecodeRegisterAck(frame, out ClientRegisterAck ack) &&
             ack.Success;
+        Logger.Info($"Client register response received. clientId={this.ClientId}, success={registered}");
+        return registered;
     }
 
     public async Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> SendClientMessageAsync(
@@ -416,8 +423,10 @@ public class TcpClient : IClient, IDisposable
             targetClientId,
             content,
             ttlSeconds: ttlSeconds);
+        Logger.Info($"Client message send started. clientId={this.ClientId}, targetClientId={targetClientId}, messageToken={request.MessageToken}, ttlSeconds={ttlSeconds}");
         if (!await ClientMessageProtocol.SendClientMessageAsync(this.Connection, request))
         {
+            Logger.Warn($"Client message send failed before response. clientId={this.ClientId}, targetClientId={targetClientId}, messageToken={request.MessageToken}");
             return (false, null, new ClientMessageError
             {
                 MessageToken = request.MessageToken,
@@ -431,6 +440,7 @@ public class TcpClient : IClient, IDisposable
         (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Connection);
         if (!success)
         {
+            Logger.Warn($"Client message response not received. clientId={this.ClientId}, targetClientId={targetClientId}, messageToken={request.MessageToken}");
             return (false, null, new ClientMessageError
             {
                 MessageToken = request.MessageToken,
@@ -443,14 +453,17 @@ public class TcpClient : IClient, IDisposable
 
         if (ClientMessageProtocol.TryDecodeAck(frame, out ClientMessageAck ack))
         {
+            Logger.Info($"Client message ack received. clientId={this.ClientId}, targetClientId={targetClientId}, messageToken={request.MessageToken}, delivered={ack.Delivered}, targetInstanceId={ack.TargetInstanceId}");
             return (ack.Delivered, ack, null);
         }
 
         if (ClientMessageProtocol.TryDecodeError(frame, out ClientMessageError error))
         {
+            Logger.Warn($"Client message error received. clientId={this.ClientId}, targetClientId={targetClientId}, messageToken={request.MessageToken}, errorCode={error.ErrorCode}, error={error.ErrorMessage}");
             return (false, null, error);
         }
 
+        Logger.Warn($"Client message invalid response received. clientId={this.ClientId}, targetClientId={targetClientId}, messageToken={request.MessageToken}, messageId={frame.MessageId}");
         return (false, null, new ClientMessageError
         {
             MessageToken = request.MessageToken,
@@ -471,9 +484,11 @@ public class TcpClient : IClient, IDisposable
         (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Connection);
         if (!success || !ClientMessageProtocol.TryDecodeDelivery(frame, out ClientMessageDelivery delivery))
         {
+            Logger.Debug($"Client message delivery receive skipped. clientId={this.ClientId}, success={success}");
             return (false, null);
         }
 
+        Logger.Info($"Client message delivery received. clientId={this.ClientId}, sourceClientId={delivery.SourceClientId}, targetClientId={delivery.TargetClientId}, messageToken={delivery.MessageToken}");
         return (true, delivery);
     }
 

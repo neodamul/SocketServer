@@ -42,6 +42,7 @@ dotnet test SocketTests/SocketTests.csproj
 - dashboard liveness, readiness, metrics models
 - sample client settings and client-to-client message flow
 - native Android sample protocol validation script
+- project log4net configuration and separate relay log appender
 
 ## Load Test
 
@@ -71,6 +72,14 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --b
 - `--healthcheck-timeout-seconds`: healthcheck 응답 timeout
 - `--message-timeout-seconds`: client message delivery/ack timeout
 - `--report-file`: 실행 옵션, counters, elapsed time을 JSON 파일로 저장
+
+## Log Analysis
+
+테스트 실행 후 `bin/Debug/net9.0/logs/` 또는 실행 프로젝트의 `logs/`에서 결과를 확인합니다.
+
+- 일반 로그는 lifecycle, route, healthcheck, cleanup, register/ack 상태를 확인합니다.
+- relay 로그는 client message token 기준으로 local delivery, broadcast relay, targeted relay, ControlServer peer sync 흐름을 추적합니다.
+- 통합테스트 실패 시 source/target client id, message token, instance id, reservation id를 함께 검색하면 어느 서버 또는 ControlServer 단계에서 실패했는지 확인할 수 있습니다.
 
 기본 batch size는 100개 단위 증가입니다. 10,000개 이상 검증은 OS와 장비 설정을 먼저 확인해야 합니다.
 
