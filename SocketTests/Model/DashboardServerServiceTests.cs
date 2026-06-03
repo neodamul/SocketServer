@@ -101,6 +101,8 @@ public class DashboardServerServiceTests
         Assert.IsTrue(appJs.Contains("function buildControlServerRow(server)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("renderServers(status.cluster.servers, server, status.controlServers)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("function renderSelectedServer(server)", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("function sortByInstanceDescending(servers)", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("const rows = [dashboardRow, ...sortByInstanceDescending(controlRows), ...sortByInstanceDescending(socketRows)];", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("data-row-key", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("selected-row", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("fields.clusterServers?.addEventListener(\"click\"", StringComparison.Ordinal));

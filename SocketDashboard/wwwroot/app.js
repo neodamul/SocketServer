@@ -82,6 +82,11 @@ function serverRowKey(server) {
   return `${server.type}:${server.instanceId}:${server.host}:${server.port}`;
 }
 
+function sortByInstanceDescending(servers) {
+  return [...servers].sort((left, right) =>
+    String(right.instanceId).localeCompare(String(left.instanceId), undefined, { numeric: true }));
+}
+
 function buildDashboardServerRow(server) {
   return {
     type: "Dashboard",
@@ -205,7 +210,7 @@ function renderServers(clusterServers, dashboardServer, controlServers) {
   const socketRows = (clusterServers || [])
     .filter(server => !sameEndpoint(server, dashboardRow))
     .map(buildSocketServerRow);
-  const rows = [...controlRows, ...socketRows, dashboardRow];
+  const rows = [dashboardRow, ...sortByInstanceDescending(controlRows), ...sortByInstanceDescending(socketRows)];
   currentInventoryRows = rows.map(server => ({
     ...server,
     key: serverRowKey(server)
