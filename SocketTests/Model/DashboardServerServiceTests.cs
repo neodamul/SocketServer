@@ -1,5 +1,6 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using SocketCommon.Configuration;
@@ -58,6 +59,24 @@ public class DashboardServerServiceTests
         Assert.AreEqual(TcpServer.DefaultMaxConnections, metrics.TotalMaxConnections);
         Assert.IsTrue(metrics.SocketAsyncEventArgsAvailableCount >= 0);
         Assert.IsTrue(metrics.SocketAsyncEventArgsHighWatermarkInUseCount >= 0);
+    }
+
+    [TestMethod]
+    public void DashboardStaticAssetsConfigureSelectableThirtySecondRefreshTest()
+    {
+        string solutionRoot = FindSolutionRoot();
+        string indexHtml = File.ReadAllText(Path.Combine(solutionRoot, "SocketDashboard/wwwroot/index.html"));
+        string appJs = File.ReadAllText(Path.Combine(solutionRoot, "SocketDashboard/wwwroot/app.js"));
+
+        Assert.IsTrue(indexHtml.Contains("id=\"refreshIntervalSeconds\"", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("<option value=\"30\" selected>30s</option>", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("<option value=\"5\">5s</option>", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("<option value=\"10\">10s</option>", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("<option value=\"60\">60s</option>", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("const DEFAULT_REFRESH_SECONDS = 30;", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("getRefreshIntervalMilliseconds()", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("scheduleRefresh()", StringComparison.Ordinal));
+        Assert.IsFalse(appJs.Contains("setInterval(refresh, 1000)", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -233,5 +252,21 @@ public class DashboardServerServiceTests
 
         Assert.Fail("Timed out waiting for dashboard status.");
         return status;
+    }
+
+    private static string FindSolutionRoot()
+    {
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
+        while (directory != null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "SocketServer.sln")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("SocketServer.sln was not found from the test output path.");
     }
 }

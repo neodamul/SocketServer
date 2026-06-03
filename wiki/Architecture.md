@@ -108,6 +108,7 @@ ControlServer가 재시작되면 저장된 registry를 로드하되, heartbeat t
 ## Dashboard
 
 Dashboard는 ControlServer registry snapshot을 조회해 전체 SocketServer 정보를 표시합니다. Dashboard 내부 서버 상태는 ControlServer 연결 여부와 무관하게 별도 그룹과 서버 목록에 항상 함께 표시됩니다. ControlServer가 없으면 로컬 Dashboard server 상태를 fallback cluster로 사용합니다.
+브라우저 UI는 기본 30초 간격으로 상태 API를 갱신하고, 사용자가 refresh interval 콤보에서 5초, 10초, 30초, 60초 중 하나를 선택할 수 있습니다.
 
 표시 항목:
 

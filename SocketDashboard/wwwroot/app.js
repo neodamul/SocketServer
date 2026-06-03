@@ -1,4 +1,5 @@
 const fields = {
+  refreshIntervalSeconds: document.getElementById("refreshIntervalSeconds"),
   health: document.getElementById("health"),
   isListening: document.getElementById("isListening"),
   acceptLoop: document.getElementById("acceptLoop"),
@@ -29,6 +30,10 @@ const fields = {
   startedAt: document.getElementById("startedAt"),
   updatedAt: document.getElementById("updatedAt")
 };
+
+const DEFAULT_REFRESH_SECONDS = 30;
+let refreshTimer = null;
+let refreshInFlight = false;
 
 function yesNo(value) {
   return value ? "ON" : "OFF";
@@ -102,6 +107,11 @@ function renderServers(clusterServers, dashboardServer) {
 }
 
 async function refresh() {
+  if (refreshInFlight) {
+    return;
+  }
+
+  refreshInFlight = true;
   try {
     const response = await fetch("/api/server/status", { cache: "no-store" });
     if (!response.ok) {
@@ -142,8 +152,31 @@ async function refresh() {
     fields.updatedAt.textContent = localTime(server.updatedAt);
   } catch {
     setHealth(false);
+  } finally {
+    refreshInFlight = false;
   }
 }
 
+function getRefreshIntervalMilliseconds() {
+  const selectedSeconds = Number(fields.refreshIntervalSeconds?.value);
+  const seconds = Number.isFinite(selectedSeconds) && selectedSeconds > 0
+    ? selectedSeconds
+    : DEFAULT_REFRESH_SECONDS;
+  return seconds * 1000;
+}
+
+function scheduleRefresh() {
+  if (refreshTimer !== null) {
+    clearInterval(refreshTimer);
+  }
+
+  refreshTimer = setInterval(refresh, getRefreshIntervalMilliseconds());
+}
+
+fields.refreshIntervalSeconds?.addEventListener("change", () => {
+  scheduleRefresh();
+  refresh();
+});
+
 refresh();
-setInterval(refresh, 1000);
+scheduleRefresh();

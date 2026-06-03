@@ -53,6 +53,38 @@ p {
   font-size: 14px;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.refresh-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.refresh-control span {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.refresh-control select {
+  min-width: 76px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+}
+
 .status-pill {
   min-width: 116px;
   padding: 8px 12px;
@@ -164,6 +196,11 @@ tbody tr:last-child td {
     flex-direction: column;
   }
 
+  .topbar-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
   .metrics,
   .details {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -171,6 +208,19 @@ tbody tr:last-child td {
 }
 
 @media (max-width: 520px) {
+  .topbar-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .refresh-control {
+    justify-content: space-between;
+  }
+
+  .status-pill {
+    width: 100%;
+  }
+
   .metrics,
   .details {
     grid-template-columns: 1fr;

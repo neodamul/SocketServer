@@ -13,7 +13,18 @@
         <h1>SocketServer Dashboard</h1>
         <p id="endpoint">/api/server/status</p>
       </div>
-      <div class="status-pill" id="health">Connecting</div>
+      <div class="topbar-actions">
+        <label class="refresh-control" for="refreshIntervalSeconds">
+          <span>Refresh</span>
+          <select id="refreshIntervalSeconds" aria-label="Dashboard refresh interval">
+            <option value="5">5s</option>
+            <option value="10">10s</option>
+            <option value="30" selected>30s</option>
+            <option value="60">60s</option>
+          </select>
+        </label>
+        <div class="status-pill" id="health">Connecting</div>
+      </div>
     </header>
 
     <section class="section-block" aria-label="Cluster summary">
