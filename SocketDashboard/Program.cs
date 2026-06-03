@@ -1,5 +1,7 @@
 ﻿using SocketDashboard.Model;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,13 +21,7 @@ if (String.IsNullOrEmpty(builder.Configuration["urls"]) &&
     builder.WebHost.UseUrls("http://127.0.0.1:5080");
 }
 
-EndpointConfig controlEndpoint = new()
-{
-    Host = builder.Configuration["dashboard:controlServer:host"] ?? Constants.LocalHostIpAddress,
-    Port = Int32.TryParse(builder.Configuration["dashboard:controlServer:port"], out int controlPort)
-        ? controlPort
-        : Constants.LocalHostPort
-};
+IReadOnlyCollection<EndpointConfig> controlEndpoints = ReadControlEndpoints(builder);
 SocketFactory.Configure(new SocketOperationConfig
 {
     ConnectTimeoutSeconds = Int32.TryParse(builder.Configuration["dashboard:socketOptions:connectTimeoutSeconds"], out int connectTimeoutSeconds)
@@ -39,7 +35,7 @@ SocketFactory.Configure(new SocketOperationConfig
         : SocketFactory.DefaultOperationTimeoutSeconds
 });
 
-builder.Services.AddSingleton(_ => new DashboardServerService(0, controlEndpoint));
+builder.Services.AddSingleton(_ => new DashboardServerService(0, controlEndpoints));
 
 WebApplication app = builder.Build();
 
@@ -53,3 +49,34 @@ app.MapGet("/metrics", (DashboardServerService serverService) => serverService.G
 
 logger.Info("SocketDashboard starting.");
 app.Run();
+
+static IReadOnlyCollection<EndpointConfig> ReadControlEndpoints(WebApplicationBuilder builder)
+{
+    EndpointConfig[] endpoints = builder.Configuration
+        .GetSection("dashboard:controlServers")
+        .GetChildren()
+        .Select(section => new EndpointConfig
+        {
+            Host = section["host"] ?? Constants.LocalHostIpAddress,
+            Port = Int32.TryParse(section["port"], out int port) ? port : Constants.LocalHostPort
+        })
+        .Where(endpoint => endpoint.Port > 0)
+        .GroupBy(endpoint => $"{endpoint.Host}:{endpoint.Port}", StringComparer.OrdinalIgnoreCase)
+        .Select(group => group.First())
+        .ToArray();
+    if (endpoints.Length > 0)
+    {
+        return endpoints;
+    }
+
+    return new[]
+    {
+        new EndpointConfig
+        {
+            Host = builder.Configuration["dashboard:controlServer:host"] ?? Constants.LocalHostIpAddress,
+            Port = Int32.TryParse(builder.Configuration["dashboard:controlServer:port"], out int controlPort)
+                ? controlPort
+                : Constants.LocalHostPort
+        }
+    };
+}

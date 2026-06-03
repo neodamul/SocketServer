@@ -3,6 +3,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using SocketCommon;
 using SocketCommon.Configuration;
 using SocketCommon.Model;
 using SocketControl.Model;
@@ -39,6 +40,9 @@ public class DashboardServerServiceTests
         Assert.IsTrue(status.Server.SocketAsyncEventArgsHighWatermarkInUseCount >= 0);
         Assert.IsTrue(status.Server.Port > 0);
         Assert.AreEqual(1, status.Cluster.ServerCount);
+        Assert.AreEqual(1, status.ControlServers.Count);
+        Assert.AreEqual("127.0.0.1", status.ControlServers.First().Host);
+        Assert.AreEqual(Constants.LocalHostPort, status.ControlServers.First().Port);
     }
 
     [TestMethod]
@@ -69,6 +73,9 @@ public class DashboardServerServiceTests
         string appJs = File.ReadAllText(Path.Combine(solutionRoot, "SocketDashboard/wwwroot/app.js"));
 
         Assert.IsTrue(indexHtml.Contains("id=\"refreshIntervalSeconds\"", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("Control Servers", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("id=\"controlServerInventoryCount\"", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("id=\"controlServers\"", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<option value=\"30\" selected>30s</option>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<option value=\"5\">5s</option>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<option value=\"10\">10s</option>", StringComparison.Ordinal));
@@ -77,6 +84,7 @@ public class DashboardServerServiceTests
             indexHtml.IndexOf("Dashboard Details", StringComparison.Ordinal) <
                 indexHtml.IndexOf("Server Inventory", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("const DEFAULT_REFRESH_SECONDS = 30;", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("renderControlServers(status.controlServers)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("getRefreshIntervalMilliseconds()", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("scheduleRefresh()", StringComparison.Ordinal));
         Assert.IsFalse(appJs.Contains("setInterval(refresh, 1000)", StringComparison.Ordinal));
@@ -123,6 +131,10 @@ public class DashboardServerServiceTests
         Assert.AreEqual("server-dashboard", status.Cluster.Servers.First().InstanceId);
         Assert.AreEqual("dashboardServer", status.Server.InstanceId);
         Assert.IsTrue(status.Server.IsListening);
+        Assert.AreEqual(1, status.ControlServers.Count);
+        Assert.IsTrue(status.ControlServers.First().IsHealthy);
+        Assert.AreEqual("Healthy", status.ControlServers.First().Status);
+        Assert.AreEqual(1, status.ControlServers.First().ServerCount);
     }
 
     [TestMethod]

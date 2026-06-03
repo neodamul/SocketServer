@@ -76,6 +76,27 @@ SocketTests/log4net.config
 - `readTimeoutSeconds`: frame header/payload 읽기 제한 시간
 - `writeTimeoutSeconds`: frame write/flush 제한 시간
 
+## Dashboard
+
+`SocketDashboard/appsettings.json`은 조회할 ControlServer endpoint를 설정합니다. `dashboard.controlServers` 배열을 사용하면 여러 ControlServer를 대시보드에 항상 목록으로 표시하고, 각 endpoint별 조회 상태를 확인할 수 있습니다. 기존 단일 `dashboard.controlServer` 설정은 fallback으로 유지됩니다.
+
+```json
+{
+  "dashboard": {
+    "controlServers": [
+      {
+        "host": "127.0.0.1",
+        "port": 5000
+      },
+      {
+        "host": "127.0.0.1",
+        "port": 5002
+      }
+    ]
+  }
+}
+```
+
 ## Certificates
 
 각 모듈은 최초 TLS 연결 시 로컬 인증서를 자동 생성합니다. Root CA는 하나만 만들고, 모듈별 leaf 인증서는 이 Root CA로 서명합니다.

@@ -1,5 +1,7 @@
 ﻿using System;
 using System.IO;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Authentication;
@@ -18,7 +20,7 @@ public class DashboardServerService : IDisposable
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<DashboardServerService>();
 
     private readonly TcpServer server;
-    private readonly EndpointConfig controlEndpoint;
+    private readonly IReadOnlyCollection<EndpointConfig> controlEndpoints;
     private bool disposedValue;
 
     public DashboardServerService()
@@ -32,9 +34,14 @@ public class DashboardServerService : IDisposable
     }
 
     public DashboardServerService(int port, EndpointConfig controlEndpoint)
+        : this(port, new[] { controlEndpoint })
+    {
+    }
+
+    public DashboardServerService(int port, IEnumerable<EndpointConfig> controlEndpoints)
     {
         this.StartedAt = DateTimeOffset.UtcNow;
-        this.controlEndpoint = controlEndpoint;
+        this.controlEndpoints = NormalizeControlEndpoints(controlEndpoints).ToArray();
         this.server = new TcpServer(1, "dashboardServer", Constants.LocalHostIpAddress, port);
         this.StartSucceeded = this.server.Start() && this.server.StartClientAcceptLoop();
         Logger.Info($"Dashboard server service started. port={port}, success={this.StartSucceeded}");
@@ -46,12 +53,15 @@ public class DashboardServerService : IDisposable
 
     public DashboardServerStatus GetStatus()
     {
+        TcpServerStatus serverStatus = this.server.GetStatus();
+        ControlServerQueryResult controlStatus = this.GetControlServerStatuses();
         return new DashboardServerStatus
         {
             DashboardStartedAt = this.StartedAt,
             StartSucceeded = this.StartSucceeded,
-            Server = this.server.GetStatus(),
-            Cluster = this.GetControlClusterStatus() ?? BuildClusterStatus(this.server.GetStatus())
+            Server = serverStatus,
+            Cluster = controlStatus.Cluster ?? BuildClusterStatus(serverStatus),
+            ControlServers = controlStatus.ControlServers
         };
     }
 
@@ -116,28 +126,56 @@ public class DashboardServerService : IDisposable
         };
     }
 
-    private ClusterStatusSnapshot? GetControlClusterStatus()
+    private ControlServerQueryResult GetControlServerStatuses()
     {
-        try
+        List<DashboardControlServerStatus> controlServers = new();
+        ClusterStatusSnapshot? firstHealthyCluster = null;
+        foreach (EndpointConfig endpoint in this.controlEndpoints)
         {
-            return QueryControlClusterStatusAsync(new EndpointConfig
+            DateTimeOffset checkedAt = DateTimeOffset.UtcNow;
+            try
             {
-                Host = this.controlEndpoint.Host,
-                Port = this.controlEndpoint.Port
-            }).GetAwaiter().GetResult();
+                ClusterStatusSnapshot? snapshot = QueryControlClusterStatusAsync(new EndpointConfig
+                {
+                    Host = endpoint.Host,
+                    Port = endpoint.Port
+                }).GetAwaiter().GetResult();
+                if (snapshot == null)
+                {
+                    controlServers.Add(CreateControlServerStatus(endpoint, false, "NoResponse", checkedAt, null, "Registry snapshot was not returned."));
+                    continue;
+                }
+
+                firstHealthyCluster ??= snapshot;
+                controlServers.Add(CreateControlServerStatus(endpoint, true, "Healthy", checkedAt, snapshot, ""));
+            }
+            catch (SocketException exception)
+            {
+                controlServers.Add(CreateControlServerStatus(endpoint, false, "Unavailable", checkedAt, null, exception.Message));
+            }
+            catch (IOException exception)
+            {
+                controlServers.Add(CreateControlServerStatus(endpoint, false, "Unavailable", checkedAt, null, exception.Message));
+            }
+            catch (AuthenticationException exception)
+            {
+                controlServers.Add(CreateControlServerStatus(endpoint, false, "AuthenticationFailed", checkedAt, null, exception.Message));
+            }
+            catch (TimeoutException exception)
+            {
+                controlServers.Add(CreateControlServerStatus(endpoint, false, "Timeout", checkedAt, null, exception.Message));
+            }
+            catch (FormatException exception)
+            {
+                controlServers.Add(CreateControlServerStatus(endpoint, false, "InvalidEndpoint", checkedAt, null, exception.Message));
+            }
         }
-        catch (SocketException)
+
+        return new ControlServerQueryResult
         {
-            return null;
-        }
-        catch (IOException)
-        {
-            return null;
-        }
-        catch (AuthenticationException)
-        {
-            return null;
-        }
+            Cluster = firstHealthyCluster,
+            ControlServers = controlServers
+        };
     }
 
     private static async Task<ClusterStatusSnapshot?> QueryControlClusterStatusAsync(EndpointConfig endpoint)
@@ -159,6 +197,47 @@ public class DashboardServerService : IDisposable
         }
 
         return snapshot;
+    }
+
+    private static DashboardControlServerStatus CreateControlServerStatus(
+        EndpointConfig endpoint,
+        bool isHealthy,
+        string status,
+        DateTimeOffset checkedAt,
+        ClusterStatusSnapshot? snapshot,
+        string errorMessage)
+    {
+        return new DashboardControlServerStatus
+        {
+            Host = endpoint.Host,
+            Port = endpoint.Port,
+            IsHealthy = isHealthy,
+            Status = status,
+            ServerCount = snapshot?.ServerCount ?? 0,
+            HealthyServerCount = snapshot?.HealthyServerCount ?? 0,
+            TotalCurrentConnections = snapshot?.TotalCurrentConnections ?? 0,
+            TotalAvailableConnections = snapshot?.TotalAvailableConnections ?? 0,
+            TotalSessionCount = snapshot?.TotalSessionCount ?? 0,
+            CheckedAt = checkedAt,
+            ErrorMessage = errorMessage
+        };
+    }
+
+    private static IEnumerable<EndpointConfig> NormalizeControlEndpoints(IEnumerable<EndpointConfig> endpoints)
+    {
+        EndpointConfig[] normalized = (endpoints ?? Array.Empty<EndpointConfig>())
+            .Where(endpoint => endpoint != null)
+            .Select(endpoint => new EndpointConfig
+            {
+                Host = string.IsNullOrWhiteSpace(endpoint.Host) ? Constants.LocalHostIpAddress : endpoint.Host,
+                Port = endpoint.Port <= 0 ? Constants.LocalHostPort : endpoint.Port
+            })
+            .GroupBy(endpoint => $"{endpoint.Host}:{endpoint.Port}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+        return normalized.Length == 0
+            ? new[] { new EndpointConfig { Host = Constants.LocalHostIpAddress, Port = Constants.LocalHostPort } }
+            : normalized;
     }
 
     private static ClusterStatusSnapshot BuildClusterStatus(TcpServerStatus status)
@@ -214,6 +293,40 @@ public class DashboardServerStatus
     public TcpServerStatus Server { get; init; } = new();
 
     public ClusterStatusSnapshot Cluster { get; init; } = new();
+
+    public IReadOnlyCollection<DashboardControlServerStatus> ControlServers { get; init; } = Array.Empty<DashboardControlServerStatus>();
+}
+
+public class DashboardControlServerStatus
+{
+    public string Host { get; init; } = "";
+
+    public int Port { get; init; }
+
+    public bool IsHealthy { get; init; }
+
+    public string Status { get; init; } = "";
+
+    public int ServerCount { get; init; }
+
+    public int HealthyServerCount { get; init; }
+
+    public int TotalCurrentConnections { get; init; }
+
+    public int TotalAvailableConnections { get; init; }
+
+    public int TotalSessionCount { get; init; }
+
+    public DateTimeOffset CheckedAt { get; init; }
+
+    public string ErrorMessage { get; init; } = "";
+}
+
+internal sealed class ControlServerQueryResult
+{
+    public ClusterStatusSnapshot? Cluster { get; init; }
+
+    public IReadOnlyCollection<DashboardControlServerStatus> ControlServers { get; init; } = Array.Empty<DashboardControlServerStatus>();
 }
 
 public class DashboardHealthStatus

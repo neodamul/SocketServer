@@ -16,6 +16,8 @@ const fields = {
   totalCurrentConnections: document.getElementById("totalCurrentConnections"),
   totalAvailableConnections: document.getElementById("totalAvailableConnections"),
   serverInventoryCount: document.getElementById("serverInventoryCount"),
+  controlServerInventoryCount: document.getElementById("controlServerInventoryCount"),
+  controlServers: document.getElementById("controlServers"),
   clusterServers: document.getElementById("clusterServers"),
   address: document.getElementById("address"),
   backlog: document.getElementById("backlog"),
@@ -106,6 +108,29 @@ function renderServers(clusterServers, dashboardServer) {
   `).join("");
 }
 
+function renderControlServers(controlServers) {
+  const rows = controlServers || [];
+  fields.controlServerInventoryCount.textContent = rows.length;
+
+  if (rows.length === 0) {
+    fields.controlServers.innerHTML = "<tr><td colspan=\"8\">-</td></tr>";
+    return;
+  }
+
+  fields.controlServers.innerHTML = rows.map(server => `
+    <tr>
+      <td>${server.host}:${server.port}</td>
+      <td>${server.status}</td>
+      <td>${server.serverCount}</td>
+      <td>${server.healthyServerCount}</td>
+      <td>${server.totalCurrentConnections}</td>
+      <td>${server.totalAvailableConnections}</td>
+      <td>${server.totalSessionCount}</td>
+      <td>${localTime(server.checkedAt)}</td>
+    </tr>
+  `).join("");
+}
+
 async function refresh() {
   if (refreshInFlight) {
     return;
@@ -137,6 +162,7 @@ async function refresh() {
     fields.totalMaxConnections.textContent = status.cluster.totalMaxConnections;
     fields.totalCurrentConnections.textContent = status.cluster.totalCurrentConnections;
     fields.totalAvailableConnections.textContent = status.cluster.totalAvailableConnections;
+    renderControlServers(status.controlServers);
     renderServers(status.cluster.servers, server);
     fields.address.textContent = `${server.ipAddress}:${server.port}`;
     fields.backlog.textContent = server.listenBacklog;
