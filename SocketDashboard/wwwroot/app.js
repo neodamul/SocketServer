@@ -14,6 +14,7 @@ const fields = {
   totalMaxConnections: document.getElementById("totalMaxConnections"),
   totalCurrentConnections: document.getElementById("totalCurrentConnections"),
   totalAvailableConnections: document.getElementById("totalAvailableConnections"),
+  serverInventoryCount: document.getElementById("serverInventoryCount"),
   clusterServers: document.getElementById("clusterServers"),
   address: document.getElementById("address"),
   backlog: document.getElementById("backlog"),
@@ -44,17 +45,49 @@ function setHealth(ok) {
 }
 
 function percent(value) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+
   return `${Math.round((value || 0) * 10) / 10}%`;
 }
 
-function renderServers(servers) {
-  if (!servers || servers.length === 0) {
-    fields.clusterServers.innerHTML = "<tr><td colspan=\"9\">-</td></tr>";
+function buildDashboardServerRow(server) {
+  return {
+    type: "Dashboard",
+    instanceId: server.instanceId || "dashboardServer",
+    health: server.isListening && server.isAcceptLoopRunning ? "Healthy" : "Unhealthy",
+    host: server.ipAddress,
+    port: server.port,
+    maxConnections: server.maxConnections,
+    currentConnections: server.connectedClientCount,
+    availableConnections: server.availableConnections,
+    resourceUsage: null
+  };
+}
+
+function sameEndpoint(left, right) {
+  return left.instanceId === right.instanceId &&
+    left.host === right.host &&
+    Number(left.port) === Number(right.port);
+}
+
+function renderServers(clusterServers, dashboardServer) {
+  const dashboardRow = buildDashboardServerRow(dashboardServer);
+  const socketRows = (clusterServers || [])
+    .filter(server => !sameEndpoint(server, dashboardRow))
+    .map(server => ({ ...server, type: "SocketServer" }));
+  const rows = [...socketRows, dashboardRow];
+  fields.serverInventoryCount.textContent = rows.length;
+
+  if (rows.length === 0) {
+    fields.clusterServers.innerHTML = "<tr><td colspan=\"10\">-</td></tr>";
     return;
   }
 
-  fields.clusterServers.innerHTML = servers.map(server => `
+  fields.clusterServers.innerHTML = rows.map(server => `
     <tr>
+      <td>${server.type}</td>
       <td>${server.instanceId}</td>
       <td>${server.health}</td>
       <td>${server.host}:${server.port}</td>
@@ -94,7 +127,7 @@ async function refresh() {
     fields.totalMaxConnections.textContent = status.cluster.totalMaxConnections;
     fields.totalCurrentConnections.textContent = status.cluster.totalCurrentConnections;
     fields.totalAvailableConnections.textContent = status.cluster.totalAvailableConnections;
-    renderServers(status.cluster.servers);
+    renderServers(status.cluster.servers, server);
     fields.address.textContent = `${server.ipAddress}:${server.port}`;
     fields.backlog.textContent = server.listenBacklog;
     fields.pendingAcceptCount.textContent = server.pendingAcceptCount;

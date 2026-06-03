@@ -99,6 +99,8 @@ public class DashboardServerServiceTests
         Assert.AreEqual(1, status.Cluster.ServerCount);
         Assert.AreEqual(123, status.Cluster.TotalMaxConnections);
         Assert.AreEqual("server-dashboard", status.Cluster.Servers.First().InstanceId);
+        Assert.AreEqual("dashboardServer", status.Server.InstanceId);
+        Assert.IsTrue(status.Server.IsListening);
     }
 
     [TestMethod]

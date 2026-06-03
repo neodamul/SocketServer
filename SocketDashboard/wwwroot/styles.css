@@ -41,6 +41,12 @@ h1 {
   font-weight: 700;
 }
 
+h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
 p {
   margin: 6px 0 0;
   color: var(--muted);
@@ -68,11 +74,14 @@ p {
   color: var(--bad);
 }
 
+.section-block {
+  margin-top: 18px;
+}
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  margin-top: 18px;
 }
 
 .metrics article,
@@ -103,19 +112,26 @@ strong {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
-  margin-top: 12px;
 }
 
 .details strong {
   font-size: 18px;
 }
 
+.details h2 {
+  grid-column: 1 / -1;
+  margin-bottom: 0;
+}
+
 .server-table {
-  margin-top: 12px;
   overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--panel);
+}
+
+.server-table h2 {
+  padding: 16px 16px 0;
 }
 
 table {

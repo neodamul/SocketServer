@@ -16,7 +16,31 @@
       <div class="status-pill" id="health">Connecting</div>
     </header>
 
-    <section class="metrics" aria-label="Server metrics">
+    <section class="section-block" aria-label="Cluster summary">
+      <h2>Cluster Summary</h2>
+      <div class="metrics">
+        <article>
+          <span>Total Capacity</span>
+          <strong id="totalMaxConnections">-</strong>
+        </article>
+        <article>
+          <span>Total Current</span>
+          <strong id="totalCurrentConnections">-</strong>
+        </article>
+        <article>
+          <span>Total Available</span>
+          <strong id="totalAvailableConnections">-</strong>
+        </article>
+        <article>
+          <span>Servers</span>
+          <strong id="serverInventoryCount">-</strong>
+        </article>
+      </div>
+    </section>
+
+    <section class="section-block" aria-label="Dashboard server">
+      <h2>Dashboard Server</h2>
+      <div class="metrics">
       <article>
         <span>Listening</span>
         <strong id="isListening">-</strong>
@@ -33,6 +57,12 @@
         <span>Max Clients</span>
         <strong id="maxConnections">-</strong>
       </article>
+      </div>
+    </section>
+
+    <section class="section-block" aria-label="Dashboard traffic">
+      <h2>Dashboard Traffic</h2>
+      <div class="metrics">
       <article>
         <span>Accepted</span>
         <strong id="acceptedClients">-</strong>
@@ -57,28 +87,41 @@
         <span>Sent</span>
         <strong id="sentMessages">-</strong>
       </article>
+      </div>
+    </section>
+
+    <section class="section-block" aria-label="Socket runtime">
+      <h2>Socket Runtime</h2>
+      <div class="metrics">
       <article>
         <span>SAEA Pool</span>
         <strong id="saeaPool">-</strong>
       </article>
       <article>
-        <span>Total Capacity</span>
-        <strong id="totalMaxConnections">-</strong>
+        <span>SAEA Created</span>
+        <strong id="saeaCreated">-</strong>
       </article>
       <article>
-        <span>Total Current</span>
-        <strong id="totalCurrentConnections">-</strong>
+        <span>SAEA In Use</span>
+        <strong id="saeaInUse">-</strong>
       </article>
       <article>
-        <span>Total Available</span>
-        <strong id="totalAvailableConnections">-</strong>
+        <span>SAEA High</span>
+        <strong id="saeaHighWatermark">-</strong>
       </article>
+      <article>
+        <span>SAEA Growth</span>
+        <strong id="saeaGrowth">-</strong>
+      </article>
+      </div>
     </section>
 
-    <section class="server-table" aria-label="Cluster servers">
+    <section class="server-table section-block" aria-label="Server inventory">
+      <h2>Server Inventory</h2>
       <table>
         <thead>
           <tr>
+            <th>Type</th>
             <th>Server</th>
             <th>Health</th>
             <th>Endpoint</th>
@@ -92,13 +135,14 @@
         </thead>
         <tbody id="clusterServers">
           <tr>
-            <td colspan="9">-</td>
+            <td colspan="10">-</td>
           </tr>
         </tbody>
       </table>
     </section>
 
-    <section class="details" aria-label="Server details">
+    <section class="details section-block" aria-label="Dashboard server details">
+      <h2>Dashboard Details</h2>
       <div>
         <span>Address</span>
         <strong id="address">-</strong>
@@ -122,22 +166,6 @@
       <div>
         <span>Max Payload</span>
         <strong id="maxPayload">-</strong>
-      </div>
-      <div>
-        <span>SAEA Created</span>
-        <strong id="saeaCreated">-</strong>
-      </div>
-      <div>
-        <span>SAEA In Use</span>
-        <strong id="saeaInUse">-</strong>
-      </div>
-      <div>
-        <span>SAEA High</span>
-        <strong id="saeaHighWatermark">-</strong>
-      </div>
-      <div>
-        <span>SAEA Growth</span>
-        <strong id="saeaGrowth">-</strong>
       </div>
       <div>
         <span>Started</span>
