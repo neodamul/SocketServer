@@ -79,6 +79,7 @@ public class ControlServerReporter : IDisposable
         };
 
         await BroadcastAsync(0, ControlMessageIds.ServerRegister, request);
+        _ = this.server.RefreshRelayServersFromControlServersAsync();
     }
 
     public void StartHeartbeatLoop(TimeSpan interval)
@@ -145,6 +146,7 @@ public class ControlServerReporter : IDisposable
         };
 
         await BroadcastAsync(0, ControlMessageIds.ServerHeartbeat, heartbeat);
+        _ = this.server.RefreshRelayServersFromControlServersAsync();
     }
 
     private Task SendSessionOpenedAsync(ConnectionSession session)

@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Authentication;
@@ -25,6 +26,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     private readonly ConcurrentDictionary<long, ConnectionSession> connectedClients = new();
     private readonly ConcurrentDictionary<uint, ConnectionSession> connectedClientsById = new();
+    private readonly ConcurrentDictionary<string, BackendServerSnapshot> relayServers = new();
     private readonly int maxConnections;
     private readonly int pendingAcceptCount;
     private readonly TimeSpan idleTimeout;
@@ -109,10 +111,89 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     public string InstanceId => this.instanceId;
 
+    public int RelayServerCount => this.relayServers.Count;
+
     public void ConfigureControlRouting(IReadOnlyCollection<EndpointConfig> controlServers, string clusterId)
     {
         this.controlServers = controlServers ?? Array.Empty<EndpointConfig>();
         this.clusterId = string.IsNullOrWhiteSpace(clusterId) ? "socket-cluster-1" : clusterId;
+    }
+
+    public async Task<int> RefreshRelayServersFromControlServersAsync()
+    {
+        Dictionary<string, BackendServerSnapshot> latestServers = new(StringComparer.Ordinal);
+        bool receivedSnapshot = false;
+        foreach (EndpointConfig endpoint in this.controlServers)
+        {
+            try
+            {
+                Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+                await socket.ConnectAsync(IPAddress.Parse(endpoint.Host), endpoint.Port);
+                using SecureSocketConnection connection =
+                    await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
+                (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
+                    connection,
+                    0,
+                    ControlMessageIds.RegistrySnapshotRequest,
+                    new RegistrySnapshotRequest { RequestedAt = DateTimeOffset.UtcNow });
+
+                if (!success ||
+                    frame.MessageId != ControlMessageIds.RegistrySnapshotResponse ||
+                    !ControlProtocol.TryDecode(frame, ControlMessageIds.RegistrySnapshotResponse, out ClusterStatusSnapshot snapshot))
+                {
+                    continue;
+                }
+
+                receivedSnapshot = true;
+                foreach (BackendServerSnapshot server in snapshot.Servers)
+                {
+                    if (!IsRelayCandidate(server))
+                    {
+                        continue;
+                    }
+
+                    if (!latestServers.TryGetValue(server.InstanceId, out BackendServerSnapshot existing) ||
+                        server.Version > existing.Version ||
+                        (server.Version == existing.Version && server.UpdatedAt > existing.UpdatedAt))
+                    {
+                        latestServers[server.InstanceId] = server;
+                    }
+                }
+            }
+            catch (SocketException exception)
+            {
+                Logger.Warn($"Relay server snapshot refresh failed. endpoint={endpoint.Host}:{endpoint.Port}", exception);
+            }
+            catch (IOException exception)
+            {
+                Logger.Warn($"Relay server snapshot refresh I/O failed. endpoint={endpoint.Host}:{endpoint.Port}", exception);
+            }
+            catch (AuthenticationException exception)
+            {
+                Logger.Warn($"Relay server snapshot refresh authentication failed. endpoint={endpoint.Host}:{endpoint.Port}", exception);
+            }
+        }
+
+        if (!receivedSnapshot)
+        {
+            return this.relayServers.Count;
+        }
+
+        foreach (string instanceIdKey in this.relayServers.Keys)
+        {
+            if (!latestServers.ContainsKey(instanceIdKey))
+            {
+                this.relayServers.TryRemove(instanceIdKey, out _);
+            }
+        }
+
+        foreach (KeyValuePair<string, BackendServerSnapshot> item in latestServers)
+        {
+            this.relayServers[item.Key] = item.Value;
+        }
+
+        Logger.Debug($"Relay server list refreshed. instanceId={this.instanceId}, relayServers={this.relayServers.Count}");
+        return this.relayServers.Count;
     }
 
     public bool Start()
@@ -577,24 +658,37 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             return await this.SendClientMessageAckAsync(sourceSession, request, this.instanceId);
         }
 
+        (bool broadcastSuccess, string broadcastTargetInstanceId, string broadcastErrorMessage) =
+            await this.BroadcastRelayToKnownServersAsync(request);
+        if (broadcastSuccess)
+        {
+            return await this.SendClientMessageAckAsync(sourceSession, request, broadcastTargetInstanceId);
+        }
+
         ClientLocationResponse location = await this.ResolveClientLocationAsync(request.SourceClientId, request.TargetClientId);
         if (location == null || !location.Success)
         {
-            return await this.SendClientMessageErrorAsync(sourceSession, request, "TargetNotFound", location?.ErrorMessage ?? "Target client location was not found.");
+            return await this.SendClientMessageErrorAsync(
+                sourceSession,
+                request,
+                "RelayFailed",
+                string.IsNullOrWhiteSpace(broadcastErrorMessage)
+                    ? location?.ErrorMessage ?? "Target client location was not found."
+                    : broadcastErrorMessage);
         }
 
-        if (location.InstanceId == this.instanceId)
+        if (location != null && location.Success && location.InstanceId == this.instanceId)
         {
             return await this.SendClientMessageErrorAsync(sourceSession, request, "TargetNotConnected", "Target client is not connected to this server.");
         }
 
-        (bool success, string errorMessage) = await this.RelayToRemoteServerAsync(location, request);
+        (bool success, string targetInstanceId, string errorMessage) = await this.RelayToRemoteServerAsync(location, request);
         if (!success)
         {
             return await this.SendClientMessageErrorAsync(sourceSession, request, "RelayFailed", errorMessage);
         }
 
-        return await this.SendClientMessageAckAsync(sourceSession, request, location.InstanceId);
+        return await this.SendClientMessageAckAsync(sourceSession, request, targetInstanceId);
     }
 
     private async Task HandleServerRelayAsync(ConnectionSession relaySession, ServerRelayMessage relayMessage)
@@ -697,14 +791,38 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         };
     }
 
-    private async Task<(bool Success, string ErrorMessage)> RelayToRemoteServerAsync(
+    private async Task<(bool Success, string TargetInstanceId, string ErrorMessage)> RelayToRemoteServerAsync(
         ClientLocationResponse location,
+        ClientMessageSendRequest request)
+    {
+        return await RelayToRemoteServerAsync(
+            location.Host,
+            location.Port,
+            location.InstanceId,
+            request);
+    }
+
+    private async Task<(bool Success, string TargetInstanceId, string ErrorMessage)> RelayToRemoteServerAsync(
+        BackendServerSnapshot server,
+        ClientMessageSendRequest request)
+    {
+        return await RelayToRemoteServerAsync(
+            server.Host,
+            server.Port,
+            server.InstanceId,
+            request);
+    }
+
+    private async Task<(bool Success, string TargetInstanceId, string ErrorMessage)> RelayToRemoteServerAsync(
+        string host,
+        int port,
+        string targetInstanceId,
         ClientMessageSendRequest request)
     {
         try
         {
             Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-            await socket.ConnectAsync(IPAddress.Parse(location.Host), location.Port);
+            await socket.ConnectAsync(IPAddress.Parse(host), port);
             using SecureSocketConnection connection =
                 await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
             (bool success, SocketMessageFrame frame) = await ClientMessageProtocol.SendRelayAndReceiveAsync(
@@ -712,28 +830,77 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 ClientMessageProtocol.CreateRelay(this.clusterId, this.instanceId, request));
             if (!success)
             {
-                return (false, "Target server did not respond to relay.");
+                return (false, targetInstanceId, "Target server did not respond to relay.");
             }
 
             if (frame.MessageId == ServerRelayMessageIds.ServerRelayAck &&
                 ClientMessageProtocol.TryDecode(frame, ServerRelayMessageIds.ServerRelayAck, out ClientMessageAck _))
             {
-                return (true, "");
+                return (true, targetInstanceId, "");
             }
 
             if (frame.MessageId == ServerRelayMessageIds.ServerRelayError &&
                 ClientMessageProtocol.TryDecode(frame, ServerRelayMessageIds.ServerRelayError, out ClientMessageError error))
             {
-                return (false, error.ErrorMessage);
+                return (false, targetInstanceId, error.ErrorMessage);
             }
 
-            return (false, "Target server returned an invalid relay response.");
+            return (false, targetInstanceId, "Target server returned an invalid relay response.");
         }
         catch (SocketException exception)
         {
-            Logger.Warn($"Server relay failed. target={location.Host}:{location.Port}, targetClientId={request.TargetClientId}", exception);
-            return (false, "Target server relay socket failed.");
+            Logger.Warn($"Server relay failed. target={host}:{port}, targetClientId={request.TargetClientId}", exception);
+            return (false, targetInstanceId, "Target server relay socket failed.");
         }
+        catch (IOException exception)
+        {
+            Logger.Warn($"Server relay I/O failed. target={host}:{port}, targetClientId={request.TargetClientId}", exception);
+            return (false, targetInstanceId, "Target server relay I/O failed.");
+        }
+        catch (AuthenticationException exception)
+        {
+            Logger.Warn($"Server relay authentication failed. target={host}:{port}, targetClientId={request.TargetClientId}", exception);
+            return (false, targetInstanceId, "Target server relay authentication failed.");
+        }
+    }
+
+    private async Task<(bool Success, string TargetInstanceId, string ErrorMessage)> BroadcastRelayToKnownServersAsync(
+        ClientMessageSendRequest request)
+    {
+        await this.RefreshRelayServersFromControlServersAsync();
+        BackendServerSnapshot[] servers = this.relayServers.Values
+            .Where(IsRelayCandidate)
+            .ToArray();
+        if (servers.Length == 0)
+        {
+            return (false, "", "No known relay SocketServer instances.");
+        }
+
+        Task<(bool Success, string TargetInstanceId, string ErrorMessage)>[] tasks = servers
+            .Select(server => this.RelayToRemoteServerAsync(server, request))
+            .ToArray();
+        (bool Success, string TargetInstanceId, string ErrorMessage)[] results = await Task.WhenAll(tasks);
+        (bool Success, string TargetInstanceId, string ErrorMessage) delivered =
+            results.FirstOrDefault(result => result.Success);
+        if (delivered.Success)
+        {
+            return delivered;
+        }
+
+        string errorMessage = results.FirstOrDefault(result => !string.IsNullOrWhiteSpace(result.ErrorMessage)).ErrorMessage;
+        return (false, "", string.IsNullOrWhiteSpace(errorMessage)
+            ? "No relay SocketServer delivered the message."
+            : errorMessage);
+    }
+
+    private bool IsRelayCandidate(BackendServerSnapshot server)
+    {
+        return server != null &&
+            !string.IsNullOrWhiteSpace(server.InstanceId) &&
+            !string.Equals(server.InstanceId, this.instanceId, StringComparison.Ordinal) &&
+            !string.IsNullOrWhiteSpace(server.Host) &&
+            server.Port > 0 &&
+            server.Health == ServerHealthState.Healthy;
     }
 
     private async Task<bool> SendClientMessageAckAsync(ConnectionSession sourceSession, ClientMessageSendRequest request, string targetInstanceId)

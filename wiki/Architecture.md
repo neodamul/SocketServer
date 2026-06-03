@@ -71,6 +71,8 @@ SocketServer는 configured ControlServer 전체와 persistent control channel을
 
 클라이언트가 `CLIENT_REGISTER` 또는 다른 메시지를 보내면 SocketServer는 `clientId -> session` 인덱스를 갱신하고 ControlServer에 session/client location을 전파합니다. 연결 종료, read 실패, healthcheck 중단으로 인한 idle timeout, delivery send 실패는 session close로 정규화되어 location 제거 이벤트로 이어집니다.
 
+SocketServer는 register/heartbeat 이후 ControlServer registry snapshot에서 healthy SocketServer 목록을 가져와 relay server list를 갱신합니다. 클라이언트 메시지가 로컬 target을 찾지 못하면 이 목록에 있는 전체 SocketServer로 relay message를 병렬 broadcast하고 target을 보유한 서버의 ACK를 사용합니다. Broadcast가 실패하면 기존 ControlServer target location 조회를 fallback으로 사용합니다.
+
 SocketServer의 session event는 bounded queue를 통해 ControlServerReporter가 전송합니다. 이벤트 폭주 시 무제한 task/memory 증가를 막고, reporter worker에서 endpoint별 전송 실패와 timeout을 기록합니다.
 
 서버 기본 정책:

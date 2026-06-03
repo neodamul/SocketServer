@@ -85,7 +85,7 @@ SocketServer 간 메시지 전달은 서버 listen endpoint로 직접 TLS 소켓
 2102 SERVER_RELAY_ERROR
 ```
 
-Source 서버는 ControlServer에서 target client 위치를 조회한 뒤 target 서버로 `SERVER_RELAY_MESSAGE`를 보냅니다. Target 서버는 target client가 로컬에 연결되어 있으면 `CLIENT_MESSAGE_DELIVER`를 전송하고 relay ack를 반환합니다.
+Source 서버는 ControlServer registry snapshot으로 healthy SocketServer 목록을 갱신하고, target client가 로컬에 없으면 known SocketServer 전체에 `SERVER_RELAY_MESSAGE`를 병렬 broadcast합니다. target client를 보유한 서버만 `CLIENT_MESSAGE_DELIVER` 전송 후 ACK를 반환하고, 나머지 서버는 `TargetNotConnected` 오류를 반환합니다. Broadcast가 실패하면 기존 ControlServer client location 조회와 targeted relay를 fallback으로 사용합니다.
 
 ## Control Plane
 

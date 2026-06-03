@@ -29,6 +29,7 @@ dotnet test SocketTests/SocketTests.csproj
 - ControlServer stale control connection cleanup scheduler
 - client-to-client local delivery
 - SocketServer-to-SocketServer client message relay
+- SocketServer relay server list refresh and broadcast fallback
 - SocketServer control channel disconnect detection
 - active-active ControlServer, three SocketServers, platform sample clients concurrent messaging
 - graceful shutdown for ControlServer, SocketServer, and SocketClient

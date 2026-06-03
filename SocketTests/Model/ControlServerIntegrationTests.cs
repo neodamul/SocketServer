@@ -289,6 +289,56 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
+    public async Task SocketServerBroadcastsRelayToKnownServersWhenControlLocationIsMissingTest()
+    {
+        using ControlServer controlServer = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-broadcast",
+                Host = "127.0.0.1",
+                Port = 0,
+                RouteReservationSeconds = 5
+            }
+        });
+        Assert.IsTrue(controlServer.Start());
+
+        using TcpServer sourceServer = CreateStartedSocketServer(10, "server-10-a");
+        using TcpServer targetServer = CreateStartedSocketServer(11, "server-11-a");
+        using TcpClient sourceClient = new(101, "source-101", "127.0.0.1", sourceServer.GetPort());
+        using TcpClient targetClient = new(102, "target-102", "127.0.0.1", targetServer.GetPort());
+
+        Assert.IsTrue(sourceClient.Connect());
+        Assert.IsTrue(targetClient.Connect());
+        Assert.IsTrue(await sourceClient.RegisterClientAsync());
+        Assert.IsTrue(await targetClient.RegisterClientAsync());
+
+        EndpointConfig[] controlEndpoints = { new() { Host = "127.0.0.1", Port = controlServer.Port } };
+        using ControlServerReporter sourceReporter = CreateReporter(sourceServer, controlEndpoints);
+        using ControlServerReporter targetReporter = CreateReporter(targetServer, controlEndpoints);
+        await sourceReporter.RegisterAsync();
+        await targetReporter.RegisterAsync();
+        await WaitForClusterAsync(controlServer, status => status.ServerCount == 2 && status.TotalSessionCount == 0);
+
+        Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
+            sourceClient.SendClientMessageAsync(102, "broadcast-relay-message");
+        (bool delivered, ClientMessageDelivery delivery) =
+            await WithTimeoutAsync(targetClient.TryReceiveClientMessageAsync());
+        (bool acked, ClientMessageAck ack, ClientMessageError error) =
+            await WithTimeoutAsync(sendTask);
+
+        Assert.IsTrue(delivered);
+        Assert.AreEqual((uint)101, delivery.SourceClientId);
+        Assert.AreEqual((uint)102, delivery.TargetClientId);
+        Assert.AreEqual("broadcast-relay-message", delivery.Content);
+        Assert.IsTrue(acked);
+        Assert.IsNotNull(ack);
+        Assert.IsNull(error);
+        Assert.AreEqual("server-11-a", ack.TargetInstanceId);
+    }
+
+    [TestMethod]
     public async Task ControlServerMarksSocketServerUnavailableWhenControlChannelDisconnectsTest()
     {
         using ControlServer controlServer = new(new ControlServerConfigFile
@@ -543,7 +593,10 @@ public class ControlServerIntegrationTests
 
         ClusterStatusSnapshot finalStatus = await WaitForClusterAsync(
             controlA,
-            status => status.TotalSessionCount == 4 && status.TotalCurrentConnections == 4);
+            status => status.TotalSessionCount == 4 &&
+                status.TotalCurrentConnections == 4 &&
+                status.TotalAvailableConnections == 26,
+            timeoutSeconds: 15);
         Assert.AreEqual(3, finalStatus.ServerCount);
         Assert.AreEqual(4, finalStatus.TotalCurrentConnections);
         Assert.AreEqual(26, finalStatus.TotalAvailableConnections);
