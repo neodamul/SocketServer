@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
+using System.IO;
+using System.Security.Authentication;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -15,6 +17,7 @@ namespace SocketServer.Model;
 public class ControlServerReporter : IDisposable
 {
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<ControlServerReporter>();
+    private static readonly TimeSpan EndpointReportTimeout = TimeSpan.FromSeconds(2);
 
     private readonly TcpServer server;
     private readonly IReadOnlyCollection<EndpointConfig> controlServers;
@@ -198,20 +201,54 @@ public class ControlServerReporter : IDisposable
 
     private async Task BroadcastAsync<T>(uint clientId, uint messageId, T payload)
     {
+        List<Task> tasks = new();
         foreach (ControlEndpointConnection connection in this.connections)
         {
-            try
+            tasks.Add(SendToEndpointAsync(connection, clientId, messageId, payload));
+        }
+
+        await Task.WhenAll(tasks);
+    }
+
+    private static async Task SendToEndpointAsync<T>(
+        ControlEndpointConnection connection,
+        uint clientId,
+        uint messageId,
+        T payload)
+    {
+        try
+        {
+            Task<(bool Success, SocketMessageFrame Frame)> reportTask =
+                connection.SendAndReceiveAsync(clientId, messageId, payload);
+            Task completedTask = await Task.WhenAny(reportTask, Task.Delay(EndpointReportTimeout));
+            if (completedTask != reportTask)
             {
-                await connection.SendAndReceiveAsync(clientId, messageId, payload);
+                connection.Close();
+                Logger.Warn($"ControlServer report timed out. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}, timeoutMs={EndpointReportTimeout.TotalMilliseconds}");
+                return;
             }
-            catch (SocketException exception)
+
+            (bool success, _) = await reportTask;
+            if (!success)
             {
-                Logger.Warn($"ControlServer report failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}", exception);
+                Logger.Warn($"ControlServer report failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}");
             }
-            catch (ObjectDisposedException exception)
-            {
-                Logger.Warn($"ControlServer report failed because socket is disposed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}", exception);
-            }
+        }
+        catch (SocketException exception)
+        {
+            Logger.Warn($"ControlServer report failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}", exception);
+        }
+        catch (IOException exception)
+        {
+            Logger.Warn($"ControlServer report I/O failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}", exception);
+        }
+        catch (AuthenticationException exception)
+        {
+            Logger.Warn($"ControlServer report authentication failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}", exception);
+        }
+        catch (ObjectDisposedException exception)
+        {
+            Logger.Warn($"ControlServer report failed because socket is disposed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}", exception);
         }
     }
 

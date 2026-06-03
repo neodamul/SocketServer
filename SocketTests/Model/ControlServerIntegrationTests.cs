@@ -1,6 +1,9 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Threading;
 using System.Threading.Tasks;
 using SocketClient.Model;
 using SocketCommon.Configuration;
@@ -8,6 +11,9 @@ using SocketCommon.Model;
 using SocketControl.Model;
 using SocketSample.Shared;
 using SocketServer.Model;
+using AddressFamily = System.Net.Sockets.AddressFamily;
+using NetSocket = System.Net.Sockets.Socket;
+using SocketException = System.Net.Sockets.SocketException;
 
 namespace SocketTests.Model;
 
@@ -315,6 +321,61 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
+    public async Task ReporterDirectlyReportsToHealthyControlWhenAnotherEndpointStallsTest()
+    {
+        using NetSocket stalledListener = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+        stalledListener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        stalledListener.Listen(SocketFactory.ListenBacklog);
+        int stalledPort = ((IPEndPoint)stalledListener.LocalEndPoint!).Port;
+        using CancellationTokenSource stalledCancellation = new();
+        List<NetSocket> stalledSockets = new();
+        Task stalledAcceptTask = AcceptAndHoldSocketsAsync(stalledListener, stalledSockets, stalledCancellation.Token);
+
+        using ControlServer healthyControl = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-healthy",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0,
+                RouteReservationSeconds = 5
+            }
+        });
+        Assert.IsTrue(healthyControl.Start());
+
+        using TcpServer socketServer = CreateStartedSocketServer(8, "server-8-a");
+        EndpointConfig[] controlEndpoints =
+        {
+            new() { Host = "127.0.0.1", Port = stalledPort },
+            new() { Host = "127.0.0.1", Port = healthyControl.Port }
+        };
+        using ControlServerReporter reporter = CreateReporter(socketServer, controlEndpoints);
+
+        DateTimeOffset startedAt = DateTimeOffset.UtcNow;
+        Task registerTask = reporter.RegisterAsync();
+        ClusterStatusSnapshot status = await WaitForClusterAsync(
+            healthyControl,
+            snapshot => snapshot.ServerCount == 1 && snapshot.HealthyServerCount == 1);
+
+        Assert.AreEqual(10, status.TotalAvailableConnections);
+        Task completedTask = await Task.WhenAny(registerTask, Task.Delay(TimeSpan.FromSeconds(4)));
+        Assert.AreSame(registerTask, completedTask);
+        await registerTask;
+        Assert.IsTrue(DateTimeOffset.UtcNow - startedAt < TimeSpan.FromSeconds(4));
+
+        stalledCancellation.Cancel();
+        stalledListener.Dispose();
+        foreach (NetSocket socket in stalledSockets)
+        {
+            socket.Dispose();
+        }
+
+        await WithTimeoutAsync(stalledAcceptTask);
+    }
+
+    [TestMethod]
     public async Task ActiveActiveControlsRouteThreeServersAndPlatformSampleClientsMessageTest()
     {
         SocketSecurityConfig security = new()
@@ -487,6 +548,38 @@ public class ControlServerIntegrationTests
             0);
     }
 
+    private static async Task AcceptAndHoldSocketsAsync(
+        NetSocket listener,
+        List<NetSocket> acceptedSockets,
+        CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                NetSocket socket = await SocketAsyncEventArgsTransport.AcceptAsync(listener);
+                if (socket != null)
+                {
+                    lock (acceptedSockets)
+                    {
+                        acceptedSockets.Add(socket);
+                    }
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
+            catch (SocketException)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+            }
+        }
+    }
+
     private static SampleClientSettings CreatePlatformClientSettings(
         int clientId,
         string clientName,
@@ -548,5 +641,16 @@ public class ControlServerIntegrationTests
         }
 
         return await task;
+    }
+
+    private static async Task WithTimeoutAsync(Task task)
+    {
+        Task completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(5)));
+        if (completed != task)
+        {
+            Assert.Fail("Timed out waiting for task.");
+        }
+
+        await task;
     }
 }
