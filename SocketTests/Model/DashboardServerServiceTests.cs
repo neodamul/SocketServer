@@ -73,6 +73,9 @@ public class DashboardServerServiceTests
         Assert.IsTrue(indexHtml.Contains("<option value=\"5\">5s</option>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<option value=\"10\">10s</option>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<option value=\"60\">60s</option>", StringComparison.Ordinal));
+        Assert.IsTrue(
+            indexHtml.IndexOf("Dashboard Details", StringComparison.Ordinal) <
+                indexHtml.IndexOf("Server Inventory", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("const DEFAULT_REFRESH_SECONDS = 30;", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("getRefreshIntervalMilliseconds()", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("scheduleRefresh()", StringComparison.Ordinal));
