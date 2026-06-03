@@ -139,7 +139,11 @@ public static class SocketAsyncEventArgsTransport
 
         try
         {
-            int received = await RunAsyncWithoutReturn(socket, args, static (s, a) => s.ReceiveAsync(a));
+            int received = await SocketFactory.WaitForReadWriteAsync(
+                RunAsyncWithoutReturn(socket, args, static (s, a) => s.ReceiveAsync(a)),
+                socket,
+                SocketFactory.ReadTimeoutMilliseconds,
+                "receive");
             if (received <= 0)
             {
                 SocketAsyncEventArgsFactory.Return(args);
@@ -204,7 +208,11 @@ public static class SocketAsyncEventArgsTransport
     private static Task<int> SendChunkAsync(Socket socket, byte[] buffer, int offset, int count)
     {
         SocketAsyncEventArgs args = CreateArgs(buffer, offset, count);
-        return RunAsync(socket, args, static (s, a) => s.SendAsync(a));
+        return SocketFactory.WaitForReadWriteAsync(
+            RunAsync(socket, args, static (s, a) => s.SendAsync(a)),
+            socket,
+            SocketFactory.WriteTimeoutMilliseconds,
+            "send");
     }
 
     private static SocketAsyncEventArgs CreateArgs(byte[] buffer, int offset, int count)

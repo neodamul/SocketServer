@@ -17,6 +17,8 @@ public class ControlServerConfigFile
 
     public SocketSecurityConfig Security { get; set; } = new();
 
+    public SocketOperationConfig SocketOptions { get; set; } = new();
+
     public List<EndpointConfig> Peers { get; set; } = new();
 
     public ClusterRegistryConfig Registry { get; set; } = new();
@@ -62,6 +64,8 @@ public class SocketServerConfigFile
 {
     public SocketSecurityConfig Security { get; set; } = new();
 
+    public SocketOperationConfig SocketOptions { get; set; } = new();
+
     public SocketAsyncEventArgsPoolConfig SocketAsyncEventArgsPool { get; set; } = new();
 
     public List<EndpointConfig> ControlServers { get; set; } = new()
@@ -99,7 +103,18 @@ public class SocketClientConfigFile
 {
     public SocketSecurityConfig Security { get; set; } = new();
 
+    public SocketOperationConfig SocketOptions { get; set; } = new();
+
     public SocketClientConnectionConfig Client { get; set; } = new();
+}
+
+public class SocketOperationConfig
+{
+    public int ConnectTimeoutSeconds { get; set; } = 30;
+
+    public int ReadTimeoutSeconds { get; set; } = 30;
+
+    public int WriteTimeoutSeconds { get; set; } = 30;
 }
 
 public class SocketSecurityConfig

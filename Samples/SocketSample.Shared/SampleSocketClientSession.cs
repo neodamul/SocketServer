@@ -58,6 +58,7 @@ public sealed class SampleSocketClientSession : IDisposable
         }
 
         SecureSocketConnection.Configure(nextSettings.Security);
+        SocketFactory.Configure(nextSettings.SocketOptions);
     }
 
     public async Task<bool> ConnectAsync()

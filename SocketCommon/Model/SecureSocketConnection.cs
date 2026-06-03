@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading;
 using System.Threading.Tasks;
 using SocketCommon.Configuration;
 
@@ -233,14 +234,17 @@ public sealed class SecureSocketConnection : IDisposable
 
                 SocketMessageFrame protectedFrame = this.messageProtector.Protect(frame);
                 byte[] protectedBytes = protectedFrame.Encode();
-                await this.networkStream.WriteAsync(protectedBytes.AsMemory(0, protectedBytes.Length));
-                await this.networkStream.FlushAsync();
+                await this.WriteWithTimeoutAsync(this.networkStream, protectedBytes);
                 return true;
             }
 
-            await this.sslStream.WriteAsync(bytes.AsMemory(0, bytes.Length));
-            await this.sslStream.FlushAsync();
+            await this.WriteWithTimeoutAsync(this.sslStream, bytes);
             return true;
+        }
+        catch (OperationCanceledException)
+        {
+            this.Close();
+            return false;
         }
         catch (IOException)
         {
@@ -310,9 +314,10 @@ public sealed class SecureSocketConnection : IDisposable
         int offset = 0;
         try
         {
+            using CancellationTokenSource cancellation = new(SocketFactory.ReadTimeoutMilliseconds);
             while (offset < length)
             {
-                int read = await this.sslStream.ReadAsync(buffer.AsMemory(offset, length - offset));
+                int read = await this.sslStream.ReadAsync(buffer.AsMemory(offset, length - offset), cancellation.Token);
                 if (read <= 0)
                 {
                     return null;
@@ -320,6 +325,11 @@ public sealed class SecureSocketConnection : IDisposable
 
                 offset += read;
             }
+        }
+        catch (OperationCanceledException)
+        {
+            this.Close();
+            return null;
         }
         catch (IOException)
         {
@@ -339,9 +349,10 @@ public sealed class SecureSocketConnection : IDisposable
         int offset = 0;
         try
         {
+            using CancellationTokenSource cancellation = new(SocketFactory.ReadTimeoutMilliseconds);
             while (offset < length)
             {
-                int read = await this.networkStream.ReadAsync(buffer.AsMemory(offset, length - offset));
+                int read = await this.networkStream.ReadAsync(buffer.AsMemory(offset, length - offset), cancellation.Token);
                 if (read <= 0)
                 {
                     return null;
@@ -349,6 +360,11 @@ public sealed class SecureSocketConnection : IDisposable
 
                 offset += read;
             }
+        }
+        catch (OperationCanceledException)
+        {
+            this.Close();
+            return null;
         }
         catch (IOException)
         {
@@ -430,6 +446,13 @@ public sealed class SecureSocketConnection : IDisposable
         this.pendingPlainFrameBytes = plainFrame.Encode();
         this.pendingPlainFrameOffset = 0;
         return true;
+    }
+
+    private async Task WriteWithTimeoutAsync(Stream stream, byte[] bytes)
+    {
+        using CancellationTokenSource cancellation = new(SocketFactory.WriteTimeoutMilliseconds);
+        await stream.WriteAsync(bytes.AsMemory(0, bytes.Length), cancellation.Token);
+        await stream.FlushAsync(cancellation.Token);
     }
 
     private static bool IsTrustedLocalCertificate(X509Certificate certificate)

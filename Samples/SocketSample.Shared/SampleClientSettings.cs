@@ -18,6 +18,8 @@ public sealed class SampleClientSettings
 
     public SocketSecurityConfig Security { get; set; } = new();
 
+    public SocketOperationConfig SocketOptions { get; set; } = new();
+
     public SampleClientSettings Clone()
     {
         return new SampleClientSettings
@@ -41,6 +43,12 @@ public sealed class SampleClientSettings
                 ModuleCertificateLifetimeYears = this.Security.ModuleCertificateLifetimeYears,
                 AuthenticationTimeoutMilliseconds = this.Security.AuthenticationTimeoutMilliseconds,
                 MessageEncryptionSecretEnvironmentVariable = this.Security.MessageEncryptionSecretEnvironmentVariable
+            },
+            SocketOptions = new SocketOperationConfig
+            {
+                ConnectTimeoutSeconds = this.SocketOptions.ConnectTimeoutSeconds,
+                ReadTimeoutSeconds = this.SocketOptions.ReadTimeoutSeconds,
+                WriteTimeoutSeconds = this.SocketOptions.WriteTimeoutSeconds
             }
         };
     }

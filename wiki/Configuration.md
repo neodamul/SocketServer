@@ -51,6 +51,24 @@ SocketTests/log4net.config
 `tlsProtocol`은 기본 `Tls13`입니다. `Auto`로 설정하면 OS/.NET 기본 협상을 사용합니다. 운영 설정은 TLS 1.3 강제를 기본으로 둡니다.
 `requireClientCertificate=true`로 설정하면 mTLS를 사용하며, 클라이언트도 같은 Root CA로 서명된 모듈 인증서를 제시해야 합니다.
 
+## Socket Options
+
+`socketOptions`는 외부 노드에 접속하거나 frame을 읽고 쓰는 네트워크 operation timeout을 설정합니다. 설정이 없거나 0 이하이면 기본값 30초를 사용합니다.
+
+```json
+{
+  "socketOptions": {
+    "connectTimeoutSeconds": 30,
+    "readTimeoutSeconds": 30,
+    "writeTimeoutSeconds": 30
+  }
+}
+```
+
+- `connectTimeoutSeconds`: ControlServer, SocketServer, client 간 TCP 연결 제한 시간
+- `readTimeoutSeconds`: frame header/payload 읽기 제한 시간
+- `writeTimeoutSeconds`: frame write/flush 제한 시간
+
 ## Certificates
 
 각 모듈은 최초 TLS 연결 시 로컬 인증서를 자동 생성합니다. Root CA는 하나만 만들고, 모듈별 leaf 인증서는 이 Root CA로 서명합니다.

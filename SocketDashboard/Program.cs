@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SocketCommon;
 using SocketCommon.Configuration;
 using SocketCommon.Logging;
+using SocketCommon.Model;
 
 LogConfigurator.Configure();
 SocketLogger logger = SocketLogManager.GetLogger(typeof(Program));
@@ -25,6 +26,18 @@ EndpointConfig controlEndpoint = new()
         ? controlPort
         : Constants.LocalHostPort
 };
+SocketFactory.Configure(new SocketOperationConfig
+{
+    ConnectTimeoutSeconds = Int32.TryParse(builder.Configuration["dashboard:socketOptions:connectTimeoutSeconds"], out int connectTimeoutSeconds)
+        ? connectTimeoutSeconds
+        : SocketFactory.DefaultOperationTimeoutSeconds,
+    ReadTimeoutSeconds = Int32.TryParse(builder.Configuration["dashboard:socketOptions:readTimeoutSeconds"], out int readTimeoutSeconds)
+        ? readTimeoutSeconds
+        : SocketFactory.DefaultOperationTimeoutSeconds,
+    WriteTimeoutSeconds = Int32.TryParse(builder.Configuration["dashboard:socketOptions:writeTimeoutSeconds"], out int writeTimeoutSeconds)
+        ? writeTimeoutSeconds
+        : SocketFactory.DefaultOperationTimeoutSeconds
+});
 
 builder.Services.AddSingleton(_ => new DashboardServerService(0, controlEndpoint));
 

@@ -594,7 +594,7 @@ public class ControlServer : IDisposable
         try
         {
             Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-            await socket.ConnectAsync(IPAddress.Parse(peer.Host), peer.Port);
+            await SocketFactory.ConnectAsync(socket, IPAddress.Parse(peer.Host), peer.Port);
             using SecureSocketConnection connection =
                 await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketControl");
             await ControlProtocol.SendAndReceiveAsync(
@@ -614,6 +614,10 @@ public class ControlServer : IDisposable
         catch (AuthenticationException exception)
         {
             Logger.Warn($"ControlServer peer event relay authentication failed. peer={peer.Host}:{peer.Port}, messageId={messageId}", exception);
+        }
+        catch (TimeoutException exception)
+        {
+            Logger.Warn($"ControlServer peer event relay timed out. peer={peer.Host}:{peer.Port}, messageId={messageId}", exception);
         }
     }
 
@@ -646,7 +650,7 @@ public class ControlServer : IDisposable
             try
             {
                 Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-                await socket.ConnectAsync(IPAddress.Parse(peer.Host), peer.Port);
+                await SocketFactory.ConnectAsync(socket, IPAddress.Parse(peer.Host), peer.Port);
                 using SecureSocketConnection connection =
                     await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketControl");
                 (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
@@ -673,6 +677,10 @@ public class ControlServer : IDisposable
             catch (AuthenticationException exception)
             {
                 Logger.Warn($"ControlServer peer snapshot sync authentication failed. peer={peer.Host}:{peer.Port}", exception);
+            }
+            catch (TimeoutException exception)
+            {
+                Logger.Warn($"ControlServer peer snapshot sync timed out. peer={peer.Host}:{peer.Port}", exception);
             }
         }
     }

@@ -128,7 +128,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             try
             {
                 Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-                await socket.ConnectAsync(IPAddress.Parse(endpoint.Host), endpoint.Port);
+                await SocketFactory.ConnectAsync(socket, IPAddress.Parse(endpoint.Host), endpoint.Port);
                 using SecureSocketConnection connection =
                     await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
                 (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
@@ -167,6 +167,10 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             catch (IOException exception)
             {
                 Logger.Warn($"Relay server snapshot refresh I/O failed. endpoint={endpoint.Host}:{endpoint.Port}", exception);
+            }
+            catch (TimeoutException exception)
+            {
+                Logger.Warn($"Relay server snapshot refresh timed out. endpoint={endpoint.Host}:{endpoint.Port}", exception);
             }
             catch (AuthenticationException exception)
             {
@@ -769,7 +773,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             try
             {
                 Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-                await socket.ConnectAsync(IPAddress.Parse(endpoint.Host), endpoint.Port);
+                await SocketFactory.ConnectAsync(socket, IPAddress.Parse(endpoint.Host), endpoint.Port);
                 using SecureSocketConnection connection =
                     await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
                 (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
@@ -793,6 +797,10 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             catch (SocketException exception)
             {
                 Logger.Warn($"Client location request failed. endpoint={endpoint.Host}:{endpoint.Port}, targetClientId={targetClientId}", exception);
+            }
+            catch (TimeoutException exception)
+            {
+                Logger.Warn($"Client location request timed out. endpoint={endpoint.Host}:{endpoint.Port}, targetClientId={targetClientId}", exception);
             }
         }
 
@@ -835,7 +843,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         try
         {
             Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-            await socket.ConnectAsync(IPAddress.Parse(host), port);
+            await SocketFactory.ConnectAsync(socket, IPAddress.Parse(host), port);
             using SecureSocketConnection connection =
                 await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
             (bool success, SocketMessageFrame frame) = await ClientMessageProtocol.SendRelayAndReceiveAsync(
@@ -874,6 +882,11 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         {
             Logger.Warn($"Server relay authentication failed. target={host}:{port}, targetClientId={request.TargetClientId}", exception);
             return (false, targetInstanceId, "Target server relay authentication failed.");
+        }
+        catch (TimeoutException exception)
+        {
+            Logger.Warn($"Server relay timed out. target={host}:{port}, targetClientId={request.TargetClientId}", exception);
+            return (false, targetInstanceId, "Target server relay timed out.");
         }
     }
 

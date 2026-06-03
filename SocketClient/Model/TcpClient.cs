@@ -96,7 +96,7 @@ public class TcpClient : IClient, IDisposable
                 this.Initialize();
             }
 
-            this.Socket.Connect(new IPEndPoint(this.IpAddress, this.Port));
+            SocketFactory.ConnectAsync(this.Socket, this.IpAddress, this.Port).GetAwaiter().GetResult();
             this.Connection = SecureSocketConnection.AuthenticateClientAsync(this.Socket, "SocketClient").GetAwaiter().GetResult();
             Logger.Info($"Client connected. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}");
             return true;
@@ -121,6 +121,11 @@ public class TcpClient : IClient, IDisposable
             Logger.Warn($"Client TLS connection failed. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}", exception);
             return false;
         }
+        catch (TimeoutException exception)
+        {
+            Logger.Warn($"Client connect timed out. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}", exception);
+            return false;
+        }
     }
 
     public async Task<bool> ConnectViaControlServerAsync(string controlHost, int controlPort)
@@ -135,7 +140,7 @@ public class TcpClient : IClient, IDisposable
             try
             {
                 Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family);
-                await controlSocket.ConnectAsync(endpoint.Address, endpoint.Port);
+                await SocketFactory.ConnectAsync(controlSocket, endpoint.Address, endpoint.Port);
                 using SecureSocketConnection controlConnection =
                     await SecureSocketConnection.AuthenticateClientAsync(controlSocket, "SocketClient");
                 (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
@@ -162,6 +167,10 @@ public class TcpClient : IClient, IDisposable
             catch (SocketException exception)
             {
                 Logger.Warn($"ControlServer route request failed. clientId={this.ClientId}, endpoint={endpoint}", exception);
+            }
+            catch (TimeoutException exception)
+            {
+                Logger.Warn($"ControlServer route request timed out. clientId={this.ClientId}, endpoint={endpoint}", exception);
             }
         }
 

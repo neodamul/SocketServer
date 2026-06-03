@@ -12,6 +12,11 @@
     "authenticationTimeoutMilliseconds": 5000,
     "messageEncryptionSecretEnvironmentVariable": "SOCKET_MESSAGE_SECRET"
   },
+  "socketOptions": {
+    "connectTimeoutSeconds": 30,
+    "readTimeoutSeconds": 30,
+    "writeTimeoutSeconds": 30
+  },
   "client": {
     "clientId": 1,
     "name": "socket-client-1",

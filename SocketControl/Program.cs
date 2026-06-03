@@ -14,6 +14,7 @@ internal static class Program
         LogConfigurator.Configure();
         string configPath = args.Length > 0 ? args[0] : "config.json";
         ControlServerConfigFile config = SocketConfigLoader.Load<ControlServerConfigFile>(configPath);
+        SocketFactory.Configure(config.SocketOptions);
         SecureSocketConnection.Configure(config.Security);
 
         using ControlServer server = new(config);

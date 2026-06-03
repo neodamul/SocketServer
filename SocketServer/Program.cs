@@ -18,6 +18,7 @@ class Program
 
         string configPath = args.FirstOrDefault(arg => arg.EndsWith(".json", StringComparison.OrdinalIgnoreCase)) ?? "config.json";
         SocketServerConfigFile config = SocketConfigLoader.Load<SocketServerConfigFile>(configPath);
+        SocketFactory.Configure(config.SocketOptions);
         SecureSocketConnection.Configure(config.Security);
         SocketCommon.Model.SocketAsyncEventArgsFactory.Configure(
             config.SocketAsyncEventArgsPool.InitialSize,
