@@ -12,6 +12,14 @@ public final class SampleConfig {
     public int port = 5000;
     public int receiveTimeoutSeconds = 10;
     public boolean allowUntrustedLocalCertificate = true;
+    public String transportMode = "Tls";
+    public String messageEncryptionSecret = "";
+
+    public boolean useMessageEncryption() {
+        return "MessageEncryption".equalsIgnoreCase(transportMode) ||
+            "Encrypted".equalsIgnoreCase(transportMode) ||
+            "PlainEncrypted".equalsIgnoreCase(transportMode);
+    }
 
     public static SampleConfig load(Context context) {
         SampleConfig config = new SampleConfig();
@@ -24,6 +32,8 @@ public final class SampleConfig {
             config.port = json.optInt("port", config.port);
             config.receiveTimeoutSeconds = json.optInt("receiveTimeoutSeconds", config.receiveTimeoutSeconds);
             config.allowUntrustedLocalCertificate = json.optBoolean("allowUntrustedLocalCertificate", config.allowUntrustedLocalCertificate);
+            config.transportMode = json.optString("transportMode", config.transportMode);
+            config.messageEncryptionSecret = json.optString("messageEncryptionSecret", config.messageEncryptionSecret);
         } catch (Exception ignored) {
         }
 

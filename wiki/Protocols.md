@@ -2,7 +2,7 @@
 
 ## Common Frame
 
-모든 프로토콜 메시지는 TLS로 보호되는 소켓 연결 위에서 12바이트 고정 헤더를 사용합니다. 정수는 big-endian(network byte order)입니다.
+모든 프로토콜 메시지는 보안 전송 연결 위에서 12바이트 고정 헤더를 사용합니다. 정수는 big-endian(network byte order)입니다.
 
 ```text
 0..3   clientId      uint32
@@ -11,9 +11,21 @@
 12..   payload       byte[payloadLength]
 ```
 
-payload 최대 길이는 4KB입니다. payload는 JSON 문자열이 아니라 `SocketCommon/Proto/SocketMessages.proto`에 정의된 protobuf 모델로 직렬화합니다.
+애플리케이션 payload 최대 길이는 4KB입니다. payload는 JSON 문자열이 아니라 `SocketCommon/Proto/SocketMessages.proto`에 정의된 protobuf 모델로 직렬화합니다.
 
-`SocketClient`, `SocketServer`, `SocketControl`, `SocketDashboard` 간 연결은 `SecureSocketConnection`을 통해 인증된 뒤 common frame을 송수신합니다. 로컬 Root CA가 모듈별 leaf 인증서를 서명하고, 클라이언트는 해당 Root CA 체인을 검증합니다. `security.requireClientCertificate=true`이면 서버도 클라이언트 인증서를 같은 Root CA 기준으로 검증합니다. 기본 모드는 런타임/OS가 지원하는 가장 적절한 TLS 버전을 협상하고, `SOCKET_REQUIRE_TLS13=true` 환경 변수를 설정하면 TLS 1.3이 아닌 협상 결과를 연결 실패로 처리합니다.
+`SocketClient`, `SocketServer`, `SocketControl`, `SocketDashboard` 간 연결은 `SecureSocketConnection`을 통해 보호된 뒤 common frame을 송수신합니다. 기본 `Tls` 모드는 `SslStream`을 사용합니다. 로컬 Root CA가 모듈별 leaf 인증서를 서명하고, 클라이언트는 해당 Root CA 체인을 검증합니다. `security.requireClientCertificate=true`이면 서버도 클라이언트 인증서를 같은 Root CA 기준으로 검증합니다. `SOCKET_REQUIRE_TLS13=true` 환경 변수를 설정하면 TLS 1.3이 아닌 협상 결과를 연결 실패로 처리합니다.
+
+`MessageEncryption` 모드는 TLS handshake를 사용하지 않고 각 frame payload를 보호합니다. wire payload는 다음 envelope입니다.
+
+```text
+0      version       byte
+1..12  nonce         byte[12]
+13..28 aesGcmTag     byte[16]
+29..N  cipherText    byte[payloadLength]
+N..    hmacSha256    byte[32]
+```
+
+AES-GCM은 `clientId + messageId`를 associated data로 사용하고, HMAC-SHA256은 wire header와 envelope를 검증합니다. 수신 측은 envelope를 검증/복호화한 뒤 기존 12바이트 frame으로 복원하므로 상위 protobuf 프로토콜은 동일합니다.
 
 ## HealthCheck
 

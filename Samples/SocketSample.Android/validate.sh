@@ -18,11 +18,12 @@ fi
 
 mkdir -p "$CLASS_DIR"
 
-javac -d "$CLASS_DIR" "$SRC_DIR/SocketFrame.java" "$SRC_DIR/ProtoCodec.java"
+javac -d "$CLASS_DIR" "$SRC_DIR/SocketFrame.java" "$SRC_DIR/ProtoCodec.java" "$SRC_DIR/SocketMessageProtector.java"
 
 cat > "$TEST_SRC" <<'JAVA'
 import com.neodamul.socketsample.ProtoCodec;
 import com.neodamul.socketsample.SocketFrame;
+import com.neodamul.socketsample.SocketMessageProtector;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.nio.charset.StandardCharsets;
@@ -39,6 +40,13 @@ public final class AndroidProtocolValidation {
         SocketFrame decoded = SocketFrame.read(new DataInputStream(new ByteArrayInputStream(frame.encode())));
         if (decoded.clientId != 101 || decoded.messageId != 2002 || !"payload".equals(new String(decoded.payload, StandardCharsets.UTF_8))) {
             throw new IllegalStateException("Socket frame did not round-trip.");
+        }
+
+        SocketMessageProtector protector = new SocketMessageProtector("android-validation-secret");
+        SocketFrame protectedFrame = protector.protect(frame);
+        SocketFrame decrypted = protector.read(new DataInputStream(new ByteArrayInputStream(protectedFrame.encode())));
+        if (decrypted.clientId != 101 || decrypted.messageId != 2002 || !"payload".equals(new String(decrypted.payload, StandardCharsets.UTF_8))) {
+            throw new IllegalStateException("Protected socket frame did not round-trip.");
         }
     }
 }

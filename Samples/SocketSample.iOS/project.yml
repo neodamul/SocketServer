@@ -10,6 +10,7 @@ targets:
       - Sources
       - ../SocketSample.AppleShared/SampleConfig.swift
       - ../SocketSample.AppleShared/SocketFrame.swift
+      - ../SocketSample.AppleShared/SocketMessageProtector.swift
       - ../SocketSample.AppleShared/ProtoCodec.swift
       - ../SocketSample.AppleShared/NativeSocketClient.swift
       - ../SocketSample.AppleShared/SampleContentView.swift

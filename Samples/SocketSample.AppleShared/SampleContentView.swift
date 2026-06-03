@@ -30,6 +30,10 @@ struct SampleContentView: View {
                         }
                         Toggle("Allow local self-signed certificate", isOn: $config.allowUntrustedLocalCertificate)
                         HStack {
+                            field("Transport", text: $config.transportMode)
+                            field("Message Secret", text: $config.messageEncryptionSecret)
+                        }
+                        HStack {
                             Button("Connect") { run { try await connect() } }
                             Button("Register") { run { try await register() } }
                             Button("Disconnect") { disconnect() }

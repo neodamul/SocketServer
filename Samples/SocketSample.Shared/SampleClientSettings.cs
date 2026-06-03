@@ -30,6 +30,7 @@ public sealed class SampleClientSettings
             ReceiveTimeoutSeconds = this.ReceiveTimeoutSeconds,
             Security = new SocketSecurityConfig
             {
+                TransportMode = this.Security.TransportMode,
                 TlsProtocol = this.Security.TlsProtocol,
                 RequireTls13 = this.Security.RequireTls13,
                 RequireClientCertificate = this.Security.RequireClientCertificate,
@@ -38,7 +39,8 @@ public sealed class SampleClientSettings
                 CertificateRenewBeforeDays = this.Security.CertificateRenewBeforeDays,
                 RootCertificateLifetimeYears = this.Security.RootCertificateLifetimeYears,
                 ModuleCertificateLifetimeYears = this.Security.ModuleCertificateLifetimeYears,
-                AuthenticationTimeoutMilliseconds = this.Security.AuthenticationTimeoutMilliseconds
+                AuthenticationTimeoutMilliseconds = this.Security.AuthenticationTimeoutMilliseconds,
+                MessageEncryptionSecretEnvironmentVariable = this.Security.MessageEncryptionSecretEnvironmentVariable
             }
         };
     }

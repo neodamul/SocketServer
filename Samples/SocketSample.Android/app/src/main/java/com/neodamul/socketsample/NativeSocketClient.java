@@ -2,6 +2,7 @@ package com.neodamul.socketsample;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
+import java.net.Socket;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import javax.net.ssl.SSLContext;
@@ -19,9 +20,10 @@ public final class NativeSocketClient implements AutoCloseable {
     private static final long CLIENT_MESSAGE_ERROR = 2005;
 
     private SampleConfig config;
-    private SSLSocket socket;
+    private Socket socket;
     private DataInputStream input;
     private DataOutputStream output;
+    private SocketMessageProtector protector;
 
     public NativeSocketClient(SampleConfig config) {
         this.config = config;
@@ -37,16 +39,25 @@ public final class NativeSocketClient implements AutoCloseable {
 
     public void connect() throws Exception {
         close();
-        SSLSocketFactory factory = createSocketFactory(config.allowUntrustedLocalCertificate);
-        socket = (SSLSocket)factory.createSocket(config.host, config.port);
-        socket.startHandshake();
+        protector = config.useMessageEncryption()
+            ? new SocketMessageProtector(config.messageEncryptionSecret)
+            : null;
+        if (protector == null) {
+            SSLSocketFactory factory = createSocketFactory(config.allowUntrustedLocalCertificate);
+            SSLSocket sslSocket = (SSLSocket)factory.createSocket(config.host, config.port);
+            sslSocket.startHandshake();
+            socket = sslSocket;
+        } else {
+            socket = new Socket(config.host, config.port);
+        }
+
         input = new DataInputStream(socket.getInputStream());
         output = new DataOutputStream(socket.getOutputStream());
     }
 
     public void register() throws Exception {
         send(new SocketFrame(config.clientId, CLIENT_REGISTER, ProtoCodec.clientRegister(config.clientId)));
-        SocketFrame frame = SocketFrame.read(input);
+        SocketFrame frame = read();
         if (frame.messageId != CLIENT_REGISTER_ACK || !ProtoCodec.decodeRegisterAck(frame.payload)) {
             throw new IllegalStateException("Register failed.");
         }
@@ -57,7 +68,7 @@ public final class NativeSocketClient implements AutoCloseable {
             config.clientId,
             CLIENT_MESSAGE_SEND,
             ProtoCodec.clientMessageSend(config.clientId, targetClientId, content)));
-        SocketFrame frame = SocketFrame.read(input);
+        SocketFrame frame = read();
         if (frame.messageId == CLIENT_MESSAGE_ACK && ProtoCodec.decodeAckDelivered(frame.payload)) {
             return;
         }
@@ -71,7 +82,7 @@ public final class NativeSocketClient implements AutoCloseable {
 
     public ProtoCodec.ClientDelivery receiveMessage() throws Exception {
         socket.setSoTimeout(Math.max(1, config.receiveTimeoutSeconds) * 1000);
-        SocketFrame frame = SocketFrame.read(input);
+        SocketFrame frame = read();
         if (frame.messageId != CLIENT_MESSAGE_DELIVER) {
             throw new IllegalStateException("Invalid delivery frame.");
         }
@@ -80,8 +91,13 @@ public final class NativeSocketClient implements AutoCloseable {
     }
 
     private void send(SocketFrame frame) throws Exception {
-        output.write(frame.encode());
+        SocketFrame wireFrame = protector == null ? frame : protector.protect(frame);
+        output.write(wireFrame.encode());
         output.flush();
+    }
+
+    private SocketFrame read() throws Exception {
+        return protector == null ? SocketFrame.read(input) : protector.read(input);
     }
 
     @Override
@@ -96,6 +112,7 @@ public final class NativeSocketClient implements AutoCloseable {
         socket = null;
         input = null;
         output = null;
+        protector = null;
     }
 
     private static SSLSocketFactory createSocketFactory(boolean allowUntrustedLocalCertificate) throws Exception {

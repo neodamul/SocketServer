@@ -11,6 +11,7 @@
 		46630ABF1779249B20BB0196 /* SocketSampleMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 657335EE633490332C49B10A /* SocketSampleMacApp.swift */; };
 		50C2B01CD25107D5798A9B27 /* ProtoCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED242C0C63F2B79C1A3A727F /* ProtoCodec.swift */; };
 		69932E9ADF3C4C4FBDB0A469 /* SocketFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = BED5CE816A6950A6D9B89B01 /* SocketFrame.swift */; };
+		8D15D2925FC09DB8C6760C83 /* SocketMessageProtector.swift in Sources */ = {isa = PBXBuildFile; fileRef = D64DC0A1B52042989CEBDE86 /* SocketMessageProtector.swift */; };
 		E573DA2D01A27177105FC3AE /* NativeSocketClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43A2B873D2C25B6041F84228 /* NativeSocketClient.swift */; };
 		FF4F7D7281C3EFD0A8F28E7F /* SampleContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 533401A6B0B7C4AAF3E234CB /* SampleContentView.swift */; };
 /* End PBXBuildFile section */
@@ -22,6 +23,7 @@
 		657335EE633490332C49B10A /* SocketSampleMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocketSampleMacApp.swift; sourceTree = "<group>"; };
 		8D45C25991D1C7CABE144DDC /* SocketSampleMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SocketSampleMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BED5CE816A6950A6D9B89B01 /* SocketFrame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocketFrame.swift; sourceTree = "<group>"; };
+		D64DC0A1B52042989CEBDE86 /* SocketMessageProtector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocketMessageProtector.swift; sourceTree = "<group>"; };
 		ED242C0C63F2B79C1A3A727F /* ProtoCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProtoCodec.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -50,6 +52,7 @@
 				1F6101F9DE38B686A2D65FFA /* SampleConfig.swift */,
 				533401A6B0B7C4AAF3E234CB /* SampleContentView.swift */,
 				BED5CE816A6950A6D9B89B01 /* SocketFrame.swift */,
+				D64DC0A1B52042989CEBDE86 /* SocketMessageProtector.swift */,
 			);
 			name = SocketSample.AppleShared;
 			path = ../SocketSample.AppleShared;
@@ -127,6 +130,7 @@
 				42062A4A07E3298C854E7E50 /* SampleConfig.swift in Sources */,
 				FF4F7D7281C3EFD0A8F28E7F /* SampleContentView.swift in Sources */,
 				69932E9ADF3C4C4FBDB0A469 /* SocketFrame.swift in Sources */,
+				8D15D2925FC09DB8C6760C83 /* SocketMessageProtector.swift in Sources */,
 				46630ABF1779249B20BB0196 /* SocketSampleMacApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

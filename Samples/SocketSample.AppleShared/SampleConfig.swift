@@ -7,6 +7,14 @@ struct SampleConfig: Codable, Equatable {
     var port: UInt16 = 5000
     var receiveTimeoutSeconds: Int = 10
     var allowUntrustedLocalCertificate: Bool = true
+    var transportMode: String = "Tls"
+    var messageEncryptionSecret: String = ""
+
+    var usesMessageEncryption: Bool {
+        transportMode.caseInsensitiveCompare("MessageEncryption") == .orderedSame ||
+            transportMode.caseInsensitiveCompare("Encrypted") == .orderedSame ||
+            transportMode.caseInsensitiveCompare("PlainEncrypted") == .orderedSame
+    }
 }
 
 struct ClientState {

@@ -25,6 +25,7 @@ public class SocketSampleClientTests
             ReceiveTimeoutSeconds = 3,
             Security = new SocketSecurityConfig
             {
+                TransportMode = "MessageEncryption",
                 TlsProtocol = "Auto",
                 RequireTls13 = false,
                 RequireClientCertificate = true,
@@ -33,7 +34,8 @@ public class SocketSampleClientTests
                 CertificateRenewBeforeDays = 7,
                 RootCertificateLifetimeYears = 9,
                 ModuleCertificateLifetimeYears = 4,
-                AuthenticationTimeoutMilliseconds = 1500
+                AuthenticationTimeoutMilliseconds = 1500,
+                MessageEncryptionSecretEnvironmentVariable = "SOCKET_SAMPLE_MESSAGE_SECRET"
             }
         };
 
@@ -41,9 +43,11 @@ public class SocketSampleClientTests
         clone.Security.TlsProtocol = "Tls13";
 
         Assert.AreEqual(12, clone.ClientId);
+        Assert.AreEqual("MessageEncryption", clone.Security.TransportMode);
         Assert.AreEqual("Auto", settings.Security.TlsProtocol);
         Assert.AreEqual("Tls13", clone.Security.TlsProtocol);
         Assert.IsTrue(clone.Security.RequireClientCertificate);
+        Assert.AreEqual("SOCKET_SAMPLE_MESSAGE_SECRET", clone.Security.MessageEncryptionSecretEnvironmentVariable);
     }
 
     [TestMethod]
@@ -90,8 +94,10 @@ public class SocketSampleClientTests
 
         Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.iOS/SocketSampleiOS.xcodeproj/project.pbxproj")));
         Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.macOS/SocketSampleMac.xcodeproj/project.pbxproj")));
+        Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.AppleShared/SocketMessageProtector.swift")));
         Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/MainActivity.java")));
         Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/NativeSocketClient.java")));
+        Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/SocketMessageProtector.java")));
         Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/gradlew")));
         Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/gradle/wrapper/gradle-wrapper.jar")));
         Assert.IsTrue(File.Exists(Path.Combine(root, "Samples/SocketSample.Android/gradle/wrapper/gradle-wrapper.properties")));

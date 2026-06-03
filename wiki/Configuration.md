@@ -24,11 +24,12 @@ SocketTests/log4net.config
 
 ## Security
 
-실행 프로젝트는 `security` 설정을 통해 TLS 정책을 적용합니다.
+실행 프로젝트는 `security` 설정을 통해 전송 보안 정책을 적용합니다. 기본값은 TLS입니다.
 
 ```json
 {
   "security": {
+    "transportMode": "Tls",
     "tlsProtocol": "Tls13",
     "requireTls13": true,
     "requireClientCertificate": false,
@@ -37,12 +38,17 @@ SocketTests/log4net.config
     "certificateRenewBeforeDays": 30,
     "rootCertificateLifetimeYears": 10,
     "moduleCertificateLifetimeYears": 2,
-    "authenticationTimeoutMilliseconds": 5000
+    "authenticationTimeoutMilliseconds": 5000,
+    "messageEncryptionSecretEnvironmentVariable": "SOCKET_MESSAGE_SECRET"
   }
 }
 ```
 
-`tlsProtocol`은 기본 `Tls13`입니다. `Auto` 또는 `None`으로 설정하면 OS/.NET 기본 협상을 사용합니다. 운영 설정은 TLS 1.3 강제를 기본으로 둡니다.
+`transportMode`는 `Tls` 또는 `MessageEncryption`입니다. `Tls`는 `SslStream` 기반 TLS 연결을 사용하고, `MessageEncryption`은 TLS handshake 없이 각 frame payload를 AES-GCM-256으로 암호화하고 HMAC-SHA256으로 envelope를 검증합니다. `transportMode`를 비워두고 `tlsProtocol=None`을 설정해도 `MessageEncryption` 모드로 해석합니다.
+
+`MessageEncryption` 모드는 모든 노드와 클라이언트가 같은 secret을 환경 변수로 제공해야 합니다. 기본 변수명은 `SOCKET_MESSAGE_SECRET`이며, `messageEncryptionSecretEnvironmentVariable`로 바꿀 수 있습니다. secret은 base64 또는 일반 문자열을 사용할 수 있고 내부적으로 AES-GCM key와 HMAC key를 분리 파생합니다.
+
+`tlsProtocol`은 기본 `Tls13`입니다. `Auto`로 설정하면 OS/.NET 기본 협상을 사용합니다. 운영 설정은 TLS 1.3 강제를 기본으로 둡니다.
 `requireClientCertificate=true`로 설정하면 mTLS를 사용하며, 클라이언트도 같은 Root CA로 서명된 모듈 인증서를 제시해야 합니다.
 
 ## Certificates

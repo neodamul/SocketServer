@@ -102,6 +102,8 @@ public class SocketClientConfigFile
 
 public class SocketSecurityConfig
 {
+    public string TransportMode { get; set; } = "";
+
     public string TlsProtocol { get; set; } = "Tls13";
 
     public bool RequireTls13 { get; set; } = true;
@@ -119,6 +121,8 @@ public class SocketSecurityConfig
     public int ModuleCertificateLifetimeYears { get; set; } = 2;
 
     public int AuthenticationTimeoutMilliseconds { get; set; } = 5000;
+
+    public string MessageEncryptionSecretEnvironmentVariable { get; set; } = "SOCKET_MESSAGE_SECRET";
 }
 
 public class SocketAsyncEventArgsPoolConfig

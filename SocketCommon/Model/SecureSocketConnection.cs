@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -10,6 +11,12 @@ using SocketCommon.Configuration;
 
 namespace SocketCommon.Model;
 
+public enum SocketTransportSecurityMode
+{
+    Tls,
+    MessageEncryption
+}
+
 public sealed class SecureSocketConnection : IDisposable
 {
     public const string LocalCertificateSubject = "CN=SocketServerLocal";
@@ -17,8 +24,10 @@ public sealed class SecureSocketConnection : IDisposable
     public const string TargetHost = "SocketServerLocal";
     public const string CertificateDirectoryEnvironmentVariable = "SOCKET_CERTIFICATE_DIR";
     public const string RequireTls13EnvironmentVariable = "SOCKET_REQUIRE_TLS13";
+    public const string DefaultMessageEncryptionSecretEnvironmentVariable = "SOCKET_MESSAGE_SECRET";
 
     private static readonly object OptionsLock = new();
+    private static SocketTransportSecurityMode transportMode = SocketTransportSecurityMode.Tls;
     private static SslProtocols configuredProtocols = SslProtocols.None;
     private static bool requireTls13;
     private static bool requireClientCertificate;
@@ -28,16 +37,26 @@ public sealed class SecureSocketConnection : IDisposable
     private static int certificateRenewBeforeDays = 30;
     private static int rootCertificateLifetimeYears = 10;
     private static int moduleCertificateLifetimeYears = 2;
+    private static string messageEncryptionSecretEnvironmentVariable = DefaultMessageEncryptionSecretEnvironmentVariable;
 
     private readonly NetworkStream networkStream;
     private readonly SslStream sslStream;
+    private readonly SocketMessageProtector messageProtector;
+    private byte[] pendingPlainFrameBytes;
+    private int pendingPlainFrameOffset;
     private bool disposed;
 
-    private SecureSocketConnection(Socket socket, NetworkStream networkStream, SslStream sslStream, string moduleName)
+    private SecureSocketConnection(
+        Socket socket,
+        NetworkStream networkStream,
+        SslStream sslStream,
+        SocketMessageProtector messageProtector,
+        string moduleName)
     {
         this.Socket = socket;
         this.networkStream = networkStream;
         this.sslStream = sslStream;
+        this.messageProtector = messageProtector;
         this.ModuleName = moduleName;
     }
 
@@ -45,7 +64,11 @@ public sealed class SecureSocketConnection : IDisposable
 
     public string ModuleName { get; }
 
-    public SslProtocols NegotiatedProtocol => this.sslStream.SslProtocol;
+    public SslProtocols NegotiatedProtocol => this.sslStream?.SslProtocol ?? SslProtocols.None;
+
+    public SocketTransportSecurityMode TransportMode => this.messageProtector == null
+        ? SocketTransportSecurityMode.Tls
+        : SocketTransportSecurityMode.MessageEncryption;
 
     public bool IsConnected => !this.disposed && this.Socket.Connected;
 
@@ -56,6 +79,17 @@ public sealed class SecureSocketConnection : IDisposable
             lock (OptionsLock)
             {
                 return configuredProtocols;
+            }
+        }
+    }
+
+    public static SocketTransportSecurityMode ConfiguredTransportMode
+    {
+        get
+        {
+            lock (OptionsLock)
+            {
+                return transportMode;
             }
         }
     }
@@ -103,6 +137,7 @@ public sealed class SecureSocketConnection : IDisposable
         lock (OptionsLock)
         {
             configuredProtocols = ParseProtocols(config.TlsProtocol);
+            transportMode = ParseTransportMode(config.TransportMode, config.TlsProtocol);
             requireTls13 = config.RequireTls13;
             requireClientCertificate = config.RequireClientCertificate;
             authenticationTimeoutMilliseconds = Math.Max(1000, config.AuthenticationTimeoutMilliseconds);
@@ -113,12 +148,25 @@ public sealed class SecureSocketConnection : IDisposable
             certificateRenewBeforeDays = Math.Max(0, config.CertificateRenewBeforeDays);
             rootCertificateLifetimeYears = Math.Max(1, config.RootCertificateLifetimeYears);
             moduleCertificateLifetimeYears = Math.Max(1, config.ModuleCertificateLifetimeYears);
+            messageEncryptionSecretEnvironmentVariable = string.IsNullOrWhiteSpace(config.MessageEncryptionSecretEnvironmentVariable)
+                ? DefaultMessageEncryptionSecretEnvironmentVariable
+                : config.MessageEncryptionSecretEnvironmentVariable.Trim();
         }
     }
 
     public static async Task<SecureSocketConnection> AuthenticateClientAsync(Socket socket, string moduleName)
     {
         NetworkStream networkStream = new(socket, ownsSocket: true);
+        if (ConfiguredTransportMode == SocketTransportSecurityMode.MessageEncryption)
+        {
+            return new SecureSocketConnection(
+                socket,
+                networkStream,
+                null,
+                CreateMessageProtector(),
+                moduleName);
+        }
+
         SslStream sslStream = new(
             networkStream,
             leaveInnerStreamOpen: false,
@@ -133,13 +181,23 @@ public sealed class SecureSocketConnection : IDisposable
         }));
         EnsureTls13IfRequired(sslStream);
 
-        return new SecureSocketConnection(socket, networkStream, sslStream, moduleName);
+        return new SecureSocketConnection(socket, networkStream, sslStream, null, moduleName);
     }
 
     public static async Task<SecureSocketConnection> AuthenticateServerAsync(Socket socket, string moduleName)
     {
-        X509Certificate2 certificate = LocalCertificateStore.GetOrCreate(moduleName);
         NetworkStream networkStream = new(socket, ownsSocket: true);
+        if (ConfiguredTransportMode == SocketTransportSecurityMode.MessageEncryption)
+        {
+            return new SecureSocketConnection(
+                socket,
+                networkStream,
+                null,
+                CreateMessageProtector(),
+                moduleName);
+        }
+
+        X509Certificate2 certificate = LocalCertificateStore.GetOrCreate(moduleName);
         SslStream sslStream = new(networkStream, leaveInnerStreamOpen: false);
 
         await WaitForAuthenticationAsync(sslStream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
@@ -154,7 +212,7 @@ public sealed class SecureSocketConnection : IDisposable
         }));
         EnsureTls13IfRequired(sslStream);
 
-        return new SecureSocketConnection(socket, networkStream, sslStream, moduleName);
+        return new SecureSocketConnection(socket, networkStream, sslStream, null, moduleName);
     }
 
     public async Task<bool> SendAsync(byte[] bytes)
@@ -166,6 +224,20 @@ public sealed class SecureSocketConnection : IDisposable
 
         try
         {
+            if (this.messageProtector != null)
+            {
+                if (!SocketMessageFrame.TryDecode(bytes, out SocketMessageFrame frame))
+                {
+                    return false;
+                }
+
+                SocketMessageFrame protectedFrame = this.messageProtector.Protect(frame);
+                byte[] protectedBytes = protectedFrame.Encode();
+                await this.networkStream.WriteAsync(protectedBytes.AsMemory(0, protectedBytes.Length));
+                await this.networkStream.FlushAsync();
+                return true;
+            }
+
             await this.sslStream.WriteAsync(bytes.AsMemory(0, bytes.Length));
             await this.sslStream.FlushAsync();
             return true;
@@ -191,6 +263,49 @@ public sealed class SecureSocketConnection : IDisposable
             return null;
         }
 
+        if (this.messageProtector != null)
+        {
+            return await this.ReceiveExactProtectedAsync(length);
+        }
+
+        return await this.ReceiveExactFromSslAsync(length);
+    }
+
+    public void Close()
+    {
+        if (this.disposed)
+        {
+            return;
+        }
+
+        this.disposed = true;
+        try
+        {
+            if (this.Socket.Connected)
+            {
+                this.Socket.Shutdown(SocketShutdown.Both);
+            }
+        }
+        catch (SocketException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        finally
+        {
+            this.sslStream?.Dispose();
+            this.networkStream.Dispose();
+        }
+    }
+
+    public void Dispose()
+    {
+        this.Close();
+    }
+
+    private async Task<byte[]> ReceiveExactFromSslAsync(int length)
+    {
         byte[] buffer = new byte[length];
         int offset = 0;
         try
@@ -218,37 +333,103 @@ public sealed class SecureSocketConnection : IDisposable
         return buffer;
     }
 
-    public void Close()
+    private async Task<byte[]> ReceiveExactFromNetworkAsync(int length)
     {
-        if (this.disposed)
-        {
-            return;
-        }
-
-        this.disposed = true;
+        byte[] buffer = new byte[length];
+        int offset = 0;
         try
         {
-            if (this.Socket.Connected)
+            while (offset < length)
             {
-                this.Socket.Shutdown(SocketShutdown.Both);
+                int read = await this.networkStream.ReadAsync(buffer.AsMemory(offset, length - offset));
+                if (read <= 0)
+                {
+                    return null;
+                }
+
+                offset += read;
             }
         }
-        catch (SocketException)
+        catch (IOException)
         {
+            return null;
         }
         catch (ObjectDisposedException)
         {
+            return null;
         }
-        finally
-        {
-            this.sslStream.Dispose();
-            this.networkStream.Dispose();
-        }
+
+        return buffer;
     }
 
-    public void Dispose()
+    private async Task<byte[]> ReceiveExactProtectedAsync(int length)
     {
-        this.Close();
+        if (length == 0)
+        {
+            return Array.Empty<byte>();
+        }
+
+        if (this.pendingPlainFrameBytes == null || this.pendingPlainFrameOffset >= this.pendingPlainFrameBytes.Length)
+        {
+            if (!await this.ReadProtectedFrameAsync())
+            {
+                return null;
+            }
+        }
+
+        if (this.pendingPlainFrameBytes == null ||
+            this.pendingPlainFrameOffset + length > this.pendingPlainFrameBytes.Length)
+        {
+            return null;
+        }
+
+        byte[] result = new byte[length];
+        Buffer.BlockCopy(this.pendingPlainFrameBytes, this.pendingPlainFrameOffset, result, 0, length);
+        this.pendingPlainFrameOffset += length;
+        if (this.pendingPlainFrameOffset >= this.pendingPlainFrameBytes.Length)
+        {
+            this.pendingPlainFrameBytes = null;
+            this.pendingPlainFrameOffset = 0;
+        }
+
+        return result;
+    }
+
+    private async Task<bool> ReadProtectedFrameAsync()
+    {
+        byte[] header = await this.ReceiveExactFromNetworkAsync(SocketMessageFrame.HeaderLength);
+        if (header == null)
+        {
+            return false;
+        }
+
+        uint protectedPayloadLength = BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(8, 4));
+        if (protectedPayloadLength > SocketMessageProtector.MaxProtectedPayloadLength)
+        {
+            return false;
+        }
+
+        byte[] protectedPayload = protectedPayloadLength == 0
+            ? Array.Empty<byte>()
+            : await this.ReceiveExactFromNetworkAsync((int)protectedPayloadLength);
+        if (protectedPayload == null)
+        {
+            return false;
+        }
+
+        SocketMessageFrame protectedFrame = new(
+            BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(0, 4)),
+            BinaryPrimitives.ReadUInt32BigEndian(header.AsSpan(4, 4)),
+            protectedPayload,
+            skipPayloadLimitValidation: true);
+        if (!this.messageProtector.TryUnprotect(protectedFrame, out SocketMessageFrame plainFrame))
+        {
+            return false;
+        }
+
+        this.pendingPlainFrameBytes = plainFrame.Encode();
+        this.pendingPlainFrameOffset = 0;
+        return true;
     }
 
     private static bool IsTrustedLocalCertificate(X509Certificate certificate)
@@ -324,6 +505,47 @@ public sealed class SecureSocketConnection : IDisposable
         }
 
         return result == SslProtocols.None ? SslProtocols.Tls13 : result;
+    }
+
+    private static SocketTransportSecurityMode ParseTransportMode(string transportModeValue, string tlsProtocol)
+    {
+        if (!string.IsNullOrWhiteSpace(transportModeValue))
+        {
+            if (string.Equals(transportModeValue, "Tls", StringComparison.OrdinalIgnoreCase))
+            {
+                return SocketTransportSecurityMode.Tls;
+            }
+
+            if (string.Equals(transportModeValue, "MessageEncryption", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(transportModeValue, "Encrypted", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(transportModeValue, "PlainEncrypted", StringComparison.OrdinalIgnoreCase))
+            {
+                return SocketTransportSecurityMode.MessageEncryption;
+            }
+        }
+
+        return string.Equals(tlsProtocol, "None", StringComparison.OrdinalIgnoreCase)
+            ? SocketTransportSecurityMode.MessageEncryption
+            : SocketTransportSecurityMode.Tls;
+    }
+
+    private static SocketMessageProtector CreateMessageProtector()
+    {
+        string variableName;
+        lock (OptionsLock)
+        {
+            variableName = messageEncryptionSecretEnvironmentVariable;
+        }
+
+        string secret = Environment.GetEnvironmentVariable(variableName) ?? "";
+        try
+        {
+            return SocketMessageProtector.FromSecret(secret);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new AuthenticationException("Message encryption secret is not configured.", exception);
+        }
     }
 
     internal static string ConfiguredCertificateDirectory

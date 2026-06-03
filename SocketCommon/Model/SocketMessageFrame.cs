@@ -11,11 +11,16 @@ public class SocketMessageFrame
     public const int MaxPayloadLength = 4 * 1024;
 
     public SocketMessageFrame(uint clientId, uint messageId, byte[] payload)
+        : this(clientId, messageId, payload, skipPayloadLimitValidation: false)
+    {
+    }
+
+    internal SocketMessageFrame(uint clientId, uint messageId, byte[] payload, bool skipPayloadLimitValidation)
     {
         this.ClientId = clientId;
         this.MessageId = messageId;
         this.Payload = payload ?? Array.Empty<byte>();
-        if (this.Payload.Length > MaxPayloadLength)
+        if (!skipPayloadLimitValidation && this.Payload.Length > MaxPayloadLength)
         {
             throw new ArgumentOutOfRangeException(nameof(payload));
         }

@@ -15,6 +15,7 @@ namespace SocketTests.Model;
 public class SecureSocketConnectionTests
 {
     private const string TestPasswordVariable = "SOCKET_TEST_CERTIFICATE_PASSWORD";
+    private const string TestMessageSecretVariable = "SOCKET_TEST_MESSAGE_SECRET";
 
     [TestMethod]
     public void LocalCertificateIsCreatedPerModuleTest()
@@ -78,6 +79,7 @@ public class SecureSocketConnectionTests
         });
 
         Assert.AreEqual(SslProtocols.Tls13, SecureSocketConnection.ConfiguredProtocols);
+        Assert.AreEqual(SocketTransportSecurityMode.Tls, SecureSocketConnection.ConfiguredTransportMode);
         Assert.IsTrue(SecureSocketConnection.RequireTls13);
         Assert.IsTrue(SecureSocketConnection.RequireClientCertificate);
         Assert.AreEqual(2500, SecureSocketConnection.AuthenticationTimeoutMilliseconds);
@@ -149,6 +151,77 @@ public class SecureSocketConnectionTests
     }
 
     [TestMethod]
+    public async Task MessageEncryptionTransportProtectsFramesWithoutTlsTest()
+    {
+        Environment.SetEnvironmentVariable(TestMessageSecretVariable, Convert.ToBase64String(Guid.NewGuid().ToByteArray()));
+        try
+        {
+            SecureSocketConnection.Configure(new SocketSecurityConfig
+            {
+                TransportMode = "MessageEncryption",
+                TlsProtocol = "None",
+                RequireTls13 = false,
+                MessageEncryptionSecretEnvironmentVariable = TestMessageSecretVariable
+            });
+
+            using Socket listener = SocketFactory.CreateTcpSocket();
+            listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+            listener.Listen(SocketFactory.ListenBacklog);
+
+            int port = ((IPEndPoint)listener.LocalEndPoint!).Port;
+            Socket clientSocket = SocketFactory.CreateTcpSocket();
+            Task connectTask = clientSocket.ConnectAsync(IPAddress.Loopback, port);
+            Socket serverSocket = await listener.AcceptAsync();
+            await connectTask;
+
+            Task<SecureSocketConnection> serverTask =
+                SecureSocketConnection.AuthenticateServerAsync(serverSocket, "SocketTestsMessageServer");
+            Task<SecureSocketConnection> clientTask =
+                SecureSocketConnection.AuthenticateClientAsync(clientSocket, "SocketTestsMessageClient");
+            await Task.WhenAll(serverTask, clientTask);
+
+            using SecureSocketConnection server = await serverTask;
+            using SecureSocketConnection client = await clientTask;
+
+            Assert.AreEqual(SocketTransportSecurityMode.MessageEncryption, server.TransportMode);
+            Assert.AreEqual(SocketTransportSecurityMode.MessageEncryption, client.TransportMode);
+            Assert.AreEqual(SslProtocols.None, server.NegotiatedProtocol);
+            Assert.AreEqual(SslProtocols.None, client.NegotiatedProtocol);
+
+            Assert.IsTrue(await HelloWorldProtocol.SendAsync(client, HelloWorldProtocol.CreateRequest(77)));
+            (bool requestReceived, HelloWorldRequest request) = await HelloWorldProtocol.TryReceiveRequestAsync(server);
+            Assert.IsTrue(requestReceived);
+            Assert.AreEqual((uint)77, request.ClientId);
+
+            Assert.IsTrue(await HelloWorldProtocol.SendAsync(server, HelloWorldProtocol.CreateResponse(request.ClientId)));
+            (bool responseReceived, HelloWorldResponse response) = await HelloWorldProtocol.TryReceiveResponseAsync(client);
+            Assert.IsTrue(responseReceived);
+            Assert.AreEqual((uint)77, response.ClientId);
+            Assert.AreEqual(HelloWorldProtocol.DefaultMessage, response.Message);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(TestMessageSecretVariable, null);
+            SecureSocketConnection.Configure(CreateSecurityConfig());
+        }
+    }
+
+    [TestMethod]
+    public void TlsProtocolNoneSelectsMessageEncryptionTransportTest()
+    {
+        SecureSocketConnection.Configure(new SocketSecurityConfig
+        {
+            TlsProtocol = "None",
+            RequireTls13 = false,
+            MessageEncryptionSecretEnvironmentVariable = TestMessageSecretVariable
+        });
+
+        Assert.AreEqual(SocketTransportSecurityMode.MessageEncryption, SecureSocketConnection.ConfiguredTransportMode);
+
+        SecureSocketConnection.Configure(CreateSecurityConfig());
+    }
+
+    [TestMethod]
     public void CertificateIsRenewedWhenItIsInsideRotationWindowTest()
     {
         string directory = CreateTemporaryCertificateDirectory();
@@ -180,6 +253,7 @@ public class SecureSocketConnectionTests
     {
         return new SocketSecurityConfig
         {
+            TransportMode = "Tls",
             TlsProtocol = "Auto",
             RequireTls13 = false,
             RequireClientCertificate = requireClientCertificate,

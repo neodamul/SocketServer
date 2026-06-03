@@ -13,6 +13,7 @@
 		7181F2D64DC543C8BB9E60A7 /* SocketSampleiOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CBC6972FA475398E6C1ED1 /* SocketSampleiOSApp.swift */; };
 		C303C05FC9777D2E809104D6 /* SampleContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F12379D6350C442F3EAB4827 /* SampleContentView.swift */; };
 		C46CC24FD965BFD092A66C13 /* SampleConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7EC0DA200AC735E2B4FAFE5 /* SampleConfig.swift */; };
+		DF8C67F2EAAE3FD560FDDE92 /* SocketMessageProtector.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFA663817584662941C2E371 /* SocketMessageProtector.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,6 +24,7 @@
 		A7EC0DA200AC735E2B4FAFE5 /* SampleConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleConfig.swift; sourceTree = "<group>"; };
 		D43B38CE63FCC428CF978229 /* SocketSampleiOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SocketSampleiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F12379D6350C442F3EAB4827 /* SampleContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleContentView.swift; sourceTree = "<group>"; };
+		FFA663817584662941C2E371 /* SocketMessageProtector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocketMessageProtector.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -59,6 +61,7 @@
 				A7EC0DA200AC735E2B4FAFE5 /* SampleConfig.swift */,
 				F12379D6350C442F3EAB4827 /* SampleContentView.swift */,
 				275B44C57D866D280A862BE8 /* SocketFrame.swift */,
+				FFA663817584662941C2E371 /* SocketMessageProtector.swift */,
 			);
 			name = SocketSample.AppleShared;
 			path = ../SocketSample.AppleShared;
@@ -127,6 +130,7 @@
 				C46CC24FD965BFD092A66C13 /* SampleConfig.swift in Sources */,
 				C303C05FC9777D2E809104D6 /* SampleContentView.swift in Sources */,
 				25047F7376870DD8A5DFD1F7 /* SocketFrame.swift in Sources */,
+				DF8C67F2EAAE3FD560FDDE92 /* SocketMessageProtector.swift in Sources */,
 				7181F2D64DC543C8BB9E60A7 /* SocketSampleiOSApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -22,6 +22,8 @@ public final class MainActivity extends Activity {
     private EditText clientId;
     private EditText host;
     private EditText port;
+    private EditText transportMode;
+    private EditText messageSecret;
     private EditText targetClientId;
     private EditText message;
     private CheckBox allowUntrusted;
@@ -47,6 +49,8 @@ public final class MainActivity extends Activity {
         clientId = input(String.valueOf(config.clientId));
         host = input(config.host);
         port = input(String.valueOf(config.port));
+        transportMode = input(config.transportMode);
+        messageSecret = input(config.messageEncryptionSecret);
         targetClientId = input("2");
         message = input("hello");
         allowUntrusted = new CheckBox(this);
@@ -61,6 +65,10 @@ public final class MainActivity extends Activity {
         root.addView(label("Port"));
         root.addView(port);
         root.addView(allowUntrusted);
+        root.addView(label("Transport"));
+        root.addView(transportMode);
+        root.addView(label("Message Secret"));
+        root.addView(messageSecret);
         root.addView(button("Save", () -> {
             readConfig();
             client.update(config);
@@ -119,6 +127,8 @@ public final class MainActivity extends Activity {
         config.host = host.getText().toString();
         config.port = Integer.parseInt(port.getText().toString());
         config.allowUntrustedLocalCertificate = allowUntrusted.isChecked();
+        config.transportMode = transportMode.getText().toString();
+        config.messageEncryptionSecret = messageSecret.getText().toString();
     }
 
     private void run(String successStatus, ThrowingRunnable action) {
@@ -140,7 +150,8 @@ public final class MainActivity extends Activity {
             "Connected: " + client.isConnected() + "\n" +
             "Registered: " + registered + "\n" +
             "Client ID: " + config.clientId + "\n" +
-            "Endpoint: " + config.host + ":" + config.port);
+            "Endpoint: " + config.host + ":" + config.port + "\n" +
+            "Transport: " + config.transportMode);
     }
 
     @Override

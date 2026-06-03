@@ -4,5 +4,7 @@
   "host": "10.0.2.2",
   "port": 5000,
   "receiveTimeoutSeconds": 10,
-  "allowUntrustedLocalCertificate": true
+  "allowUntrustedLocalCertificate": true,
+  "transportMode": "Tls",
+  "messageEncryptionSecret": ""
 }
