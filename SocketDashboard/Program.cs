@@ -3,6 +3,8 @@ using System;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using SocketCommon;
+using SocketCommon.Configuration;
 using SocketCommon.Logging;
 
 LogConfigurator.Configure();
@@ -16,7 +18,15 @@ if (String.IsNullOrEmpty(builder.Configuration["urls"]) &&
     builder.WebHost.UseUrls("http://127.0.0.1:5080");
 }
 
-builder.Services.AddSingleton<DashboardServerService>();
+EndpointConfig controlEndpoint = new()
+{
+    Host = builder.Configuration["dashboard:controlServer:host"] ?? Constants.LocalHostIpAddress,
+    Port = Int32.TryParse(builder.Configuration["dashboard:controlServer:port"], out int controlPort)
+        ? controlPort
+        : Constants.LocalHostPort
+};
+
+builder.Services.AddSingleton(_ => new DashboardServerService(0, controlEndpoint));
 
 WebApplication app = builder.Build();
 

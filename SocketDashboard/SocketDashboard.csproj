@@ -16,6 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="log4net.config" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

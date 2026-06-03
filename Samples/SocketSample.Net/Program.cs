@@ -4,7 +4,11 @@ using Microsoft.AspNetCore.Mvc;
 using SocketSample.Shared;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
-builder.WebHost.UseUrls("http://127.0.0.1:5090");
+if (String.IsNullOrEmpty(builder.Configuration["urls"]) &&
+    String.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
+{
+    builder.WebHost.UseUrls("http://127.0.0.1:5090");
+}
 
 SampleClientSettings settings = builder.Configuration
     .GetSection("sampleClient")
@@ -81,9 +85,10 @@ static string RenderPage()
     html.AppendLine("<section class=\"panel\"><label>Status</label><div id=\"status\" class=\"status\"></div></section>");
     html.AppendLine("<script>");
     html.AppendLine("async function json(url,opt){const r=await fetch(url,Object.assign({headers:{'Content-Type':'application/json'}},opt||{}));return await r.json();}");
-    html.AppendLine("function settings(){return {clientId:+clientId.value,clientName:clientName.value,host:host.value,port:+port.value,useControlServer:useControlServer.checked,receiveTimeoutSeconds:+receiveTimeoutSeconds.value,security:{transportMode:'Tls',tlsProtocol:'Tls13',requireTls13:true,requireClientCertificate:false,certificateDirectory:'',certificatePasswordEnvironmentVariable:'SOCKET_CERTIFICATE_PASSWORD',certificateRenewBeforeDays:30,rootCertificateLifetimeYears:10,moduleCertificateLifetimeYears:2,authenticationTimeoutMilliseconds:5000,messageEncryptionSecretEnvironmentVariable:'SOCKET_MESSAGE_SECRET'}}}");
-    html.AppendLine("function show(s){status.textContent=JSON.stringify(s,null,2)}");
-    html.AppendLine("async function load(){const s=await json('/api/settings');clientId.value=s.clientId;clientName.value=s.clientName;host.value=s.host;port.value=s.port;useControlServer.checked=s.useControlServer;receiveTimeoutSeconds.value=s.receiveTimeoutSeconds;show(await json('/api/state'));}");
+    html.AppendLine("function el(id){return document.getElementById(id)}");
+    html.AppendLine("function settings(){return {clientId:+el('clientId').value,clientName:el('clientName').value,host:el('host').value,port:+el('port').value,useControlServer:el('useControlServer').checked,receiveTimeoutSeconds:+el('receiveTimeoutSeconds').value,security:{transportMode:'Tls',tlsProtocol:'Tls13',requireTls13:true,requireClientCertificate:false,certificateDirectory:'',certificatePasswordEnvironmentVariable:'SOCKET_CERTIFICATE_PASSWORD',certificateRenewBeforeDays:30,rootCertificateLifetimeYears:10,moduleCertificateLifetimeYears:2,authenticationTimeoutMilliseconds:5000,messageEncryptionSecretEnvironmentVariable:'SOCKET_MESSAGE_SECRET'}}}");
+    html.AppendLine("function show(s){el('status').textContent=JSON.stringify(s,null,2)}");
+    html.AppendLine("async function load(){const s=await json('/api/settings');el('clientId').value=s.clientId;el('clientName').value=s.clientName;el('host').value=s.host;el('port').value=s.port;el('useControlServer').checked=s.useControlServer;el('receiveTimeoutSeconds').value=s.receiveTimeoutSeconds;show(await json('/api/state'));}");
     html.AppendLine("async function saveSettings(){show(await json('/api/settings',{method:'POST',body:JSON.stringify(settings())}))}");
     html.AppendLine("async function connect(){show(await json('/api/connect',{method:'POST'}))}");
     html.AppendLine("async function registerClient(){show(await json('/api/register',{method:'POST'}))}");
