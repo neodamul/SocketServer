@@ -78,6 +78,7 @@ Root CA와 모듈 인증서는 `certificateRenewBeforeDays` 이내로 만료가 
     "port": 5000,
     "peerSyncPort": 5020,
     "heartbeatTimeoutSeconds": 90,
+    "peerSnapshotSyncIntervalSeconds": 30,
     "routeReservationSeconds": 10,
     "routingPolicy": "MostAvailableConnections",
     "degradedCpuPercent": 85,
@@ -98,6 +99,7 @@ Root CA와 모듈 인증서는 `certificateRenewBeforeDays` 이내로 만료가 
 - `port`: 클라이언트 route 요청과 SocketServer 등록/heartbeat를 받는 기본 포트
 - `peerSyncPort`: ControlServer 간 동기화 포트
 - `heartbeatTimeoutSeconds`: timeout이 지난 서버는 route 후보에서 제외
+- `peerSnapshotSyncIntervalSeconds`: peer full snapshot을 주기적으로 가져와 누락 이벤트를 보정하는 간격
 - `routeReservationSeconds`: route 응답 후 실제 접속 전까지의 짧은 예약 TTL
 - `degraded*Percent`: resource threshold 초과 시 `Degraded`
 - `registry.provider`: `InMemory` 또는 `File`

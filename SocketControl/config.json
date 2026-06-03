@@ -19,6 +19,7 @@
     "port": 5000,
     "peerSyncPort": 5020,
     "heartbeatTimeoutSeconds": 90,
+    "peerSnapshotSyncIntervalSeconds": 30,
     "routeReservationSeconds": 10,
     "routingPolicy": "MostAvailableConnections",
     "degradedCpuPercent": 85,

@@ -138,6 +138,56 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
+    public async Task PeerControlServerPeriodicSnapshotSyncRecoversMissedEventsTest()
+    {
+        int primaryPort = GetAvailablePort();
+        using ControlServer peerControl = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-peer-periodic",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0,
+                PeerSnapshotSyncIntervalSeconds = 1
+            },
+            Peers = { new EndpointConfig { Host = "127.0.0.1", Port = primaryPort } }
+        });
+        Assert.IsTrue(peerControl.Start());
+
+        using ControlServer primaryControl = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-primary-periodic",
+                Host = "127.0.0.1",
+                Port = primaryPort,
+                PeerSyncPort = 0
+            }
+        });
+        Assert.IsTrue(primaryControl.Start());
+
+        using TcpServer socketServer = CreateStartedSocketServer(9, "server-9-a");
+        using ControlServerReporter reporter = new(
+            socketServer,
+            new[] { new EndpointConfig { Host = "127.0.0.1", Port = primaryControl.Port } },
+            "socket-cluster-1",
+            0,
+            0);
+        await reporter.RegisterAsync();
+        await WaitForClusterAsync(primaryControl, status => status.ServerCount == 1 && status.TotalAvailableConnections == 10);
+
+        ClusterStatusSnapshot peerStatus = await WaitForClusterAsync(
+            peerControl,
+            status => status.ServerCount == 1 && status.TotalAvailableConnections == 10,
+            timeoutSeconds: 6);
+        Assert.AreEqual(1, peerStatus.ServerCount);
+        Assert.AreEqual(10, peerStatus.TotalAvailableConnections);
+    }
+
+    [TestMethod]
     public async Task ClientMessageDeliveredBetweenClientsOnSameSocketServerTest()
     {
         using TcpServer socketServer = new(
@@ -501,9 +551,10 @@ public class ControlServerIntegrationTests
 
     private static async Task<ClusterStatusSnapshot> WaitForClusterAsync(
         ControlServer controlServer,
-        Func<ClusterStatusSnapshot, bool> predicate)
+        Func<ClusterStatusSnapshot, bool> predicate,
+        int timeoutSeconds = 5)
     {
-        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
         ClusterStatusSnapshot status;
         do
         {
@@ -519,6 +570,13 @@ public class ControlServerIntegrationTests
 
         Assert.Fail("Timed out waiting for cluster status.");
         return status;
+    }
+
+    private static int GetAvailablePort()
+    {
+        using NetSocket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+        socket.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        return ((IPEndPoint)socket.LocalEndPoint!).Port;
     }
 
     private static TcpServer CreateStartedSocketServer(int serverId, string instanceId)

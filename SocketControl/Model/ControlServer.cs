@@ -29,6 +29,7 @@ public class ControlServer : IDisposable
     private Task? acceptTask;
     private Task? peerAcceptTask;
     private Task? connectionCleanupTask;
+    private Task? peerSnapshotSyncTask;
     private long nextActiveSocketId;
     private bool disposedValue;
 
@@ -69,6 +70,7 @@ public class ControlServer : IDisposable
             this.cancellation = new CancellationTokenSource();
             this.acceptTask = this.RunAcceptLoopAsync(this.cancellation.Token);
             this.connectionCleanupTask = this.RunConnectionCleanupLoopAsync(this.cancellation.Token);
+            this.peerSnapshotSyncTask = this.RunPeerSnapshotSyncLoopAsync(this.cancellation.Token);
             if (this.config.PeerSyncPort > 0 && this.config.PeerSyncPort != this.config.Port)
             {
                 this.peerListener = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
@@ -77,7 +79,6 @@ public class ControlServer : IDisposable
                 this.peerAcceptTask = this.RunAcceptLoopAsync(this.cancellation.Token, this.peerListener);
             }
 
-            _ = Task.Run(this.SyncRegistryFromPeersAsync);
             Logger.Info($"ControlServer started. nodeId={this.config.NodeId}, endpoint={this.config.Host}:{this.Port}");
             return true;
         }
@@ -111,12 +112,14 @@ public class ControlServer : IDisposable
         await WaitForTaskAsync(this.acceptTask, timeout);
         await WaitForTaskAsync(this.peerAcceptTask, timeout);
         await WaitForTaskAsync(this.connectionCleanupTask, timeout);
+        await WaitForTaskAsync(this.peerSnapshotSyncTask, timeout);
 
         this.listener = null;
         this.peerListener = null;
         this.acceptTask = null;
         this.peerAcceptTask = null;
         this.connectionCleanupTask = null;
+        this.peerSnapshotSyncTask = null;
         this.cancellation?.Dispose();
         this.cancellation = null;
         Logger.Info($"ControlServer stopped. nodeId={this.config.NodeId}");
@@ -577,23 +580,61 @@ public class ControlServer : IDisposable
 
     private async Task PublishAsync<T>(uint messageId, T payload)
     {
+        List<Task> tasks = new();
         foreach (EndpointConfig peer in this.peers)
         {
+            tasks.Add(PublishToPeerAsync(peer, messageId, payload));
+        }
+
+        await Task.WhenAll(tasks);
+    }
+
+    private async Task PublishToPeerAsync<T>(EndpointConfig peer, uint messageId, T payload)
+    {
+        try
+        {
+            Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+            await socket.ConnectAsync(IPAddress.Parse(peer.Host), peer.Port);
+            using SecureSocketConnection connection =
+                await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketControl");
+            await ControlProtocol.SendAndReceiveAsync(
+                connection,
+                0,
+                messageId,
+                payload);
+        }
+        catch (SocketException exception)
+        {
+            Logger.Warn($"ControlServer peer event relay failed. peer={peer.Host}:{peer.Port}, messageId={messageId}", exception);
+        }
+        catch (IOException exception)
+        {
+            Logger.Warn($"ControlServer peer event relay I/O failed. peer={peer.Host}:{peer.Port}, messageId={messageId}", exception);
+        }
+        catch (AuthenticationException exception)
+        {
+            Logger.Warn($"ControlServer peer event relay authentication failed. peer={peer.Host}:{peer.Port}, messageId={messageId}", exception);
+        }
+    }
+
+    private async Task RunPeerSnapshotSyncLoopAsync(CancellationToken cancellationToken)
+    {
+        if (this.peers.Count == 0)
+        {
+            return;
+        }
+
+        TimeSpan syncInterval = GetPeerSnapshotSyncInterval();
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await SyncRegistryFromPeersAsync();
             try
             {
-                Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-                await socket.ConnectAsync(IPAddress.Parse(peer.Host), peer.Port);
-                using SecureSocketConnection connection =
-                    await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketControl");
-                await ControlProtocol.SendAndReceiveAsync(
-                    connection,
-                    0,
-                    messageId,
-                    payload);
+                await Task.Delay(syncInterval, cancellationToken);
             }
-            catch (SocketException exception)
+            catch (TaskCanceledException)
             {
-                Logger.Warn($"ControlServer peer sync failed. peer={peer.Host}:{peer.Port}", exception);
+                break;
             }
         }
     }
@@ -623,7 +664,15 @@ public class ControlServer : IDisposable
             }
             catch (SocketException exception)
             {
-                Logger.Warn($"ControlServer initial peer sync failed. peer={peer.Host}:{peer.Port}", exception);
+                Logger.Warn($"ControlServer peer snapshot sync failed. peer={peer.Host}:{peer.Port}", exception);
+            }
+            catch (IOException exception)
+            {
+                Logger.Warn($"ControlServer peer snapshot sync I/O failed. peer={peer.Host}:{peer.Port}", exception);
+            }
+            catch (AuthenticationException exception)
+            {
+                Logger.Warn($"ControlServer peer snapshot sync authentication failed. peer={peer.Host}:{peer.Port}", exception);
             }
         }
     }
@@ -662,6 +711,13 @@ public class ControlServer : IDisposable
         double heartbeatTimeoutMilliseconds = GetHeartbeatTimeout().TotalMilliseconds;
         double intervalMilliseconds = Math.Min(5000, Math.Max(250, heartbeatTimeoutMilliseconds / 2));
         return TimeSpan.FromMilliseconds(intervalMilliseconds);
+    }
+
+    private TimeSpan GetPeerSnapshotSyncInterval()
+    {
+        return TimeSpan.FromSeconds(this.config.PeerSnapshotSyncIntervalSeconds <= 0
+            ? 30
+            : this.config.PeerSnapshotSyncIntervalSeconds);
     }
 
     private static async Task WaitForTaskAsync(Task? task, TimeSpan timeout)

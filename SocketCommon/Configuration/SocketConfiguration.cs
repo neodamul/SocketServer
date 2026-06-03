@@ -36,6 +36,8 @@ public class ControlServerNodeConfig
 
     public int HeartbeatTimeoutSeconds { get; set; } = 90;
 
+    public int PeerSnapshotSyncIntervalSeconds { get; set; } = 30;
+
     public int RouteReservationSeconds { get; set; } = 10;
 
     public string RoutingPolicy { get; set; } = "MostAvailableConnections";
