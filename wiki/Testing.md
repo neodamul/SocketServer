@@ -29,6 +29,7 @@ dotnet test SocketTests/SocketTests.csproj
 - heartbeat timeout route exclusion
 - degraded resource route exclusion
 - dashboard cluster snapshot
+- dashboard liveness, readiness, metrics models
 
 ## Load Test
 

@@ -38,6 +38,26 @@ public class DashboardServerServiceTests
     }
 
     [TestMethod]
+    public void HealthAndMetricsEndpointsExposeOperationalStateTest()
+    {
+        using DashboardServerService service = new(0);
+
+        DashboardHealthStatus liveness = service.GetLiveness();
+        DashboardHealthStatus readiness = service.GetReadiness();
+        DashboardMetrics metrics = service.GetMetrics();
+
+        Assert.IsTrue(liveness.IsHealthy);
+        Assert.AreEqual("Alive", liveness.Status);
+        Assert.IsTrue(readiness.IsHealthy);
+        Assert.AreEqual("Ready", readiness.Status);
+        Assert.AreEqual(1, metrics.ServerCount);
+        Assert.AreEqual(1, metrics.HealthyServerCount);
+        Assert.AreEqual(TcpServer.DefaultMaxConnections, metrics.TotalMaxConnections);
+        Assert.IsTrue(metrics.SocketAsyncEventArgsAvailableCount >= 0);
+        Assert.IsTrue(metrics.SocketAsyncEventArgsHighWatermarkInUseCount >= 0);
+    }
+
+    [TestMethod]
     public void GetStatusUsesControlServerClusterStatusWhenAvailableTest()
     {
         using ControlServer controlServer = new(new ControlServerConfigFile

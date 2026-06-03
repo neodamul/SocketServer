@@ -24,6 +24,9 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 app.MapGet("/api/server/status", (DashboardServerService serverService) => serverService.GetStatus());
+app.MapGet("/health/live", (DashboardServerService serverService) => serverService.GetLiveness());
+app.MapGet("/health/ready", (DashboardServerService serverService) => serverService.GetReadiness());
+app.MapGet("/metrics", (DashboardServerService serverService) => serverService.GetMetrics());
 
 logger.Info("SocketDashboard starting.");
 app.Run();

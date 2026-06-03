@@ -51,9 +51,13 @@ API:
 
 ```text
 GET /api/server/status
+GET /health/live
+GET /health/ready
+GET /metrics
 ```
 
 ControlServer가 실행 중이면 cluster registry snapshot을 표시합니다. ControlServer가 없으면 로컬 fallback SocketServer 상태를 표시합니다.
+`/health/live`는 Dashboard 프로세스 생존 여부, `/health/ready`는 Dashboard 내부 TCP 서버 준비 상태, `/metrics`는 cluster 연결 수와 로컬 socket/pool counters를 반환합니다.
 
 ## Certificates
 

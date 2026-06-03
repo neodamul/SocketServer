@@ -55,6 +55,64 @@ public class DashboardServerService : IDisposable
         };
     }
 
+    public DashboardHealthStatus GetLiveness()
+    {
+        return new DashboardHealthStatus
+        {
+            IsHealthy = !this.disposedValue,
+            Status = this.disposedValue ? "Stopped" : "Alive",
+            DashboardStartedAt = this.StartedAt,
+            CheckedAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    public DashboardHealthStatus GetReadiness()
+    {
+        TcpServerStatus status = this.server.GetStatus();
+        bool ready = this.StartSucceeded &&
+            status.IsListening &&
+            status.IsAcceptLoopRunning;
+        return new DashboardHealthStatus
+        {
+            IsHealthy = ready,
+            Status = ready ? "Ready" : "NotReady",
+            DashboardStartedAt = this.StartedAt,
+            CheckedAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    public DashboardMetrics GetMetrics()
+    {
+        DashboardServerStatus status = this.GetStatus();
+        return new DashboardMetrics
+        {
+            DashboardStartedAt = this.StartedAt,
+            CollectedAt = DateTimeOffset.UtcNow,
+            ServerCount = status.Cluster.ServerCount,
+            HealthyServerCount = status.Cluster.HealthyServerCount,
+            TotalMaxConnections = status.Cluster.TotalMaxConnections,
+            TotalCurrentConnections = status.Cluster.TotalCurrentConnections,
+            TotalReservedConnections = status.Cluster.TotalReservedConnections,
+            TotalAvailableConnections = status.Cluster.TotalAvailableConnections,
+            TotalSessionCount = status.Cluster.TotalSessionCount,
+            AverageCpuUsagePercent = status.Cluster.AverageCpuUsagePercent,
+            AverageMemoryUsagePercent = status.Cluster.AverageMemoryUsagePercent,
+            AverageStorageUsagePercent = status.Cluster.AverageStorageUsagePercent,
+            LocalAcceptedClients = status.Server.TotalAcceptedClients,
+            LocalClosedClients = status.Server.TotalClosedClients,
+            LocalRejectedClients = status.Server.TotalRejectedClients,
+            LocalIdleTimeoutClients = status.Server.TotalIdleTimeoutClients,
+            LocalReceivedMessages = status.Server.TotalReceivedMessages,
+            LocalSentMessages = status.Server.TotalSentMessages,
+            SocketAsyncEventArgsAvailableCount = status.Server.SocketAsyncEventArgsAvailableCount,
+            SocketAsyncEventArgsInUseCount = status.Server.SocketAsyncEventArgsInUseCount,
+            SocketAsyncEventArgsHighWatermarkInUseCount = status.Server.SocketAsyncEventArgsHighWatermarkInUseCount,
+            SocketAsyncEventArgsGrowthCount = status.Server.SocketAsyncEventArgsGrowthCount,
+            RequireTls13 = SecureSocketConnection.RequireTls13,
+            RequireClientCertificate = SecureSocketConnection.RequireClientCertificate
+        };
+    }
+
     private ClusterStatusSnapshot? GetControlClusterStatus()
     {
         try
@@ -153,4 +211,66 @@ public class DashboardServerStatus
     public TcpServerStatus Server { get; init; } = new();
 
     public ClusterStatusSnapshot Cluster { get; init; } = new();
+}
+
+public class DashboardHealthStatus
+{
+    public bool IsHealthy { get; init; }
+
+    public string Status { get; init; } = "";
+
+    public DateTimeOffset DashboardStartedAt { get; init; }
+
+    public DateTimeOffset CheckedAt { get; init; }
+}
+
+public class DashboardMetrics
+{
+    public DateTimeOffset DashboardStartedAt { get; init; }
+
+    public DateTimeOffset CollectedAt { get; init; }
+
+    public int ServerCount { get; init; }
+
+    public int HealthyServerCount { get; init; }
+
+    public int TotalMaxConnections { get; init; }
+
+    public int TotalCurrentConnections { get; init; }
+
+    public int TotalReservedConnections { get; init; }
+
+    public int TotalAvailableConnections { get; init; }
+
+    public int TotalSessionCount { get; init; }
+
+    public double AverageCpuUsagePercent { get; init; }
+
+    public double AverageMemoryUsagePercent { get; init; }
+
+    public double AverageStorageUsagePercent { get; init; }
+
+    public long LocalAcceptedClients { get; init; }
+
+    public long LocalClosedClients { get; init; }
+
+    public long LocalRejectedClients { get; init; }
+
+    public long LocalIdleTimeoutClients { get; init; }
+
+    public long LocalReceivedMessages { get; init; }
+
+    public long LocalSentMessages { get; init; }
+
+    public int SocketAsyncEventArgsAvailableCount { get; init; }
+
+    public int SocketAsyncEventArgsInUseCount { get; init; }
+
+    public int SocketAsyncEventArgsHighWatermarkInUseCount { get; init; }
+
+    public int SocketAsyncEventArgsGrowthCount { get; init; }
+
+    public bool RequireTls13 { get; init; }
+
+    public bool RequireClientCertificate { get; init; }
 }
