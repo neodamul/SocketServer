@@ -27,6 +27,7 @@ dotnet test SocketTests/SocketTests.csproj
 - SocketServer-to-SocketServer client message relay
 - SocketServer control channel disconnect detection
 - active-active ControlServer, three SocketServers, platform sample clients concurrent messaging
+- graceful shutdown for ControlServer, SocketServer, and SocketClient
 - route reservation release
 - heartbeat timeout route exclusion
 - degraded resource route exclusion

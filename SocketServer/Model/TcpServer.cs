@@ -210,10 +210,21 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     public bool End()
     {
+        return this.EndAsync().GetAwaiter().GetResult();
+    }
+
+    public Task<bool> EndAsync()
+    {
+        return this.EndAsync(TimeSpan.FromSeconds(5));
+    }
+
+    public async Task<bool> EndAsync(TimeSpan timeout)
+    {
         this.acceptLoopCancellation?.Cancel();
-        this.CloseConnectedClients();
         this.Disconnect();
         this.isListening = false;
+        this.CloseConnectedClients();
+        await WaitForTaskAsync(this.acceptLoopTask, timeout);
         this.acceptLoopCancellation?.Dispose();
         this.acceptLoopCancellation = null;
         this.acceptLoopTask = null;
@@ -902,6 +913,31 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         finally
         {
             client.Dispose();
+        }
+    }
+
+    private static async Task WaitForTaskAsync(Task task, TimeSpan timeout)
+    {
+        if (task == null || task.IsCompleted)
+        {
+            return;
+        }
+
+        Task completed = await Task.WhenAny(task, Task.Delay(timeout));
+        if (completed != task)
+        {
+            return;
+        }
+
+        try
+        {
+            await task;
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (SocketException)
+        {
         }
     }
 

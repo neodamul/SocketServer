@@ -1,8 +1,11 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Threading;
 using System.Threading.Tasks;
 using SocketCommon.Configuration;
@@ -19,11 +22,13 @@ public class ControlServer : IDisposable
     private readonly IReadOnlyCollection<EndpointConfig> peers;
     private readonly BackendServerRegistry registry;
     private readonly ControlHealthThreshold healthThreshold;
+    private readonly ConcurrentDictionary<long, Socket> activeSockets = new();
     private Socket? listener;
     private Socket? peerListener;
     private CancellationTokenSource? cancellation;
     private Task? acceptTask;
     private Task? peerAcceptTask;
+    private long nextActiveSocketId;
     private bool disposedValue;
 
     public ControlServer(ControlServerConfigFile config)
@@ -81,13 +86,34 @@ public class ControlServer : IDisposable
 
     public void Stop()
     {
+        this.StopAsync().GetAwaiter().GetResult();
+    }
+
+    public Task StopAsync()
+    {
+        return this.StopAsync(TimeSpan.FromSeconds(5));
+    }
+
+    public async Task StopAsync(TimeSpan timeout)
+    {
         this.cancellation?.Cancel();
         this.listener?.Dispose();
         this.peerListener?.Dispose();
+        foreach (Socket socket in this.activeSockets.Values)
+        {
+            socket.Dispose();
+        }
+
+        await WaitForTaskAsync(this.acceptTask, timeout);
+        await WaitForTaskAsync(this.peerAcceptTask, timeout);
+
         this.listener = null;
         this.peerListener = null;
         this.acceptTask = null;
         this.peerAcceptTask = null;
+        this.cancellation?.Dispose();
+        this.cancellation = null;
+        Logger.Info($"ControlServer stopped. nodeId={this.config.NodeId}");
     }
 
     public ClusterStatusSnapshot GetClusterStatus()
@@ -138,11 +164,13 @@ public class ControlServer : IDisposable
 
     private async Task HandleConnectionAsync(Socket socket)
     {
-        using SecureSocketConnection acceptedConnection =
-            await SecureSocketConnection.AuthenticateServerAsync(socket, "SocketControl");
+        long activeSocketId = Interlocked.Increment(ref this.nextActiveSocketId);
+        this.activeSockets[activeSocketId] = socket;
+        SecureSocketConnection? acceptedConnection = null;
         string serverInstanceId = "";
         try
         {
+            acceptedConnection = await SecureSocketConnection.AuthenticateServerAsync(socket, "SocketControl");
             while (true)
             {
                 (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(acceptedConnection);
@@ -202,8 +230,34 @@ public class ControlServer : IDisposable
                 }
             }
         }
+        catch (SocketException exception)
+        {
+            if (!this.IsStopping())
+            {
+                Logger.Warn("ControlServer connection failed.", exception);
+            }
+        }
+        catch (IOException exception)
+        {
+            if (!this.IsStopping())
+            {
+                Logger.Warn("ControlServer secure connection failed.", exception);
+            }
+        }
+        catch (AuthenticationException exception)
+        {
+            if (!this.IsStopping())
+            {
+                Logger.Warn("ControlServer authentication failed.", exception);
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+        }
         finally
         {
+            acceptedConnection?.Dispose();
+            this.activeSockets.TryRemove(activeSocketId, out _);
             if (!string.IsNullOrWhiteSpace(serverInstanceId))
             {
                 BackendServerSnapshot? snapshot = this.registry.MarkServerDisconnected(serverInstanceId);
@@ -544,12 +598,41 @@ public class ControlServer : IDisposable
             : fallback;
     }
 
+    private static async Task WaitForTaskAsync(Task? task, TimeSpan timeout)
+    {
+        if (task == null || task.IsCompleted)
+        {
+            return;
+        }
+
+        Task completed = await Task.WhenAny(task, Task.Delay(timeout));
+        if (completed != task)
+        {
+            return;
+        }
+
+        try
+        {
+            await task;
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (SocketException)
+        {
+        }
+    }
+
+    private bool IsStopping()
+    {
+        return this.disposedValue || this.cancellation?.IsCancellationRequested == true;
+    }
+
     public void Dispose()
     {
         if (!this.disposedValue)
         {
             this.Stop();
-            this.cancellation?.Dispose();
             this.disposedValue = true;
             GC.SuppressFinalize(this);
         }

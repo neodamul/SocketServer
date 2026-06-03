@@ -171,7 +171,23 @@ public class TcpClient : IClient, IDisposable
     public bool Disconnect()
     {
         this.StopHealthCheckLoop();
-        if (this.Connection == null)
+        return this.CloseConnection();
+    }
+
+    public Task<bool> DisconnectAsync()
+    {
+        return this.DisconnectAsync(TimeSpan.FromSeconds(5));
+    }
+
+    public async Task<bool> DisconnectAsync(TimeSpan timeout)
+    {
+        await this.StopHealthCheckLoopAsync(timeout);
+        return this.CloseConnection();
+    }
+
+    private bool CloseConnection()
+    {
+        if (this.Connection == null && this.Socket == null)
         {
             return true;
         }
@@ -234,6 +250,44 @@ public class TcpClient : IClient, IDisposable
         this.healthCheckCancellation?.Dispose();
         this.healthCheckCancellation = null;
         this.healthCheckTask = null;
+    }
+
+    public Task StopHealthCheckLoopAsync()
+    {
+        return this.StopHealthCheckLoopAsync(TimeSpan.FromSeconds(5));
+    }
+
+    public async Task StopHealthCheckLoopAsync(TimeSpan timeout)
+    {
+        CancellationTokenSource cancellation = this.healthCheckCancellation;
+        Task task = this.healthCheckTask;
+        try
+        {
+            cancellation?.Cancel();
+            if (task != null && !task.IsCompleted)
+            {
+                Task completed = await Task.WhenAny(task, Task.Delay(timeout));
+                if (completed == task)
+                {
+                    await task;
+                }
+            }
+        }
+        catch (TaskCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        finally
+        {
+            cancellation?.Dispose();
+            if (this.healthCheckCancellation == cancellation)
+            {
+                this.healthCheckCancellation = null;
+                this.healthCheckTask = null;
+            }
+        }
     }
 
     public bool IsConnected()
