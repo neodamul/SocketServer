@@ -18,6 +18,7 @@
   <ItemGroup>
     <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="log4net.config" CopyToOutputDirectory="PreserveNewest" />
+    <Content Update="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

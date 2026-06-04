@@ -1,6 +1,7 @@
 ﻿using SocketDashboard.Model;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -13,7 +14,12 @@ using SocketCommon.Model;
 LogConfigurator.Configure();
 SocketLogger logger = SocketLogManager.GetLogger(typeof(Program));
 
-WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
+string outputWebRootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+WebApplicationBuilder builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    WebRootPath = Directory.Exists(outputWebRootPath) ? outputWebRootPath : "wwwroot"
+});
 
 if (String.IsNullOrEmpty(builder.Configuration["urls"]) &&
     String.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
