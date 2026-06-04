@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
+using SocketCommon.Configuration;
 using SocketClient.Model;
 using SocketCommon.Model;
 using SocketServer.Model;
@@ -31,6 +32,7 @@ public class TcpServerTests
     [TestCleanup]
     public void Cleanup()
     {
+        SocketFactory.Configure(new SocketOperationConfig());
         this.testPortMutex?.ReleaseMutex();
         this.testPortMutex?.Dispose();
     }
@@ -302,6 +304,47 @@ public class TcpServerTests
             Assert.IsTrue(client.StartHealthCheckLoop(TimeSpan.FromMilliseconds(50)));
 
             await Task.Delay(450);
+            TcpServerStatus status = server.GetStatus();
+            Assert.AreEqual(1, status.ConnectedClientCount);
+            Assert.AreEqual(0, status.TotalIdleTimeoutClients);
+            Assert.IsTrue(status.TotalReceivedMessages >= 2);
+            Assert.IsTrue(status.TotalSentMessages >= 2);
+        }
+        finally
+        {
+            client.Disconnect();
+            server.End();
+        }
+    }
+
+    [TestMethod()]
+    public async Task HealthCheckLoopDoesNotCloseWhenIntervalExceedsReadTimeoutTest()
+    {
+        SocketFactory.Configure(new SocketOperationConfig
+        {
+            ConnectTimeoutSeconds = 3,
+            ReadTimeoutSeconds = 1,
+            WriteTimeoutSeconds = 3
+        });
+        TcpServer server = new(
+            1,
+            "testServer",
+            "127.0.0.1",
+            TestPort,
+            maxConnections: 10,
+            pendingAcceptCount: 2,
+            idleTimeout: TimeSpan.FromSeconds(5),
+            idleScanInterval: TimeSpan.FromMilliseconds(50));
+        TcpClient client = new(1, "keepAliveClient", "127.0.0.1", TestPort);
+
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+            Assert.IsTrue(client.Connect());
+            Assert.IsTrue(client.StartHealthCheckLoop(TimeSpan.FromMilliseconds(1100)));
+
+            await Task.Delay(2600);
             TcpServerStatus status = server.GetStatus();
             Assert.AreEqual(1, status.ConnectedClientCount);
             Assert.AreEqual(0, status.TotalIdleTimeoutClients);

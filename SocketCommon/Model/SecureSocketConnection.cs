@@ -262,17 +262,23 @@ public sealed class SecureSocketConnection : IDisposable
 
     public async Task<byte[]> ReceiveExactAsync(int length)
     {
+        return await this.ReceiveExactAsync(length, SocketFactory.ReadTimeoutMilliseconds);
+    }
+
+    public async Task<byte[]> ReceiveExactAsync(int length, int timeoutMilliseconds)
+    {
         if (length < 0 || this.disposed)
         {
             return null;
         }
 
+        timeoutMilliseconds = NormalizeTimeoutMilliseconds(timeoutMilliseconds);
         if (this.messageProtector != null)
         {
-            return await this.ReceiveExactProtectedAsync(length);
+            return await this.ReceiveExactProtectedAsync(length, timeoutMilliseconds);
         }
 
-        return await this.ReceiveExactFromSslAsync(length);
+        return await this.ReceiveExactFromSslAsync(length, timeoutMilliseconds);
     }
 
     public void Close()
@@ -308,13 +314,13 @@ public sealed class SecureSocketConnection : IDisposable
         this.Close();
     }
 
-    private async Task<byte[]> ReceiveExactFromSslAsync(int length)
+    private async Task<byte[]> ReceiveExactFromSslAsync(int length, int timeoutMilliseconds)
     {
         byte[] buffer = new byte[length];
         int offset = 0;
         try
         {
-            using CancellationTokenSource cancellation = new(SocketFactory.ReadTimeoutMilliseconds);
+            using CancellationTokenSource cancellation = new(timeoutMilliseconds);
             while (offset < length)
             {
                 int read = await this.sslStream.ReadAsync(buffer.AsMemory(offset, length - offset), cancellation.Token);
@@ -343,13 +349,13 @@ public sealed class SecureSocketConnection : IDisposable
         return buffer;
     }
 
-    private async Task<byte[]> ReceiveExactFromNetworkAsync(int length)
+    private async Task<byte[]> ReceiveExactFromNetworkAsync(int length, int timeoutMilliseconds)
     {
         byte[] buffer = new byte[length];
         int offset = 0;
         try
         {
-            using CancellationTokenSource cancellation = new(SocketFactory.ReadTimeoutMilliseconds);
+            using CancellationTokenSource cancellation = new(timeoutMilliseconds);
             while (offset < length)
             {
                 int read = await this.networkStream.ReadAsync(buffer.AsMemory(offset, length - offset), cancellation.Token);
@@ -378,7 +384,7 @@ public sealed class SecureSocketConnection : IDisposable
         return buffer;
     }
 
-    private async Task<byte[]> ReceiveExactProtectedAsync(int length)
+    private async Task<byte[]> ReceiveExactProtectedAsync(int length, int timeoutMilliseconds)
     {
         if (length == 0)
         {
@@ -387,7 +393,7 @@ public sealed class SecureSocketConnection : IDisposable
 
         if (this.pendingPlainFrameBytes == null || this.pendingPlainFrameOffset >= this.pendingPlainFrameBytes.Length)
         {
-            if (!await this.ReadProtectedFrameAsync())
+            if (!await this.ReadProtectedFrameAsync(timeoutMilliseconds))
             {
                 return null;
             }
@@ -411,9 +417,9 @@ public sealed class SecureSocketConnection : IDisposable
         return result;
     }
 
-    private async Task<bool> ReadProtectedFrameAsync()
+    private async Task<bool> ReadProtectedFrameAsync(int timeoutMilliseconds)
     {
-        byte[] header = await this.ReceiveExactFromNetworkAsync(SocketMessageFrame.HeaderLength);
+        byte[] header = await this.ReceiveExactFromNetworkAsync(SocketMessageFrame.HeaderLength, timeoutMilliseconds);
         if (header == null)
         {
             return false;
@@ -427,7 +433,7 @@ public sealed class SecureSocketConnection : IDisposable
 
         byte[] protectedPayload = protectedPayloadLength == 0
             ? Array.Empty<byte>()
-            : await this.ReceiveExactFromNetworkAsync((int)protectedPayloadLength);
+            : await this.ReceiveExactFromNetworkAsync((int)protectedPayloadLength, SocketFactory.ReadTimeoutMilliseconds);
         if (protectedPayload == null)
         {
             return false;
@@ -453,6 +459,11 @@ public sealed class SecureSocketConnection : IDisposable
         using CancellationTokenSource cancellation = new(SocketFactory.WriteTimeoutMilliseconds);
         await stream.WriteAsync(bytes.AsMemory(0, bytes.Length), cancellation.Token);
         await stream.FlushAsync(cancellation.Token);
+    }
+
+    private static int NormalizeTimeoutMilliseconds(int timeoutMilliseconds)
+    {
+        return timeoutMilliseconds > 0 ? timeoutMilliseconds : SocketFactory.ReadTimeoutMilliseconds;
     }
 
     private static bool IsTrustedLocalCertificate(X509Certificate certificate)

@@ -589,13 +589,31 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         return closedCount;
     }
 
+    private int GetClientFrameHeaderReadTimeoutMilliseconds()
+    {
+        double timeoutMilliseconds =
+            this.idleTimeout.TotalMilliseconds +
+            this.idleScanInterval.TotalMilliseconds +
+            SocketFactory.ReadTimeoutMilliseconds;
+
+        if (timeoutMilliseconds >= int.MaxValue)
+        {
+            return int.MaxValue;
+        }
+
+        return Math.Max(SocketFactory.ReadTimeoutMilliseconds, (int)Math.Ceiling(timeoutMilliseconds));
+    }
+
     private async Task HandleClientAsync(ConnectionSession session, CancellationToken cancellationToken)
     {
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(session.Connection);
+                (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(
+                    session.Connection,
+                    this.GetClientFrameHeaderReadTimeoutMilliseconds(),
+                    SocketFactory.ReadTimeoutMilliseconds);
                 if (!success)
                 {
                     break;
@@ -642,10 +660,16 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 return true;
             }
 
+            Logger.Debug($"Healthcheck ping received. instanceId={this.InstanceId}, connectionId={session.Id}, clientId={healthCheckMessage.ClientId}");
             sent = await session.SendAsync(HealthCheckProtocol.Encode(HealthCheckProtocol.CreatePong(healthCheckMessage.ClientId)));
             if (sent)
             {
                 Interlocked.Increment(ref this.totalSentMessages);
+                Logger.Debug($"Healthcheck pong sent. instanceId={this.InstanceId}, connectionId={session.Id}, clientId={healthCheckMessage.ClientId}");
+            }
+            else
+            {
+                Logger.Warn($"Healthcheck pong send failed. instanceId={this.InstanceId}, connectionId={session.Id}, clientId={healthCheckMessage.ClientId}");
             }
 
             return sent;

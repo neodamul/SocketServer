@@ -104,7 +104,18 @@ public class SocketMessageFrame
 
     public static async Task<(bool Success, SocketMessageFrame Frame)> TryReceiveAsync(SecureSocketConnection connection)
     {
-        byte[] header = await connection.ReceiveExactAsync(HeaderLength);
+        return await TryReceiveAsync(
+            connection,
+            SocketFactory.ReadTimeoutMilliseconds,
+            SocketFactory.ReadTimeoutMilliseconds);
+    }
+
+    public static async Task<(bool Success, SocketMessageFrame Frame)> TryReceiveAsync(
+        SecureSocketConnection connection,
+        int headerTimeoutMilliseconds,
+        int payloadTimeoutMilliseconds)
+    {
+        byte[] header = await connection.ReceiveExactAsync(HeaderLength, headerTimeoutMilliseconds);
         if (header == null)
         {
             return (false, null);
@@ -118,7 +129,7 @@ public class SocketMessageFrame
 
         byte[] payload = payloadLength == 0
             ? Array.Empty<byte>()
-            : await connection.ReceiveExactAsync((int)payloadLength);
+            : await connection.ReceiveExactAsync((int)payloadLength, payloadTimeoutMilliseconds);
         if (payload == null)
         {
             return (false, null);
