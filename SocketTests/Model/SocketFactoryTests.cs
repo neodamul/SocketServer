@@ -1,5 +1,8 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System;
+using System.Net;
 using System.Net.Sockets;
+using System.Threading.Tasks;
 using SocketCommon.Configuration;
 using SocketCommon.Model;
 
@@ -21,6 +24,22 @@ public class SocketFactoryTests
 
         Assert.AreEqual(SocketFactory.ListenBacklog, 100);
         Assert.IsTrue(socket.NoDelay);
+    }
+
+    [TestMethod]
+    public async Task CreateTcpSocketRejectsDuplicateListenerOnSamePortTest()
+    {
+        using Socket first = SocketFactory.CreateTcpSocket();
+        first.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        first.Listen(SocketFactory.ListenBacklog);
+        int port = ((IPEndPoint)first.LocalEndPoint!).Port;
+
+        using Socket second = SocketFactory.CreateTcpSocket();
+        await Assert.ThrowsExceptionAsync<SocketException>(() =>
+        {
+            second.Bind(new IPEndPoint(IPAddress.Loopback, port));
+            return Task.CompletedTask;
+        });
     }
 
     [TestMethod]

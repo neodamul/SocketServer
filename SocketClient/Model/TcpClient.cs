@@ -15,6 +15,8 @@ namespace SocketClient.Model;
 public class TcpClient : IClient, IDisposable
 {
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<TcpClient>();
+    private static readonly TimeSpan MinimumHealthCheckResponseTimeout = TimeSpan.FromMilliseconds(250);
+    private const int MaxHealthCheckMissCount = 3;
 
     protected Socket Socket = null;
     protected SecureSocketConnection Connection = null;
@@ -511,6 +513,8 @@ public class TcpClient : IClient, IDisposable
 
     private async Task RunHealthCheckLoopAsync(TimeSpan interval, CancellationToken cancellationToken)
     {
+        int missedResponses = 0;
+        TimeSpan responseTimeout = NormalizeHealthCheckResponseTimeout(interval);
         while (!cancellationToken.IsCancellationRequested)
         {
             try
@@ -522,17 +526,33 @@ public class TcpClient : IClient, IDisposable
                 }
 
                 Task<(bool Success, HealthCheckMessage Message)> receiveTask = this.TryReceiveHealthCheckAsync();
-                Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(interval, cancellationToken));
+                Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(responseTimeout, cancellationToken));
                 if (completedTask != receiveTask)
                 {
-                    break;
+                    missedResponses++;
+                    Logger.Warn($"Healthcheck pong timed out. clientId={this.ClientId}, missedResponses={missedResponses}, timeoutMs={responseTimeout.TotalMilliseconds}");
+                    if (missedResponses >= MaxHealthCheckMissCount)
+                    {
+                        break;
+                    }
+
+                    continue;
                 }
 
                 (bool success, HealthCheckMessage message) = await receiveTask;
                 if (!success || message.Type != HealthCheckMessageType.Pong)
                 {
-                    break;
+                    missedResponses++;
+                    Logger.Warn($"Healthcheck pong invalid. clientId={this.ClientId}, missedResponses={missedResponses}, success={success}, messageType={message?.Type}");
+                    if (missedResponses >= MaxHealthCheckMissCount)
+                    {
+                        break;
+                    }
+
+                    continue;
                 }
+
+                missedResponses = 0;
             }
             catch (TaskCanceledException)
             {
@@ -549,6 +569,13 @@ public class TcpClient : IClient, IDisposable
             Logger.Warn($"Healthcheck loop failed. clientId={this.ClientId}");
             this.Disconnect();
         }
+    }
+
+    private static TimeSpan NormalizeHealthCheckResponseTimeout(TimeSpan interval)
+    {
+        return interval < MinimumHealthCheckResponseTimeout
+            ? MinimumHealthCheckResponseTimeout
+            : interval;
     }
 
     public override string ToString()

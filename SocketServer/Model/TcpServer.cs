@@ -125,15 +125,53 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         Dictionary<string, BackendServerSnapshot> latestServers = new(StringComparer.Ordinal);
         bool receivedSnapshot = false;
         RelayLogger.Debug($"Relay server snapshot refresh started. instanceId={this.instanceId}, controlServers={this.controlServers.Count}");
-        foreach (EndpointConfig endpoint in this.controlServers)
+        List<Task<(EndpointConfig Endpoint, ClusterStatusSnapshot Snapshot)>> snapshotTasks = this.controlServers
+            .Select(FetchRelaySnapshotAsync)
+            .ToList();
+        while (snapshotTasks.Count > 0)
+        {
+            Task<(EndpointConfig Endpoint, ClusterStatusSnapshot Snapshot)> completedTask = await Task.WhenAny(snapshotTasks);
+            snapshotTasks.Remove(completedTask);
+            (EndpointConfig endpoint, ClusterStatusSnapshot snapshot) = await completedTask;
+            if (snapshot == null)
+            {
+                continue;
+            }
+
+            receivedSnapshot = true;
+            RelayLogger.Info($"Relay server snapshot received. instanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}, servers={snapshot.ServerCount}");
+            foreach (BackendServerSnapshot server in snapshot.Servers)
+            {
+                if (!IsRelayCandidate(server))
+                {
+                    RelayLogger.Debug($"Relay server candidate skipped. sourceInstanceId={this.instanceId}, candidateInstanceId={server?.InstanceId}, host={server?.Host}, port={server?.Port}, health={server?.Health}");
+                    continue;
+                }
+
+                if (!latestServers.TryGetValue(server.InstanceId, out BackendServerSnapshot existing) ||
+                    server.Version > existing.Version ||
+                    (server.Version == existing.Version && server.UpdatedAt > existing.UpdatedAt))
+                {
+                    latestServers[server.InstanceId] = server;
+                }
+            }
+
+            break;
+        }
+
+        foreach (Task<(EndpointConfig Endpoint, ClusterStatusSnapshot Snapshot)> task in snapshotTasks.Where(task => !task.IsCompleted))
+        {
+            _ = task.ContinueWith(_ => { }, TaskContinuationOptions.ExecuteSynchronously);
+        }
+
+        async Task<(EndpointConfig Endpoint, ClusterStatusSnapshot Snapshot)> FetchRelaySnapshotAsync(EndpointConfig endpoint)
         {
             try
             {
                 RelayLogger.Debug($"Relay server snapshot request started. instanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}");
-                Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+                using Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
                 await SocketFactory.ConnectAsync(socket, IPAddress.Parse(endpoint.Host), endpoint.Port);
-                using SecureSocketConnection connection =
-                    await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
+                using SecureSocketConnection connection = await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
                 (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
                     connection,
                     0,
@@ -144,26 +182,10 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                     frame.MessageId != ControlMessageIds.RegistrySnapshotResponse ||
                     !ControlProtocol.TryDecode(frame, ControlMessageIds.RegistrySnapshotResponse, out ClusterStatusSnapshot snapshot))
                 {
-                    continue;
+                    return (endpoint, null);
                 }
 
-                receivedSnapshot = true;
-                RelayLogger.Info($"Relay server snapshot received. instanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}, servers={snapshot.ServerCount}");
-                foreach (BackendServerSnapshot server in snapshot.Servers)
-                {
-                    if (!IsRelayCandidate(server))
-                    {
-                        RelayLogger.Debug($"Relay server candidate skipped. sourceInstanceId={this.instanceId}, candidateInstanceId={server?.InstanceId}, host={server?.Host}, port={server?.Port}, health={server?.Health}");
-                        continue;
-                    }
-
-                    if (!latestServers.TryGetValue(server.InstanceId, out BackendServerSnapshot existing) ||
-                        server.Version > existing.Version ||
-                        (server.Version == existing.Version && server.UpdatedAt > existing.UpdatedAt))
-                    {
-                        latestServers[server.InstanceId] = server;
-                    }
-                }
+                return (endpoint, snapshot);
             }
             catch (SocketException exception)
             {
@@ -185,6 +207,8 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 Logger.Warn($"Relay server snapshot refresh authentication failed. endpoint={endpoint.Host}:{endpoint.Port}", exception);
                 RelayLogger.Warn($"Relay server snapshot refresh authentication failed. instanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}", exception);
             }
+
+            return (endpoint, null);
         }
 
         if (!receivedSnapshot)
@@ -937,10 +961,13 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     private async Task<(bool Success, string TargetInstanceId, string ErrorMessage)> BroadcastRelayToKnownServersAsync(
         ClientMessageSendRequest request)
     {
-        await this.RefreshRelayServersFromControlServersAsync();
-        BackendServerSnapshot[] servers = this.relayServers.Values
-            .Where(IsRelayCandidate)
-            .ToArray();
+        BackendServerSnapshot[] servers = this.GetRelayCandidates();
+        if (servers.Length == 0)
+        {
+            await this.RefreshRelayServersFromControlServersAsync();
+            servers = this.GetRelayCandidates();
+        }
+
         RelayLogger.Info($"Broadcast relay started. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, candidateCount={servers.Length}");
         if (servers.Length == 0)
         {
@@ -965,6 +992,13 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         return (false, "", string.IsNullOrWhiteSpace(errorMessage)
             ? "No relay SocketServer delivered the message."
             : errorMessage);
+    }
+
+    private BackendServerSnapshot[] GetRelayCandidates()
+    {
+        return this.relayServers.Values
+            .Where(IsRelayCandidate)
+            .ToArray();
     }
 
     private bool IsRelayCandidate(BackendServerSnapshot server)

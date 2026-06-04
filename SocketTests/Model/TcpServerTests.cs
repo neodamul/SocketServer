@@ -290,7 +290,7 @@ public class TcpServerTests
             TestPort,
             maxConnections: 10,
             pendingAcceptCount: 2,
-            idleTimeout: TimeSpan.FromMilliseconds(200),
+            idleTimeout: TimeSpan.FromSeconds(1),
             idleScanInterval: TimeSpan.FromMilliseconds(50));
         TcpClient client = new(1, "keepAliveClient", "127.0.0.1", TestPort);
 

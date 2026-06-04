@@ -65,13 +65,13 @@ availableConnections = maxConnections - currentConnections - reservedConnections
 
 ## SocketServer
 
-SocketServer는 설정된 port range에서 사용 가능한 포트를 찾아 바인딩합니다. 바인딩 후 ControlServer에 등록하고, 주기적으로 heartbeat를 전송합니다.
+SocketServer는 설정된 port range에서 사용 가능한 포트를 찾아 바인딩합니다. TCP listener는 같은 포트에 중복 바인딩되지 않도록 `ReuseAddress`를 기본 적용하지 않으며, 바인딩 후 ControlServer에 등록하고 주기적으로 heartbeat를 전송합니다.
 
-SocketServer는 configured ControlServer 전체에 register, heartbeat, session open/update/close를 직접 보고합니다. 2대 active-active 구성에서는 A/B 양쪽에 병렬 전송하고, 한쪽 endpoint가 멈추거나 지연되어도 다른 ControlServer 보고가 막히지 않도록 endpoint별 timeout을 적용합니다. ControlServer는 개별 요청 채널이 닫혔다는 이유만으로 SocketServer를 `Unhealthy`로 바꾸지 않고, heartbeat timeout을 초과한 서버만 cleanup scheduler에서 신규 route 및 client message location 후보에서 제외합니다. SocketServer가 재연결하면 register, heartbeat, session update로 상태를 다시 보정합니다.
+SocketServer는 configured ControlServer 전체에 register, heartbeat, session open/update/close를 직접 보고합니다. 2대 active-active 구성에서는 A/B 양쪽에 병렬 전송하고, 하나 이상의 ControlServer 보고가 성공하면 느린 endpoint 때문에 호출 흐름이 장시간 막히지 않도록 짧은 grace 이후 계속 진행합니다. 남은 endpoint 전송은 자체 operation timeout으로 성공/실패를 기록합니다. Heartbeat loop는 예외가 발생해도 다음 주기에 재시도하며, ControlServer 재시작이나 registry 유실을 보정하기 위해 register metadata를 주기적으로 다시 전송합니다. ControlServer는 개별 요청 채널이 닫혔다는 이유만으로 SocketServer를 `Unhealthy`로 바꾸지 않고, heartbeat timeout을 초과한 서버만 cleanup scheduler에서 신규 route 및 client message location 후보에서 제외합니다. SocketServer가 재연결하면 register, heartbeat, session update로 상태를 다시 보정합니다.
 
 클라이언트가 `CLIENT_REGISTER` 또는 다른 메시지를 보내면 SocketServer는 `clientId -> session` 인덱스를 갱신하고 ControlServer에 session/client location을 전파합니다. 연결 종료, read 실패, healthcheck 중단으로 인한 idle timeout, delivery send 실패는 session close로 정규화되어 location 제거 이벤트로 이어집니다.
 
-SocketServer는 register/heartbeat 이후 ControlServer registry snapshot에서 healthy SocketServer 목록을 가져와 relay server list를 갱신합니다. 클라이언트 메시지가 로컬 target을 찾지 못하면 이 목록에 있는 전체 SocketServer로 relay message를 병렬 broadcast하고 target을 보유한 서버의 ACK를 사용합니다. Broadcast가 실패하면 기존 ControlServer target location 조회를 fallback으로 사용합니다.
+SocketServer는 register 직후 ControlServer registry snapshot에서 healthy SocketServer 목록을 가져와 relay server list를 warm-up하고, 주기적 heartbeat 중 제한된 간격으로 갱신합니다. Heartbeat마다 snapshot TLS 요청이 발생하지 않도록 refresh는 throttle 처리합니다. 클라이언트 메시지가 로컬 target을 찾지 못하면 먼저 cached relay server list에 병렬 broadcast하고, cache가 비어 있을 때만 snapshot refresh를 기다립니다. Broadcast가 실패하면 기존 ControlServer target location 조회를 fallback으로 사용합니다.
 
 SocketServer의 session event는 bounded queue를 통해 ControlServerReporter가 전송합니다. 이벤트 폭주 시 무제한 task/memory 증가를 막고, reporter worker에서 endpoint별 전송 실패와 timeout을 기록합니다.
 

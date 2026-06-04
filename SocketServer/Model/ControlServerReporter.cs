@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.IO;
@@ -17,6 +18,9 @@ namespace SocketServer.Model;
 public class ControlServerReporter : IDisposable
 {
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<ControlServerReporter>();
+    private static readonly TimeSpan MetadataRegisterInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan RelayRefreshInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan BroadcastCompletionGraceInterval = TimeSpan.FromSeconds(1);
 
     private readonly TcpServer server;
     private readonly IReadOnlyCollection<EndpointConfig> controlServers;
@@ -26,6 +30,7 @@ public class ControlServerReporter : IDisposable
     private readonly TimeSpan reportTimeout;
     private readonly ResourceUsageProvider resourceUsageProvider = new();
     private readonly IReadOnlyCollection<ControlEndpointConnection> connections;
+    private readonly object relayRefreshLock = new();
     private readonly Channel<ControlReportMessage> reportChannel = Channel.CreateBounded<ControlReportMessage>(
         new BoundedChannelOptions(10000)
         {
@@ -37,6 +42,8 @@ public class ControlServerReporter : IDisposable
     private readonly Task reportWorkerTask;
     private CancellationTokenSource cancellation;
     private Task heartbeatTask;
+    private DateTimeOffset lastRegisterSentAt = DateTimeOffset.MinValue;
+    private DateTimeOffset lastRelayRefreshStartedAt = DateTimeOffset.MinValue;
     private bool disposedValue;
 
     public ControlServerReporter(
@@ -80,8 +87,24 @@ public class ControlServerReporter : IDisposable
             StartedAt = status.StartedAt ?? DateTimeOffset.UtcNow
         };
 
-        await BroadcastAsync(0, ControlMessageIds.ServerRegister, request);
-        _ = this.server.RefreshRelayServersFromControlServersAsync();
+        int successCount = await BroadcastAsync(0, ControlMessageIds.ServerRegister, request);
+        if (successCount > 0)
+        {
+            this.lastRegisterSentAt = DateTimeOffset.UtcNow;
+            Logger.Info($"SocketServer metadata report completed. instanceId={request.InstanceId}, endpoint={request.Host}:{request.Port}, successEndpoints={successCount}, controlEndpoints={this.connections.Count}");
+            if (successCount == this.connections.Count)
+            {
+                await this.RefreshRelayServersAsync(force: true);
+            }
+            else
+            {
+                this.QueueRelayRefresh(force: true);
+            }
+
+            return;
+        }
+
+        Logger.Warn($"SocketServer metadata report completed without successful ControlServer endpoint. instanceId={request.InstanceId}, endpoint={request.Host}:{request.Port}, controlEndpoints={this.connections.Count}");
     }
 
     public void StartHeartbeatLoop(TimeSpan interval)
@@ -93,7 +116,9 @@ public class ControlServerReporter : IDisposable
 
         this.cancellation?.Dispose();
         this.cancellation = new CancellationTokenSource();
-        this.heartbeatTask = this.RunHeartbeatLoopAsync(interval, this.cancellation.Token);
+        TimeSpan normalizedInterval = NormalizeHeartbeatInterval(interval);
+        this.heartbeatTask = this.RunHeartbeatLoopAsync(normalizedInterval, this.cancellation.Token);
+        Logger.Info($"SocketServer heartbeat loop started. instanceId={this.server.InstanceId}, intervalMs={normalizedInterval.TotalMilliseconds}, controlEndpoints={this.connections.Count}");
     }
 
     public void Stop()
@@ -115,6 +140,28 @@ public class ControlServerReporter : IDisposable
             try
             {
                 await SendHeartbeatAsync();
+                await SendRegisterIfDueAsync();
+            }
+            catch (TaskCanceledException)
+            {
+                break;
+            }
+            catch (OperationCanceledException)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                Logger.Warn($"SocketServer heartbeat loop operation was canceled by a nested operation. instanceId={this.server.InstanceId}");
+            }
+            catch (Exception exception)
+            {
+                Logger.Warn($"SocketServer heartbeat loop iteration failed. instanceId={this.server.InstanceId}", exception);
+            }
+
+            try
+            {
                 await Task.Delay(interval, cancellationToken);
             }
             catch (TaskCanceledException)
@@ -122,6 +169,16 @@ public class ControlServerReporter : IDisposable
                 break;
             }
         }
+    }
+
+    private async Task SendRegisterIfDueAsync()
+    {
+        if (DateTimeOffset.UtcNow - this.lastRegisterSentAt < MetadataRegisterInterval)
+        {
+            return;
+        }
+
+        await RegisterAsync();
     }
 
     private async Task SendHeartbeatAsync()
@@ -147,8 +204,43 @@ public class ControlServerReporter : IDisposable
             SentAt = DateTimeOffset.UtcNow
         };
 
-        await BroadcastAsync(0, ControlMessageIds.ServerHeartbeat, heartbeat);
+        int successCount = await BroadcastAsync(0, ControlMessageIds.ServerHeartbeat, heartbeat);
+        if (successCount > 0)
+        {
+            this.QueueRelayRefresh(force: false);
+        }
+    }
+
+    private void QueueRelayRefresh(bool force)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        lock (this.relayRefreshLock)
+        {
+            if (!force && now - this.lastRelayRefreshStartedAt < RelayRefreshInterval)
+            {
+                return;
+            }
+
+            this.lastRelayRefreshStartedAt = now;
+        }
+
         _ = this.server.RefreshRelayServersFromControlServersAsync();
+    }
+
+    private async Task RefreshRelayServersAsync(bool force)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        lock (this.relayRefreshLock)
+        {
+            if (!force && now - this.lastRelayRefreshStartedAt < RelayRefreshInterval)
+            {
+                return;
+            }
+
+            this.lastRelayRefreshStartedAt = now;
+        }
+
+        await this.server.RefreshRelayServersFromControlServersAsync();
     }
 
     private Task SendSessionOpenedAsync(ConnectionSession session)
@@ -191,7 +283,14 @@ public class ControlServerReporter : IDisposable
         {
             await foreach (ControlReportMessage report in this.reportChannel.Reader.ReadAllAsync(cancellationToken))
             {
-                await BroadcastAsync(0, report.MessageId, report.Message);
+                try
+                {
+                    await BroadcastAsync(0, report.MessageId, report.Message);
+                }
+                catch (Exception exception)
+                {
+                    Logger.Warn($"ControlServer report item failed. instanceId={this.server.InstanceId}, messageId={report.MessageId}", exception);
+                }
             }
         }
         catch (OperationCanceledException)
@@ -203,18 +302,77 @@ public class ControlServerReporter : IDisposable
         }
     }
 
-    private async Task BroadcastAsync<T>(uint clientId, uint messageId, T payload)
+    private async Task<int> BroadcastAsync<T>(uint clientId, uint messageId, T payload)
     {
-        List<Task> tasks = new();
+        List<(ControlEndpointConnection Connection, Task<bool> Task)> tasks = new();
         foreach (ControlEndpointConnection connection in this.connections)
         {
-            tasks.Add(SendToEndpointAsync(connection, clientId, messageId, payload));
+            tasks.Add((connection, SendToEndpointAsync(connection, clientId, messageId, payload)));
         }
 
-        await Task.WhenAll(tasks);
+        if (tasks.Count == 0)
+        {
+            Logger.Warn($"ControlServer broadcast skipped because no endpoints are configured. messageId={messageId}");
+            return 0;
+        }
+
+        Task<bool[]> allReportsTask = Task.WhenAll(tasks.Select(item => item.Task));
+        Task<bool> firstSuccessTask = WaitForFirstSuccessAsync(tasks.Select(item => item.Task));
+        Task completedTask = await Task.WhenAny(allReportsTask, firstSuccessTask);
+        if (completedTask != allReportsTask && await firstSuccessTask)
+        {
+            Task finalTask = await Task.WhenAny(allReportsTask, Task.Delay(BroadcastCompletionGraceInterval));
+            if (finalTask != allReportsTask)
+            {
+                int pendingCount = tasks.Count(item => !item.Task.IsCompleted);
+                Logger.Warn($"ControlServer broadcast continuing with pending endpoint reports. messageId={messageId}, pendingEndpoints={pendingCount}, graceMs={BroadcastCompletionGraceInterval.TotalMilliseconds}");
+            }
+        }
+
+        int successCount = CountSuccessfulCompletedReports(tasks);
+        if (successCount == 0)
+        {
+            Logger.Warn($"ControlServer broadcast completed without successful endpoint. messageId={messageId}, endpointCount={this.connections.Count}");
+        }
+        else
+        {
+            Logger.Debug($"ControlServer broadcast completed. messageId={messageId}, successEndpoints={successCount}, endpointCount={this.connections.Count}");
+        }
+
+        return successCount;
     }
 
-    private static async Task SendToEndpointAsync<T>(
+    private static async Task<bool> WaitForFirstSuccessAsync(IEnumerable<Task<bool>> reportTasks)
+    {
+        List<Task<bool>> pendingTasks = reportTasks.ToList();
+        while (pendingTasks.Count > 0)
+        {
+            Task<bool> completedTask = await Task.WhenAny(pendingTasks);
+            pendingTasks.Remove(completedTask);
+            if (await completedTask)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static int CountSuccessfulCompletedReports(IEnumerable<(ControlEndpointConnection Connection, Task<bool> Task)> tasks)
+    {
+        int successCount = 0;
+        foreach ((_, Task<bool> task) in tasks)
+        {
+            if (task.IsCompletedSuccessfully && task.Result)
+            {
+                successCount++;
+            }
+        }
+
+        return successCount;
+    }
+
+    private static async Task<bool> SendToEndpointAsync<T>(
         ControlEndpointConnection connection,
         uint clientId,
         uint messageId,
@@ -227,22 +385,28 @@ public class ControlServerReporter : IDisposable
             {
                 Logger.Warn($"ControlServer report failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}");
             }
+
+            return success;
         }
         catch (SocketException exception)
         {
             Logger.Warn($"ControlServer report failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}", exception);
+            return false;
         }
         catch (IOException exception)
         {
             Logger.Warn($"ControlServer report I/O failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}", exception);
+            return false;
         }
         catch (AuthenticationException exception)
         {
             Logger.Warn($"ControlServer report authentication failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}", exception);
+            return false;
         }
         catch (ObjectDisposedException exception)
         {
             Logger.Warn($"ControlServer report failed because socket is disposed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}, messageId={messageId}", exception);
+            return false;
         }
     }
 
@@ -288,6 +452,13 @@ public class ControlServerReporter : IDisposable
             SocketFactory.ReadTimeoutMilliseconds,
             SocketFactory.WriteTimeoutMilliseconds);
         return TimeSpan.FromMilliseconds(timeoutMilliseconds);
+    }
+
+    private static TimeSpan NormalizeHeartbeatInterval(TimeSpan interval)
+    {
+        return interval <= TimeSpan.Zero
+            ? TimeSpan.FromSeconds(30)
+            : interval;
     }
 
     private static IReadOnlyCollection<ControlEndpointConnection> CreateConnections(

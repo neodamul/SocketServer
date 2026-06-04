@@ -408,6 +408,25 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
+    public async Task ReporterHeartbeatLoopReportsServerStatusWithoutExplicitRegisterTest()
+    {
+        using ControlServerPair controls = CreateStartedControlPair("heartbeat-thread");
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(85, "server-heartbeat-thread");
+        servers.AttachReporters(controls.Endpoints);
+
+        servers.StartHeartbeatLoops(TimeSpan.FromMilliseconds(100));
+
+        ClusterStatusSnapshot status = await WaitForClusterAsync(
+            controls.ControlA,
+            snapshot => snapshot.ServerCount == 4 &&
+                snapshot.HealthyServerCount == 4 &&
+                snapshot.TotalAvailableConnections == 40,
+            timeoutSeconds: 15);
+        Assert.AreEqual(4, status.HealthyServerCount);
+        Assert.AreEqual(40, status.TotalAvailableConnections);
+    }
+
+    [TestMethod]
     public async Task ActiveActiveControlsRouteFourServersAndPlatformSampleClientsMessageTest()
     {
         SocketSecurityConfig security = new()

@@ -36,7 +36,7 @@ AES-GCM은 `clientId + messageId`를 associated data로 사용하고, HMAC-SHA25
 
 `PING`, `PONG`은 `ProtoHealthCheckMessage` payload를 사용합니다. `PONG`의 `status`는 `OK`입니다.
 
-클라이언트는 `StartHealthCheckLoop()`로 기본 30초 간격 keepalive를 실행할 수 있습니다.
+클라이언트는 `StartHealthCheckLoop()`로 기본 30초 간격 keepalive를 실행할 수 있습니다. Pong 응답은 최소 250ms 동안 기다리고, 3회 연속 응답 실패가 발생하면 연결을 비정상으로 판단해 종료합니다.
 SocketServer는 `PING`을 포함한 정상 frame 수신 시 session activity를 갱신합니다. healthcheck가 중단되어 `idleTimeoutSeconds`를 초과하면 cleanup scheduler가 해당 client session을 닫고 ControlServer에 session close를 전파합니다.
 
 ## HelloWorld

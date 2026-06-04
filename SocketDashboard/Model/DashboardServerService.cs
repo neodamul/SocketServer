@@ -128,48 +128,22 @@ public class DashboardServerService : IDisposable
 
     private ControlServerQueryResult GetControlServerStatuses()
     {
-        List<DashboardControlServerStatus> controlServers = new();
         ClusterStatusSnapshot? firstHealthyCluster = null;
-        foreach (EndpointConfig endpoint in this.controlEndpoints)
+        ControlServerEndpointQuery[] queries = this.controlEndpoints
+            .Select(endpoint => QueryControlServerStatusAsync(endpoint))
+            .ToArray();
+        if (queries.Length == 0)
         {
-            DateTimeOffset checkedAt = DateTimeOffset.UtcNow;
-            try
-            {
-                ClusterStatusSnapshot? snapshot = QueryControlClusterStatusAsync(new EndpointConfig
-                {
-                    Host = endpoint.Host,
-                    Port = endpoint.Port
-                }).GetAwaiter().GetResult();
-                if (snapshot == null)
-                {
-                    controlServers.Add(CreateControlServerStatus(endpoint, false, "NoResponse", checkedAt, null, "Registry snapshot was not returned."));
-                    continue;
-                }
-
-                firstHealthyCluster ??= snapshot;
-                controlServers.Add(CreateControlServerStatus(endpoint, true, "Healthy", checkedAt, snapshot, ""));
-            }
-            catch (SocketException exception)
-            {
-                controlServers.Add(CreateControlServerStatus(endpoint, false, "Unavailable", checkedAt, null, exception.Message));
-            }
-            catch (IOException exception)
-            {
-                controlServers.Add(CreateControlServerStatus(endpoint, false, "Unavailable", checkedAt, null, exception.Message));
-            }
-            catch (AuthenticationException exception)
-            {
-                controlServers.Add(CreateControlServerStatus(endpoint, false, "AuthenticationFailed", checkedAt, null, exception.Message));
-            }
-            catch (TimeoutException exception)
-            {
-                controlServers.Add(CreateControlServerStatus(endpoint, false, "Timeout", checkedAt, null, exception.Message));
-            }
-            catch (FormatException exception)
-            {
-                controlServers.Add(CreateControlServerStatus(endpoint, false, "InvalidEndpoint", checkedAt, null, exception.Message));
-            }
+            return new ControlServerQueryResult();
         }
+
+        Task.WhenAll(queries.Select(query => query.Task)).GetAwaiter().GetResult();
+        DashboardControlServerStatus[] controlServers = queries
+            .Select(query => query.Task.GetAwaiter().GetResult())
+            .ToArray();
+        firstHealthyCluster = queries
+            .Select(query => query.Snapshot)
+            .FirstOrDefault(snapshot => snapshot != null);
 
         return new ControlServerQueryResult
         {
@@ -178,13 +152,76 @@ public class DashboardServerService : IDisposable
         };
     }
 
+    private static ControlServerEndpointQuery QueryControlServerStatusAsync(EndpointConfig endpoint)
+    {
+        DateTimeOffset checkedAt = DateTimeOffset.UtcNow;
+        ControlServerEndpointQuery query = new();
+        query.Task = Task.Run(async () =>
+        {
+            try
+            {
+                ClusterStatusSnapshot? snapshot = await QueryControlClusterStatusAsync(new EndpointConfig
+                {
+                    Host = endpoint.Host,
+                    Port = endpoint.Port
+                });
+                query.Snapshot = snapshot;
+                if (snapshot == null)
+                {
+                    return CreateControlServerStatus(endpoint, false, "NoResponse", checkedAt, null, "Registry snapshot was not returned.");
+                }
+
+                return CreateControlServerStatus(endpoint, true, "Healthy", checkedAt, snapshot, "");
+            }
+            catch (SocketException exception)
+            {
+                return CreateControlServerStatus(endpoint, false, "Unavailable", checkedAt, null, exception.Message);
+            }
+            catch (IOException exception)
+            {
+                return CreateControlServerStatus(endpoint, false, "Unavailable", checkedAt, null, exception.Message);
+            }
+            catch (AuthenticationException exception)
+            {
+                return CreateControlServerStatus(endpoint, false, "AuthenticationFailed", checkedAt, null, exception.Message);
+            }
+            catch (TimeoutException exception)
+            {
+                return CreateControlServerStatus(endpoint, false, "Timeout", checkedAt, null, exception.Message);
+            }
+            catch (FormatException exception)
+            {
+                return CreateControlServerStatus(endpoint, false, "InvalidEndpoint", checkedAt, null, exception.Message);
+            }
+            catch (Exception exception)
+            {
+                return CreateControlServerStatus(endpoint, false, "Unavailable", checkedAt, null, exception.Message);
+            }
+        });
+        return query;
+    }
+
     private static async Task<ClusterStatusSnapshot?> QueryControlClusterStatusAsync(EndpointConfig endpoint)
     {
         LocalCertificateStore.GetOrCreate("SocketDashboard");
         using Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+        Task<ClusterStatusSnapshot?> queryTask = QueryControlClusterStatusAsync(endpoint, socket);
+        Task completedTask = await Task.WhenAny(
+            queryTask,
+            Task.Delay(GetControlQueryTimeoutMilliseconds()));
+        if (completedTask != queryTask)
+        {
+            socket.Dispose();
+            throw new TimeoutException($"ControlServer dashboard query timed out. endpoint={endpoint.Host}:{endpoint.Port}");
+        }
+
+        return await queryTask;
+    }
+
+    private static async Task<ClusterStatusSnapshot?> QueryControlClusterStatusAsync(EndpointConfig endpoint, Socket socket)
+    {
         await SocketFactory.ConnectAsync(socket, IPAddress.Parse(endpoint.Host), endpoint.Port);
-        using SecureSocketConnection connection =
-            await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketDashboard");
+        using SecureSocketConnection connection = await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketDashboard");
         (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
             connection,
             0,
@@ -197,6 +234,12 @@ public class DashboardServerService : IDisposable
         }
 
         return snapshot;
+    }
+
+    private static int GetControlQueryTimeoutMilliseconds()
+    {
+        int timeout = Math.Min(SocketFactory.ConnectTimeoutMilliseconds, SocketFactory.ReadTimeoutMilliseconds);
+        return Math.Max(1000, timeout);
     }
 
     private static DashboardControlServerStatus CreateControlServerStatus(
@@ -327,6 +370,13 @@ internal sealed class ControlServerQueryResult
     public ClusterStatusSnapshot? Cluster { get; init; }
 
     public IReadOnlyCollection<DashboardControlServerStatus> ControlServers { get; init; } = Array.Empty<DashboardControlServerStatus>();
+}
+
+internal sealed class ControlServerEndpointQuery
+{
+    public ClusterStatusSnapshot? Snapshot { get; set; }
+
+    public Task<DashboardControlServerStatus> Task { get; set; } = System.Threading.Tasks.Task.FromResult(new DashboardControlServerStatus());
 }
 
 public class DashboardHealthStatus

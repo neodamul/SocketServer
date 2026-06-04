@@ -71,8 +71,18 @@ public static class SocketFactory
 
     public static void ConfigureTcpSocket(Socket socket)
     {
-        socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-        socket.NoDelay = NoDelay;
+        try
+        {
+            socket.NoDelay = NoDelay;
+        }
+        catch (SocketException exception)
+        {
+            Logger.Warn("TCP socket option configuration failed.", exception);
+        }
+        catch (ObjectDisposedException)
+        {
+            Logger.Warn("TCP socket option configuration skipped because the socket was already disposed.");
+        }
     }
 
     public static Task ConnectAsync(Socket socket, IPAddress address, int port)
