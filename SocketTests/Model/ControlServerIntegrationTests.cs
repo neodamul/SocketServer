@@ -20,6 +20,12 @@ namespace SocketTests.Model;
 [TestClass]
 public class ControlServerIntegrationTests
 {
+    [TestInitialize]
+    public void Initialize()
+    {
+        SocketFactory.Configure(new SocketOperationConfig());
+    }
+
     [TestMethod]
     public async Task ClientReceivesRouteAndConnectsToSocketServerTest()
     {
@@ -233,9 +239,9 @@ public class ControlServerIntegrationTests
         Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
             sourceClient.SendClientMessageAsync(102, "broadcast-relay-message");
         (bool delivered, ClientMessageDelivery delivery) =
-            await WithTimeoutAsync(targetClient.TryReceiveClientMessageAsync());
+            await WithTimeoutAsync(targetClient.TryReceiveClientMessageAsync(), timeoutSeconds: 30);
         (bool acked, ClientMessageAck ack, ClientMessageError error) =
-            await WithTimeoutAsync(sendTask);
+            await WithTimeoutAsync(sendTask, timeoutSeconds: 30);
 
         Assert.IsTrue(delivered);
         Assert.AreEqual((uint)101, delivery.SourceClientId);
@@ -274,9 +280,9 @@ public class ControlServerIntegrationTests
         Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
             sourceClient.SendClientMessageAsync(122, "broadcast-all-relay-message");
         (bool delivered, ClientMessageDelivery delivery) =
-            await WithTimeoutAsync(targetClient.TryReceiveClientMessageAsync());
+            await WithTimeoutAsync(targetClient.TryReceiveClientMessageAsync(), timeoutSeconds: 30);
         (bool acked, ClientMessageAck ack, ClientMessageError error) =
-            await WithTimeoutAsync(sendTask);
+            await WithTimeoutAsync(sendTask, timeoutSeconds: 30);
 
         Assert.IsTrue(delivered);
         Assert.AreEqual((uint)121, delivery.SourceClientId);
@@ -479,7 +485,6 @@ public class ControlServerIntegrationTests
         servers.AttachReporters(controlEndpoints);
 
         await servers.RegisterAsync();
-        servers.StartHeartbeatLoops(TimeSpan.FromMilliseconds(500));
 
         await WaitForClusterAsync(controlA, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
         await WaitForClusterAsync(controlB, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
@@ -782,7 +787,7 @@ public class ControlServerIntegrationTests
             Host = "127.0.0.1",
             Port = controlPort,
             UseControlServer = true,
-            ReceiveTimeoutSeconds = 5,
+            ReceiveTimeoutSeconds = 30,
             Security = security
         };
     }

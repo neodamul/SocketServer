@@ -630,14 +630,19 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 session.MarkReceived(frame.ClientId);
                 this.UpdateClientIndex(session);
                 Interlocked.Increment(ref this.totalReceivedMessages);
+                bool shouldReportOpened = !session.HasReportedOpened;
                 if (!session.HasReportedOpened)
                 {
                     session.MarkReportedOpened();
-                    this.NotifySessionOpened(session);
                 }
 
-                this.NotifySessionUpdated(session);
                 bool handled = await this.HandleClientMessageAsync(session, frame);
+                if (shouldReportOpened)
+                {
+                    _ = this.NotifySessionOpenedAsync(session);
+                }
+
+                _ = this.NotifySessionUpdatedAsync(session);
                 if (!handled)
                 {
                     break;
@@ -740,6 +745,27 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         }
 
         RelayLogger.Debug($"Client message local delivery missed. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
+        string relayErrorMessage = "";
+        ClientLocationResponse location = await this.ResolveClientLocationAsync(request.SourceClientId, request.TargetClientId);
+        if (location != null && location.Success && location.InstanceId == this.instanceId)
+        {
+            RelayLogger.Warn($"Client message location resolved to local instance but target is absent. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
+            return await this.SendClientMessageErrorAsync(sourceSession, request, "TargetNotConnected", "Target client is not connected to this server.");
+        }
+
+        if (location != null && location.Success)
+        {
+            (bool success, string targetInstanceId, string errorMessage) = await this.RelayToRemoteServerAsync(location, request);
+            if (success)
+            {
+                RelayLogger.Info($"Client message delivered by targeted relay. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
+                return await this.SendClientMessageAckAsync(sourceSession, request, targetInstanceId);
+            }
+
+            relayErrorMessage = errorMessage;
+            RelayLogger.Warn($"Client message targeted relay failed. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, error={errorMessage}");
+        }
+
         (bool broadcastSuccess, string broadcastTargetInstanceId, string broadcastErrorMessage) =
             await this.BroadcastRelayToKnownServersAsync(request);
         if (broadcastSuccess)
@@ -748,35 +774,15 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             return await this.SendClientMessageAckAsync(sourceSession, request, broadcastTargetInstanceId);
         }
 
-        RelayLogger.Debug($"Client message broadcast relay failed. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, error={broadcastErrorMessage}");
-        ClientLocationResponse location = await this.ResolveClientLocationAsync(request.SourceClientId, request.TargetClientId);
-        if (location == null || !location.Success)
-        {
-            RelayLogger.Warn($"Client message target location not found. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, error={location?.ErrorMessage ?? broadcastErrorMessage}");
-            return await this.SendClientMessageErrorAsync(
-                sourceSession,
-                request,
-                "RelayFailed",
-                string.IsNullOrWhiteSpace(broadcastErrorMessage)
-                    ? location?.ErrorMessage ?? "Target client location was not found."
-                    : broadcastErrorMessage);
-        }
-
-        if (location != null && location.Success && location.InstanceId == this.instanceId)
-        {
-            RelayLogger.Warn($"Client message location resolved to local instance but target is absent. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
-            return await this.SendClientMessageErrorAsync(sourceSession, request, "TargetNotConnected", "Target client is not connected to this server.");
-        }
-
-        (bool success, string targetInstanceId, string errorMessage) = await this.RelayToRemoteServerAsync(location, request);
-        if (!success)
-        {
-            RelayLogger.Warn($"Client message targeted relay failed. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, error={errorMessage}");
-            return await this.SendClientMessageErrorAsync(sourceSession, request, "RelayFailed", errorMessage);
-        }
-
-        RelayLogger.Info($"Client message delivered by targeted relay. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
-        return await this.SendClientMessageAckAsync(sourceSession, request, targetInstanceId);
+        relayErrorMessage = string.IsNullOrWhiteSpace(broadcastErrorMessage) ? relayErrorMessage : broadcastErrorMessage;
+        RelayLogger.Warn($"Client message target relay failed. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, locationSuccess={location?.Success ?? false}, error={relayErrorMessage}");
+        return await this.SendClientMessageErrorAsync(
+            sourceSession,
+            request,
+            "RelayFailed",
+            string.IsNullOrWhiteSpace(relayErrorMessage)
+                ? location?.ErrorMessage ?? "Target client location was not found."
+                : relayErrorMessage);
     }
 
     private async Task HandleServerRelayAsync(ConnectionSession relaySession, ServerRelayMessage relayMessage)
@@ -999,19 +1005,34 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             return (false, "", "No known relay SocketServer instances.");
         }
 
-        Task<(bool Success, string TargetInstanceId, string ErrorMessage)>[] tasks = servers
+        List<Task<(bool Success, string TargetInstanceId, string ErrorMessage)>> pendingTasks = servers
             .Select(server => this.RelayToRemoteServerAsync(server, request))
-            .ToArray();
-        (bool Success, string TargetInstanceId, string ErrorMessage)[] results = await Task.WhenAll(tasks);
-        (bool Success, string TargetInstanceId, string ErrorMessage) delivered =
-            results.FirstOrDefault(result => result.Success);
-        if (delivered.Success)
+            .ToList();
+        string errorMessage = "";
+        while (pendingTasks.Count > 0)
         {
-            RelayLogger.Info($"Broadcast relay delivered. sourceInstanceId={this.instanceId}, targetInstanceId={delivered.TargetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
-            return delivered;
+            Task<(bool Success, string TargetInstanceId, string ErrorMessage)> completedTask =
+                await Task.WhenAny(pendingTasks);
+            pendingTasks.Remove(completedTask);
+
+            (bool success, string targetInstanceId, string relayErrorMessage) = await completedTask;
+            if (success)
+            {
+                if (pendingTasks.Count > 0)
+                {
+                    RelayLogger.Debug($"Broadcast relay returning after first delivery. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, pendingRelayCount={pendingTasks.Count}");
+                }
+
+                RelayLogger.Info($"Broadcast relay delivered. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
+                return (true, targetInstanceId, "");
+            }
+
+            if (string.IsNullOrWhiteSpace(errorMessage) && !string.IsNullOrWhiteSpace(relayErrorMessage))
+            {
+                errorMessage = relayErrorMessage;
+            }
         }
 
-        string errorMessage = results.FirstOrDefault(result => !string.IsNullOrWhiteSpace(result.ErrorMessage)).ErrorMessage;
         RelayLogger.Warn($"Broadcast relay failed. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, candidateCount={servers.Length}, error={errorMessage}");
         return (false, "", string.IsNullOrWhiteSpace(errorMessage)
             ? "No relay SocketServer delivered the message."
@@ -1115,45 +1136,59 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             Logger.Debug($"Client closed. connectionId={removedSession.Id}, remote={removedSession.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
             if (removedSession.HasReportedOpened)
             {
-                this.NotifySessionClosed(removedSession);
+                _ = this.NotifySessionClosedAsync(removedSession);
             }
         }
 
         return true;
     }
 
-    private void NotifySessionOpened(ConnectionSession session)
+    private Task NotifySessionOpenedAsync(ConnectionSession session)
     {
         Func<ConnectionSession, Task> handler = this.SessionOpenedAsync;
         if (handler != null)
         {
-            this.RunSessionEventHandler(handler, session, "opened");
+            return this.RunSessionEventHandlerAsync(handler, session, "opened");
         }
+
+        return Task.CompletedTask;
     }
 
-    private void NotifySessionClosed(ConnectionSession session)
+    private Task NotifySessionClosedAsync(ConnectionSession session)
     {
         Func<ConnectionSession, Task> handler = this.SessionClosedAsync;
         if (handler != null)
         {
-            this.RunSessionEventHandler(handler, session, "closed");
+            return this.RunSessionEventHandlerAsync(handler, session, "closed");
         }
+
+        return Task.CompletedTask;
     }
 
-    private void NotifySessionUpdated(ConnectionSession session)
+    private Task NotifySessionUpdatedAsync(ConnectionSession session)
     {
         Func<ConnectionSession, Task> handler = this.SessionUpdatedAsync;
         if (handler != null)
         {
-            this.RunSessionEventHandler(handler, session, "updated");
+            return this.RunSessionEventHandlerAsync(handler, session, "updated");
         }
+
+        return Task.CompletedTask;
     }
 
-    private void RunSessionEventHandler(Func<ConnectionSession, Task> handler, ConnectionSession session, string eventName)
+    private async Task RunSessionEventHandlerAsync(Func<ConnectionSession, Task> handler, ConnectionSession session, string eventName)
     {
-        _ = Task.Run(() => handler(session)).ContinueWith(
-            task => Logger.Warn($"Session {eventName} event handler failed. connectionId={session.Id}", task.Exception),
-            TaskContinuationOptions.OnlyOnFaulted);
+        foreach (Func<ConnectionSession, Task> eventHandler in handler.GetInvocationList())
+        {
+            try
+            {
+                await eventHandler(session);
+            }
+            catch (Exception exception)
+            {
+                Logger.Warn($"Session {eventName} event handler failed. connectionId={session.Id}", exception);
+            }
+        }
     }
 
     private static string CreateInstanceId(int id, string name)

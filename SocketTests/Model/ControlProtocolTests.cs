@@ -72,6 +72,65 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void BackendRegistryReservationUpsertIsIdempotentTest()
+    {
+        BackendServerRegistry registry = new();
+        registry.Upsert(CreateRegister(1, "server-1", 5101, 10), "control-1");
+        registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 2, 10), "control-1", new ControlHealthThreshold());
+
+        RouteResponse response = registry.Resolve(new RouteRequest { ClientId = 77 }, "control-1", TimeSpan.FromSeconds(30));
+        Assert.IsTrue(response.Success);
+        RouteReservationMessage reservation = registry.Reservations.Single();
+
+        registry.UpsertReservation(reservation);
+        registry.UpsertReservation(reservation);
+        ClusterStatusSnapshot reservedStatus = registry.GetStatus();
+
+        Assert.AreEqual(1, reservedStatus.TotalReservedConnections);
+        Assert.AreEqual(7, reservedStatus.TotalAvailableConnections);
+
+        RouteReservationMessage? releasedReservation = registry.ReleaseReservationFor(77, "server-1");
+        ClusterStatusSnapshot releasedStatus = registry.GetStatus();
+
+        Assert.IsNotNull(releasedReservation);
+        Assert.AreEqual(0, releasedStatus.TotalReservedConnections);
+        Assert.AreEqual(8, releasedStatus.TotalAvailableConnections);
+    }
+
+    [TestMethod]
+    public void BackendRegistryStatusRecalculatesStaleReservationCountTest()
+    {
+        BackendServerRegistry registry = new();
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        registry.UpsertPeerSnapshot(new BackendServerSnapshot
+        {
+            ClusterId = "socket-cluster-1",
+            SourceControlNodeId = "control-peer",
+            ServerId = 1,
+            InstanceId = "server-1",
+            Name = "server-1",
+            Host = "127.0.0.1",
+            Port = 5101,
+            MaxConnections = 10,
+            CurrentConnections = 3,
+            ReservedConnections = 2,
+            AvailableConnections = 5,
+            Health = ServerHealthState.Healthy,
+            ResourceUsage = new ResourceUsageSnapshot(),
+            Version = 10,
+            StartedAt = now.AddMinutes(-1),
+            LastHeartbeatAt = now,
+            UpdatedAt = now
+        });
+
+        ClusterStatusSnapshot status = registry.GetStatus();
+
+        Assert.AreEqual(3, status.TotalCurrentConnections);
+        Assert.AreEqual(0, status.TotalReservedConnections);
+        Assert.AreEqual(7, status.TotalAvailableConnections);
+    }
+
+    [TestMethod]
     public void BackendRegistryExcludesExpiredHeartbeatTest()
     {
         BackendServerRegistry registry = new(TimeSpan.FromMilliseconds(10));

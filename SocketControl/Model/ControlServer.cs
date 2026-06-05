@@ -378,8 +378,14 @@ public class ControlServer : IDisposable
             Logger.Info($"Session opened. controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}");
             RelayLogger.Info($"Session summary upsert started. event=opened, controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}, version={sessionEvent.Version}");
             this.registry.UpsertSession(sessionEvent);
+            releasedReservation = this.registry.ReleaseReservationFor(sessionEvent.ClientId, sessionEvent.InstanceId);
             await PublishSessionAsync(sessionEvent, ControlMessageIds.SessionSummaryUpsert);
             await PublishClientLocationAsync(sessionEvent, ControlMessageIds.ClientLocationUpsert);
+            if (releasedReservation != null)
+            {
+                RelayLogger.Info($"Route reservation released by session open. controlNodeId={this.config.NodeId}, reservationId={releasedReservation.ReservationId}, clientId={releasedReservation.ClientId}, instanceId={releasedReservation.InstanceId}");
+                await PublishReservationReleaseAsync(releasedReservation);
+            }
         }
         else if (frame.MessageId == ControlMessageIds.SessionUpdated)
         {

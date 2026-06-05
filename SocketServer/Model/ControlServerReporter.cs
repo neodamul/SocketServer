@@ -30,6 +30,7 @@ public class ControlServerReporter : IDisposable
     private readonly TimeSpan reportTimeout;
     private readonly ResourceUsageProvider resourceUsageProvider = new();
     private readonly IReadOnlyCollection<ControlEndpointConnection> connections;
+    private readonly IReadOnlyCollection<ControlEndpointConnection> sessionConnections;
     private readonly object relayRefreshLock = new();
     private readonly Channel<ControlReportMessage> reportChannel = Channel.CreateBounded<ControlReportMessage>(
         new BoundedChannelOptions(10000)
@@ -61,6 +62,7 @@ public class ControlServerReporter : IDisposable
         this.portRangeEnd = portRangeEnd;
         this.reportTimeout = NormalizeReportTimeout(reportTimeout);
         this.connections = CreateConnections(controlServers, this.reportTimeout);
+        this.sessionConnections = CreateConnections(controlServers, this.reportTimeout);
         this.server.ConfigureControlRouting(this.controlServers, this.clusterId);
         this.server.SessionOpenedAsync += this.SendSessionOpenedAsync;
         this.server.SessionUpdatedAsync += this.SendSessionUpdatedAsync;
@@ -92,6 +94,7 @@ public class ControlServerReporter : IDisposable
         {
             this.lastRegisterSentAt = DateTimeOffset.UtcNow;
             Logger.Info($"SocketServer metadata report completed. instanceId={request.InstanceId}, endpoint={request.Host}:{request.Port}, successEndpoints={successCount}, controlEndpoints={this.connections.Count}");
+            await this.WarmSessionConnectionsAsync();
             if (successCount == this.connections.Count)
             {
                 await this.RefreshRelayServersAsync(force: true);
@@ -105,6 +108,41 @@ public class ControlServerReporter : IDisposable
         }
 
         Logger.Warn($"SocketServer metadata report completed without successful ControlServer endpoint. instanceId={request.InstanceId}, endpoint={request.Host}:{request.Port}, controlEndpoints={this.connections.Count}");
+    }
+
+    private async Task WarmSessionConnectionsAsync()
+    {
+        if (this.sessionConnections.Count == 0)
+        {
+            return;
+        }
+
+        bool[] results = await Task.WhenAll(this.sessionConnections.Select(WarmSessionConnectionAsync));
+        int successCount = results.Count(success => success);
+        Logger.Debug($"ControlServer session report connections warmed. instanceId={this.server.InstanceId}, successEndpoints={successCount}, endpointCount={this.sessionConnections.Count}");
+    }
+
+    private static async Task<bool> WarmSessionConnectionAsync(ControlEndpointConnection connection)
+    {
+        try
+        {
+            await connection.ConnectAsync();
+            return true;
+        }
+        catch (SocketException exception)
+        {
+            Logger.Warn($"ControlServer session report connection warm-up failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}", exception);
+        }
+        catch (IOException exception)
+        {
+            Logger.Warn($"ControlServer session report connection warm-up I/O failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}", exception);
+        }
+        catch (AuthenticationException exception)
+        {
+            Logger.Warn($"ControlServer session report connection warm-up authentication failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}", exception);
+        }
+
+        return false;
     }
 
     public void StartHeartbeatLoop(TimeSpan interval)
@@ -128,6 +166,11 @@ public class ControlServerReporter : IDisposable
         this.cancellation = null;
         this.heartbeatTask = null;
         foreach (ControlEndpointConnection connection in this.connections)
+        {
+            connection.Close();
+        }
+
+        foreach (ControlEndpointConnection connection in this.sessionConnections)
         {
             connection.Close();
         }
@@ -274,7 +317,7 @@ public class ControlServerReporter : IDisposable
             Version = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
 
-        await this.reportChannel.Writer.WriteAsync(new ControlReportMessage(messageId, message), this.reportCancellation.Token);
+        await BroadcastSessionEventAsync(0, messageId, message);
     }
 
     private async Task RunReportWorkerAsync(CancellationToken cancellationToken)
@@ -285,7 +328,11 @@ public class ControlServerReporter : IDisposable
             {
                 try
                 {
-                    await BroadcastAsync(0, report.MessageId, report.Message);
+                    await BroadcastAsync(
+                        0,
+                        report.MessageId,
+                        report.Message,
+                        RequiresAllEndpointReports(report.MessageId));
                 }
                 catch (Exception exception)
                 {
@@ -302,7 +349,11 @@ public class ControlServerReporter : IDisposable
         }
     }
 
-    private async Task<int> BroadcastAsync<T>(uint clientId, uint messageId, T payload)
+    private async Task<int> BroadcastAsync<T>(
+        uint clientId,
+        uint messageId,
+        T payload,
+        bool requireAllEndpoints = false)
     {
         List<(ControlEndpointConnection Connection, Task<bool> Task)> tasks = new();
         foreach (ControlEndpointConnection connection in this.connections)
@@ -317,6 +368,22 @@ public class ControlServerReporter : IDisposable
         }
 
         Task<bool[]> allReportsTask = Task.WhenAll(tasks.Select(item => item.Task));
+        if (requireAllEndpoints)
+        {
+            await allReportsTask;
+            int completedSuccessCount = CountSuccessfulCompletedReports(tasks);
+            if (completedSuccessCount == 0)
+            {
+                Logger.Warn($"ControlServer broadcast completed without successful endpoint. messageId={messageId}, endpointCount={this.connections.Count}");
+            }
+            else
+            {
+                Logger.Debug($"ControlServer broadcast completed. messageId={messageId}, successEndpoints={completedSuccessCount}, endpointCount={this.connections.Count}");
+            }
+
+            return completedSuccessCount;
+        }
+
         Task<bool> firstSuccessTask = WaitForFirstSuccessAsync(tasks.Select(item => item.Task));
         Task completedTask = await Task.WhenAny(allReportsTask, firstSuccessTask);
         if (completedTask != allReportsTask && await firstSuccessTask)
@@ -340,6 +407,44 @@ public class ControlServerReporter : IDisposable
         }
 
         return successCount;
+    }
+
+    private async Task<int> BroadcastSessionEventAsync<T>(
+        uint clientId,
+        uint messageId,
+        T payload)
+    {
+        List<Task<bool>> tasks = new();
+        foreach (ControlEndpointConnection connection in this.sessionConnections)
+        {
+            tasks.Add(SendSessionEventToEndpointWithRetryAsync(connection, clientId, messageId, payload));
+        }
+
+        if (tasks.Count == 0)
+        {
+            Logger.Warn($"ControlServer session event skipped because no endpoints are configured. messageId={messageId}");
+            return 0;
+        }
+
+        bool[] results = await Task.WhenAll(tasks);
+        int successCount = results.Count(result => result);
+        if (successCount == 0)
+        {
+            Logger.Warn($"ControlServer session event completed without successful endpoint. messageId={messageId}, endpointCount={tasks.Count}");
+        }
+        else
+        {
+            Logger.Info($"ControlServer session event completed. messageId={messageId}, successEndpoints={successCount}, endpointCount={tasks.Count}");
+        }
+
+        return successCount;
+    }
+
+    private static bool RequiresAllEndpointReports(uint messageId)
+    {
+        return messageId == ControlMessageIds.SessionOpened ||
+            messageId == ControlMessageIds.SessionUpdated ||
+            messageId == ControlMessageIds.SessionClosed;
     }
 
     private static async Task<bool> WaitForFirstSuccessAsync(IEnumerable<Task<bool>> reportTasks)
@@ -410,6 +515,29 @@ public class ControlServerReporter : IDisposable
         }
     }
 
+    private static async Task<bool> SendSessionEventToEndpointWithRetryAsync<T>(
+        ControlEndpointConnection connection,
+        uint clientId,
+        uint messageId,
+        T payload)
+    {
+        const int maxAttempts = 3;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            if (await SendToEndpointAsync(connection, clientId, messageId, payload))
+            {
+                return true;
+            }
+
+            if (attempt < maxAttempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100 * attempt));
+            }
+        }
+
+        return false;
+    }
+
     public void Dispose()
     {
         if (!this.disposedValue)
@@ -430,6 +558,11 @@ public class ControlServerReporter : IDisposable
 
             this.reportCancellation.Dispose();
             foreach (ControlEndpointConnection connection in this.connections)
+            {
+                connection.Dispose();
+            }
+
+            foreach (ControlEndpointConnection connection in this.sessionConnections)
             {
                 connection.Dispose();
             }
@@ -519,6 +652,11 @@ public class ControlServerReporter : IDisposable
             {
                 this.sendLock.Release();
             }
+        }
+
+        public Task ConnectAsync()
+        {
+            return this.EnsureConnectedAsync();
         }
 
         private async Task<(bool Success, SocketMessageFrame Frame)> SendAndReceiveCoreAsync<T>(

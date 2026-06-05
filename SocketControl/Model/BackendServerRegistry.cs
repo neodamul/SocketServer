@@ -93,7 +93,7 @@ public class BackendServerRegistry
                 return existing;
             });
 
-            UpdateAvailable(snapshot);
+            RecalculateReservations();
             this.SaveState();
             return snapshot;
         }
@@ -137,7 +137,7 @@ public class BackendServerRegistry
             });
 
             snapshot.Health = EvaluateHealth(snapshot, threshold);
-            UpdateAvailable(snapshot);
+            RecalculateReservations();
             this.SaveState();
             return snapshot;
         }
@@ -166,11 +166,8 @@ public class BackendServerRegistry
                 });
 
             this.version = Math.Max(this.version, stored.Version);
-            UpdateAvailable(stored);
-            if (ReferenceEquals(stored, snapshot))
-            {
-                this.SaveState();
-            }
+            RecalculateReservations();
+            this.SaveState();
         }
     }
 
@@ -247,13 +244,20 @@ public class BackendServerRegistry
     {
         lock (this.syncRoot)
         {
-            this.reservations[reservation.ReservationId] = reservation;
-            if (this.servers.TryGetValue(reservation.InstanceId, out BackendServerSnapshot? server))
+            if (this.reservations.TryGetValue(reservation.ReservationId, out RouteReservationMessage? existing))
             {
-                server.ReservedConnections++;
-                UpdateAvailable(server);
+                if (existing.InstanceId == reservation.InstanceId)
+                {
+                    this.reservations[reservation.ReservationId] = reservation;
+                    this.SaveState();
+                    return;
+                }
+
+                this.AdjustReservationCount(existing.InstanceId, -1);
             }
 
+            this.reservations[reservation.ReservationId] = reservation;
+            this.AdjustReservationCount(reservation.InstanceId, 1);
             this.SaveState();
         }
     }
@@ -267,13 +271,7 @@ public class BackendServerRegistry
                 return;
             }
 
-            if (this.servers.TryGetValue(reservation.InstanceId, out BackendServerSnapshot? server) &&
-                server.ReservedConnections > 0)
-            {
-                server.ReservedConnections--;
-                UpdateAvailable(server);
-            }
-
+            this.AdjustReservationCount(reservation.InstanceId, -1);
             this.SaveState();
         }
     }
@@ -493,8 +491,9 @@ public class BackendServerRegistry
         lock (this.syncRoot)
         {
             ExpireReservations();
+            bool recalculated = RecalculateReservations();
             bool normalized = NormalizeExpiredServers();
-            if (normalized)
+            if (recalculated || normalized)
             {
                 this.SaveState();
             }
@@ -549,8 +548,9 @@ public class BackendServerRegistry
         lock (this.syncRoot)
         {
             ExpireReservations();
+            bool recalculated = RecalculateReservations();
             bool normalized = NormalizeExpiredServers();
-            if (normalized)
+            if (recalculated || normalized)
             {
                 this.SaveState();
             }
@@ -589,25 +589,39 @@ public class BackendServerRegistry
         }
     }
 
-    private void RecalculateReservations()
+    private bool RecalculateReservations()
     {
-        foreach (BackendServerSnapshot server in this.servers.Values)
-        {
-            server.ReservedConnections = 0;
-        }
-
+        bool changed = false;
+        Dictionary<string, int> countsByInstanceId = new(StringComparer.OrdinalIgnoreCase);
         foreach (RouteReservationMessage reservation in this.reservations.Values)
         {
-            if (this.servers.TryGetValue(reservation.InstanceId, out BackendServerSnapshot? server))
+            if (!this.servers.ContainsKey(reservation.InstanceId))
             {
-                server.ReservedConnections++;
+                continue;
+            }
+
+            countsByInstanceId[reservation.InstanceId] =
+                countsByInstanceId.TryGetValue(reservation.InstanceId, out int count) ? count + 1 : 1;
+        }
+
+        foreach (BackendServerSnapshot server in this.servers.Values)
+        {
+            int reservedConnections = countsByInstanceId.TryGetValue(server.InstanceId, out int count) ? count : 0;
+            if (server.ReservedConnections != reservedConnections)
+            {
+                changed = true;
+                server.ReservedConnections = reservedConnections;
             }
         }
 
         foreach (BackendServerSnapshot server in this.servers.Values)
         {
+            int previousAvailable = server.AvailableConnections;
             UpdateAvailable(server);
+            changed |= previousAvailable != server.AvailableConnections;
         }
+
+        return changed;
     }
 
     private bool NormalizeExpiredServers()
@@ -718,6 +732,17 @@ public class BackendServerRegistry
         snapshot.AvailableConnections = Math.Max(
             0,
             snapshot.MaxConnections - snapshot.CurrentConnections - snapshot.ReservedConnections);
+    }
+
+    private void AdjustReservationCount(string instanceId, int delta)
+    {
+        if (!this.servers.TryGetValue(instanceId, out BackendServerSnapshot? server))
+        {
+            return;
+        }
+
+        server.ReservedConnections = Math.Max(0, server.ReservedConnections + delta);
+        UpdateAvailable(server);
     }
 
     private static bool IsNewer(ClientLocationMessage candidate, ClientLocationMessage existing)
