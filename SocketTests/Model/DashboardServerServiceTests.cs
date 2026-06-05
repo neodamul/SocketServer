@@ -169,6 +169,66 @@ public class DashboardServerServiceTests
     }
 
     [TestMethod]
+    public void GetStatusMergesControlServerSnapshotsByLatestHeartbeatTest()
+    {
+        using ControlServer staleControlServer = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-dashboard-stale",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0
+            }
+        });
+        Assert.IsTrue(staleControlServer.Start());
+
+        using ControlServer freshControlServer = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-dashboard-fresh",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0
+            }
+        });
+        Assert.IsTrue(freshControlServer.Start());
+
+        staleControlServer.Registry.Upsert(CreateHeartbeat(
+            "server-dashboard-merge",
+            1,
+            DateTimeOffset.UtcNow.AddMinutes(-5)),
+            "control-dashboard-stale",
+            new ControlHealthThreshold());
+        freshControlServer.Registry.Upsert(CreateHeartbeat(
+            "server-dashboard-merge",
+            3,
+            DateTimeOffset.UtcNow),
+            "control-dashboard-fresh",
+            new ControlHealthThreshold());
+
+        using DashboardServerService service = new(
+            0,
+            new[]
+            {
+                new EndpointConfig { Host = "127.0.0.1", Port = staleControlServer.Port },
+                new EndpointConfig { Host = "127.0.0.1", Port = freshControlServer.Port }
+            });
+
+        DashboardServerStatus status = service.GetStatus();
+
+        Assert.AreEqual(1, status.Cluster.ServerCount);
+        Assert.AreEqual(1, status.Cluster.HealthyServerCount);
+        Assert.AreEqual(3, status.Cluster.TotalCurrentConnections);
+        Assert.AreEqual(7, status.Cluster.TotalAvailableConnections);
+        Assert.AreEqual("server-dashboard-merge", status.Cluster.Servers.First().InstanceId);
+        Assert.AreEqual(ServerHealthState.Healthy, status.Cluster.Servers.First().Health);
+    }
+
+    [TestMethod]
     public async Task DashboardStatusReflectsSampleClientMessageThroughControlServerTest()
     {
         SocketSecurityConfig security = new()
@@ -275,6 +335,31 @@ public class DashboardServerServiceTests
             UseControlServer = true,
             ReceiveTimeoutSeconds = 3,
             Security = security
+        };
+    }
+
+    private static ServerHeartbeatRequest CreateHeartbeat(
+        string instanceId,
+        int currentConnections,
+        DateTimeOffset sentAt)
+    {
+        return new ServerHeartbeatRequest
+        {
+            ClusterId = "socket-cluster-1",
+            ServerId = 77,
+            InstanceId = instanceId,
+            Host = "127.0.0.1",
+            Port = 5177,
+            MaxConnections = 10,
+            CurrentConnections = currentConnections,
+            ResourceUsage = new ResourceUsageSnapshot
+            {
+                CpuUsagePercent = 10,
+                MemoryUsagePercent = 20,
+                StorageUsagePercent = 30,
+                CapturedAt = sentAt
+            },
+            SentAt = sentAt
         };
     }
 

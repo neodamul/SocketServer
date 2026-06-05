@@ -128,7 +128,6 @@ public class DashboardServerService : IDisposable
 
     private ControlServerQueryResult GetControlServerStatuses()
     {
-        ClusterStatusSnapshot? firstHealthyCluster = null;
         ControlServerEndpointQuery[] queries = this.controlEndpoints
             .Select(endpoint => QueryControlServerStatusAsync(endpoint))
             .ToArray();
@@ -141,14 +140,53 @@ public class DashboardServerService : IDisposable
         DashboardControlServerStatus[] controlServers = queries
             .Select(query => query.Task.GetAwaiter().GetResult())
             .ToArray();
-        firstHealthyCluster = queries
-            .Select(query => query.Snapshot)
-            .FirstOrDefault(snapshot => snapshot != null);
+        ClusterStatusSnapshot? mergedCluster = MergeClusterSnapshots(
+            queries
+                .Select(query => query.Snapshot)
+                .Where(snapshot => snapshot != null)
+                .Cast<ClusterStatusSnapshot>());
 
         return new ControlServerQueryResult
         {
-            Cluster = firstHealthyCluster,
+            Cluster = mergedCluster,
             ControlServers = controlServers
+        };
+    }
+
+    private static ClusterStatusSnapshot? MergeClusterSnapshots(IEnumerable<ClusterStatusSnapshot> snapshots)
+    {
+        ClusterStatusSnapshot[] healthySnapshots = snapshots.ToArray();
+        if (healthySnapshots.Length == 0)
+        {
+            return null;
+        }
+
+        BackendServerSnapshot[] servers = healthySnapshots
+            .SelectMany(snapshot => snapshot.Servers ?? Array.Empty<BackendServerSnapshot>())
+            .GroupBy(server => server.InstanceId, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderByDescending(server => server.LastHeartbeatAt)
+                .ThenByDescending(server => server.UpdatedAt)
+                .ThenByDescending(server => server.Version)
+                .First())
+            .OrderBy(server => server.ServerId)
+            .ThenBy(server => server.InstanceId, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return new ClusterStatusSnapshot
+        {
+            Servers = servers,
+            ServerCount = servers.Length,
+            HealthyServerCount = servers.Count(server => server.Health == ServerHealthState.Healthy),
+            TotalMaxConnections = servers.Sum(server => server.MaxConnections),
+            TotalCurrentConnections = servers.Sum(server => server.CurrentConnections),
+            TotalReservedConnections = servers.Sum(server => server.ReservedConnections),
+            TotalAvailableConnections = servers.Sum(server => server.AvailableConnections),
+            TotalSessionCount = healthySnapshots.Max(snapshot => snapshot.TotalSessionCount),
+            AverageCpuUsagePercent = servers.Length == 0 ? 0 : servers.Average(server => server.ResourceUsage.CpuUsagePercent),
+            AverageMemoryUsagePercent = servers.Length == 0 ? 0 : servers.Average(server => server.ResourceUsage.MemoryUsagePercent),
+            AverageStorageUsagePercent = servers.Length == 0 ? 0 : servers.Average(server => server.ResourceUsage.StorageUsagePercent),
+            UpdatedAt = healthySnapshots.Max(snapshot => snapshot.UpdatedAt)
         };
     }
 

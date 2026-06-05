@@ -107,7 +107,7 @@ ControlServer가 재시작되면 저장된 registry를 로드하되, heartbeat t
 
 ## Dashboard
 
-Dashboard는 설정된 ControlServer 목록을 조회하고 Server Inventory에 `ControlServer` type으로 표시합니다. Healthy ControlServer가 있으면 해당 registry snapshot으로 전체 SocketServer 정보를 표시합니다. Dashboard 내부 서버 상태는 ControlServer 연결 여부와 무관하게 `Dashboard` type으로 항상 함께 표시됩니다. ControlServer가 없으면 로컬 Dashboard server 상태를 fallback cluster로 사용합니다. Server Inventory에서 서버 row를 선택하면 하단의 Server, Traffic, Socket Runtime, Details 패널이 선택된 서버 기준으로 갱신됩니다.
+Dashboard는 설정된 ControlServer 목록을 조회하고 Server Inventory에 `ControlServer` type으로 표시합니다. 여러 ControlServer가 응답하면 SocketServer `instanceId`별 최신 heartbeat snapshot을 병합해 전체 SocketServer 정보를 표시합니다. Dashboard 내부 서버 상태는 ControlServer 연결 여부와 무관하게 `Dashboard` type으로 항상 함께 표시됩니다. ControlServer가 없으면 로컬 Dashboard server 상태를 fallback cluster로 사용합니다. Server Inventory에서 서버 row를 선택하면 하단의 Server, Traffic, Socket Runtime, Details 패널이 선택된 서버 기준으로 갱신됩니다.
 브라우저 UI는 기본 30초 간격으로 상태 API를 갱신하고, 사용자가 refresh interval 콤보에서 5초, 10초, 30초, 60초 중 하나를 선택할 수 있습니다.
 
 표시 항목:
