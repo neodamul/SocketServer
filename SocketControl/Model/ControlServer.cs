@@ -7,6 +7,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using SocketCommon.Configuration;
 using SocketCommon.Logging;
@@ -18,12 +19,37 @@ public class ControlServer : IDisposable
 {
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<ControlServer>();
     private static readonly SocketLogger RelayLogger = SocketLogManager.GetRelayLogger<ControlServer>();
+    private const int CommandWorkerCount = 4;
 
     private readonly ControlServerNodeConfig config;
     private readonly IReadOnlyCollection<EndpointConfig> peers;
     private readonly BackendServerRegistry registry;
     private readonly ControlHealthThreshold healthThreshold;
     private readonly ConcurrentDictionary<long, ActiveControlConnection> activeConnections = new();
+    private readonly Channel<ControlCommandRequest> commandRequestChannel = Channel.CreateUnbounded<ControlCommandRequest>(
+        new UnboundedChannelOptions
+        {
+            SingleReader = false,
+            SingleWriter = false
+        });
+    private readonly Channel<ControlResponseCommand> commandResponseChannel = Channel.CreateUnbounded<ControlResponseCommand>(
+        new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        });
+    private readonly Channel<PeerRelayCommand> peerRelayRequestChannel = Channel.CreateUnbounded<PeerRelayCommand>(
+        new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        });
+    private readonly Channel<PeerRelayResult> peerRelayResponseChannel = Channel.CreateUnbounded<PeerRelayResult>(
+        new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        });
     private Socket? listener;
     private Socket? peerListener;
     private CancellationTokenSource? cancellation;
@@ -31,6 +57,10 @@ public class ControlServer : IDisposable
     private Task? peerAcceptTask;
     private Task? connectionCleanupTask;
     private Task? peerSnapshotSyncTask;
+    private Task? commandResponseTask;
+    private Task? peerRelayRequestTask;
+    private Task? peerRelayResponseTask;
+    private Task[] commandWorkerTasks = Array.Empty<Task>();
     private long nextActiveSocketId;
     private bool disposedValue;
 
@@ -69,15 +99,30 @@ public class ControlServer : IDisposable
             this.listener.Listen(SocketFactory.ListenBacklog);
             LocalCertificateStore.GetOrCreate("SocketControl");
             this.cancellation = new CancellationTokenSource();
-            this.acceptTask = this.RunAcceptLoopAsync(this.cancellation.Token);
-            this.connectionCleanupTask = this.RunConnectionCleanupLoopAsync(this.cancellation.Token);
-            this.peerSnapshotSyncTask = this.RunPeerSnapshotSyncLoopAsync(this.cancellation.Token);
+            this.acceptTask = DedicatedWorker.Start(this.RunAcceptLoopAsync, this.cancellation.Token);
+            this.connectionCleanupTask = DedicatedWorker.Start(this.RunConnectionCleanupLoopAsync, this.cancellation.Token);
+            this.peerSnapshotSyncTask = DedicatedWorker.Start(this.RunPeerSnapshotSyncLoopAsync, this.cancellation.Token);
+            this.commandWorkerTasks = DedicatedWorker.StartMany(
+                CommandWorkerCount,
+                this.RunCommandRequestLoopAsync,
+                this.cancellation.Token);
+            this.commandResponseTask = DedicatedWorker.Start(
+                this.RunCommandResponseLoopAsync,
+                this.cancellation.Token);
+            this.peerRelayRequestTask = DedicatedWorker.Start(
+                this.RunPeerRelayRequestLoopAsync,
+                this.cancellation.Token);
+            this.peerRelayResponseTask = DedicatedWorker.Start(
+                this.RunPeerRelayResponseLoopAsync,
+                this.cancellation.Token);
             if (this.config.PeerSyncPort > 0 && this.config.PeerSyncPort != this.config.Port)
             {
                 this.peerListener = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
                 this.peerListener.Bind(new IPEndPoint(IPAddress.Parse(this.config.Host), this.config.PeerSyncPort));
                 this.peerListener.Listen(SocketFactory.ListenBacklog);
-                this.peerAcceptTask = this.RunAcceptLoopAsync(this.cancellation.Token, this.peerListener);
+                this.peerAcceptTask = DedicatedWorker.Start(
+                    token => this.RunAcceptLoopAsync(token, this.peerListener),
+                    this.cancellation.Token);
             }
 
             Logger.Info($"ControlServer started. nodeId={this.config.NodeId}, endpoint={this.config.Host}:{this.Port}");
@@ -114,6 +159,14 @@ public class ControlServer : IDisposable
         await WaitForTaskAsync(this.peerAcceptTask, timeout);
         await WaitForTaskAsync(this.connectionCleanupTask, timeout);
         await WaitForTaskAsync(this.peerSnapshotSyncTask, timeout);
+        foreach (Task commandWorkerTask in this.commandWorkerTasks)
+        {
+            await WaitForTaskAsync(commandWorkerTask, timeout);
+        }
+
+        await WaitForTaskAsync(this.commandResponseTask, timeout);
+        await WaitForTaskAsync(this.peerRelayRequestTask, timeout);
+        await WaitForTaskAsync(this.peerRelayResponseTask, timeout);
 
         this.listener = null;
         this.peerListener = null;
@@ -121,6 +174,10 @@ public class ControlServer : IDisposable
         this.peerAcceptTask = null;
         this.connectionCleanupTask = null;
         this.peerSnapshotSyncTask = null;
+        this.commandWorkerTasks = Array.Empty<Task>();
+        this.commandResponseTask = null;
+        this.peerRelayRequestTask = null;
+        this.peerRelayResponseTask = null;
         this.cancellation?.Dispose();
         this.cancellation = null;
         Logger.Info($"ControlServer stopped. nodeId={this.config.NodeId}");
@@ -191,57 +248,12 @@ public class ControlServer : IDisposable
                 }
 
                 activeConnection.MarkReceived();
-                switch (frame.MessageId)
-                {
-                    case ControlMessageIds.ServerRegister:
-                        serverInstanceId = GetServerRegisterInstanceId(frame);
-                        activeConnection.ServerInstanceId = serverInstanceId;
-                        await HandleServerRegisterAsync(acceptedConnection, frame);
-                        break;
-                    case ControlMessageIds.ServerHeartbeat:
-                        serverInstanceId = GetServerHeartbeatInstanceId(frame, serverInstanceId);
-                        activeConnection.ServerInstanceId = serverInstanceId;
-                        await HandleServerHeartbeatAsync(acceptedConnection, frame);
-                        break;
-                    case ControlMessageIds.SessionOpened:
-                    case ControlMessageIds.SessionUpdated:
-                    case ControlMessageIds.SessionClosed:
-                        await HandleSessionEventAsync(acceptedConnection, frame);
-                        break;
-                    case ControlMessageIds.RouteRequest:
-                        await HandleRouteRequestAsync(acceptedConnection, frame);
-                        break;
-                    case ControlMessageIds.ClientLocationRequest:
-                        await HandleClientLocationRequestAsync(acceptedConnection, frame);
-                        break;
-                    case ControlMessageIds.ServerRegistryUpsert:
-                        await HandlePeerServerUpsertAsync(acceptedConnection, frame);
-                        break;
-                    case ControlMessageIds.SessionSummaryUpsert:
-                        await HandlePeerSessionUpsertAsync(acceptedConnection, frame);
-                        break;
-                    case ControlMessageIds.SessionSummaryRemove:
-                        await HandlePeerSessionRemoveAsync(acceptedConnection, frame);
-                        break;
-                    case ControlMessageIds.ClientLocationUpsert:
-                        await HandlePeerClientLocationUpsertAsync(acceptedConnection, frame);
-                        break;
-                    case ControlMessageIds.ClientLocationRemove:
-                        await HandlePeerClientLocationRemoveAsync(acceptedConnection, frame);
-                        break;
-                    case ControlMessageIds.RouteReservationUpsert:
-                        await HandlePeerReservationUpsertAsync(acceptedConnection, frame);
-                        break;
-                    case ControlMessageIds.RouteReservationRelease:
-                        await HandlePeerReservationReleaseAsync(acceptedConnection, frame);
-                        break;
-                    case ControlMessageIds.RegistrySnapshotRequest:
-                        await HandleRegistrySnapshotRequestAsync(acceptedConnection, frame);
-                        break;
-                    default:
-                        Logger.Warn($"ControlServer received unknown message. messageId={frame.MessageId}");
-                        break;
-                }
+                ControlCommandResult result = await EnqueueControlCommandAsync(
+                    acceptedConnection,
+                    frame,
+                    activeConnection,
+                    serverInstanceId);
+                serverInstanceId = result.ServerInstanceId;
             }
         }
         catch (SocketException exception)
@@ -323,6 +335,157 @@ public class ControlServer : IDisposable
         }
     }
 
+    private async Task<ControlCommandResult> EnqueueControlCommandAsync(
+        SecureSocketConnection connection,
+        SocketMessageFrame frame,
+        ActiveControlConnection activeConnection,
+        string currentServerInstanceId)
+    {
+        ControlCommandRequest request = new(connection, frame, activeConnection, currentServerInstanceId);
+        if (!this.commandRequestChannel.Writer.TryWrite(request))
+        {
+            Logger.Warn($"ControlServer command request queue rejected frame. messageId={frame.MessageId}");
+            return await ProcessControlCommandAsync(request);
+        }
+
+        return await request.Completion.Task;
+    }
+
+    private async Task RunCommandRequestLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (ControlCommandRequest request in this.commandRequestChannel.Reader.ReadAllAsync(cancellationToken))
+            {
+                try
+                {
+                    ControlCommandResult result = await ProcessControlCommandAsync(request);
+                    request.Completion.TrySetResult(result);
+                }
+                catch (Exception exception)
+                {
+                    request.Completion.TrySetException(exception);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Logger.Warn($"ControlServer command worker stopped unexpectedly. controlNodeId={this.config.NodeId}", exception);
+        }
+    }
+
+    private async Task<ControlCommandResult> ProcessControlCommandAsync(ControlCommandRequest request)
+    {
+        string serverInstanceId = request.ServerInstanceId;
+        switch (request.Frame.MessageId)
+        {
+            case ControlMessageIds.ServerRegister:
+                serverInstanceId = GetServerRegisterInstanceId(request.Frame);
+                request.ActiveConnection.ServerInstanceId = serverInstanceId;
+                await HandleServerRegisterAsync(request.Connection, request.Frame);
+                break;
+            case ControlMessageIds.ServerHeartbeat:
+                serverInstanceId = GetServerHeartbeatInstanceId(request.Frame, serverInstanceId);
+                request.ActiveConnection.ServerInstanceId = serverInstanceId;
+                await HandleServerHeartbeatAsync(request.Connection, request.Frame);
+                break;
+            case ControlMessageIds.SessionOpened:
+            case ControlMessageIds.SessionUpdated:
+            case ControlMessageIds.SessionClosed:
+                await HandleSessionEventAsync(request.Connection, request.Frame);
+                break;
+            case ControlMessageIds.RouteRequest:
+                await HandleRouteRequestAsync(request.Connection, request.Frame);
+                break;
+            case ControlMessageIds.ClientLocationRequest:
+                await HandleClientLocationRequestAsync(request.Connection, request.Frame);
+                break;
+            case ControlMessageIds.ServerRegistryUpsert:
+                await HandlePeerServerUpsertAsync(request.Connection, request.Frame);
+                break;
+            case ControlMessageIds.SessionSummaryUpsert:
+                await HandlePeerSessionUpsertAsync(request.Connection, request.Frame);
+                break;
+            case ControlMessageIds.SessionSummaryRemove:
+                await HandlePeerSessionRemoveAsync(request.Connection, request.Frame);
+                break;
+            case ControlMessageIds.ClientLocationUpsert:
+                await HandlePeerClientLocationUpsertAsync(request.Connection, request.Frame);
+                break;
+            case ControlMessageIds.ClientLocationRemove:
+                await HandlePeerClientLocationRemoveAsync(request.Connection, request.Frame);
+                break;
+            case ControlMessageIds.RouteReservationUpsert:
+                await HandlePeerReservationUpsertAsync(request.Connection, request.Frame);
+                break;
+            case ControlMessageIds.RouteReservationRelease:
+                await HandlePeerReservationReleaseAsync(request.Connection, request.Frame);
+                break;
+            case ControlMessageIds.RegistrySnapshotRequest:
+                await HandleRegistrySnapshotRequestAsync(request.Connection, request.Frame);
+                break;
+            default:
+                Logger.Warn($"ControlServer received unknown message. messageId={request.Frame.MessageId}");
+                break;
+        }
+
+        return new ControlCommandResult(serverInstanceId);
+    }
+
+    private async Task<bool> SendControlResponseAsync<T>(
+        SecureSocketConnection connection,
+        uint clientId,
+        uint messageId,
+        T payload)
+    {
+        ControlResponseCommand command = new(
+            connection,
+            clientId,
+            messageId,
+            payload!,
+            payload?.GetType().Name ?? typeof(T).Name);
+        if (!this.commandResponseChannel.Writer.TryWrite(command))
+        {
+            Logger.Warn($"ControlServer response queue rejected item. controlNodeId={this.config.NodeId}, messageId={messageId}, payloadType={command.PayloadType}");
+            return await ControlProtocol.SendAsync(connection, clientId, messageId, payload);
+        }
+
+        return await command.Completion.Task;
+    }
+
+    private async Task RunCommandResponseLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (ControlResponseCommand command in this.commandResponseChannel.Reader.ReadAllAsync(cancellationToken))
+            {
+                try
+                {
+                    bool success = await ControlProtocol.SendAsync(
+                        command.Connection,
+                        command.ClientId,
+                        command.MessageId,
+                        command.Payload);
+                    command.Completion.TrySetResult(success);
+                }
+                catch (Exception exception)
+                {
+                    command.Completion.TrySetException(exception);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Logger.Warn($"ControlServer response worker stopped unexpectedly. controlNodeId={this.config.NodeId}", exception);
+        }
+    }
+
     private async Task HandleServerRegisterAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         if (!ControlProtocol.TryDecode(frame, ControlMessageIds.ServerRegister, out ServerRegisterRequest request))
@@ -333,7 +496,7 @@ public class ControlServer : IDisposable
         BackendServerSnapshot snapshot = this.registry.Upsert(request, this.config.NodeId);
         Logger.Info($"SocketServer registered. controlNodeId={this.config.NodeId}, instanceId={request.InstanceId}, endpoint={request.Host}:{request.Port}, maxConnections={request.MaxConnections}, pendingAcceptCount={request.PendingAcceptCount}");
         RelayLogger.Info($"Server registry upsert received. controlNodeId={this.config.NodeId}, instanceId={request.InstanceId}, endpoint={request.Host}:{request.Port}, version={snapshot.Version}, health={snapshot.Health}");
-        await ControlProtocol.SendAsync(connection, frame.ClientId, ControlMessageIds.ServerRegisterAck, new ServerRegisterAck
+        await SendControlResponseAsync(connection, frame.ClientId, ControlMessageIds.ServerRegisterAck, new ServerRegisterAck
         {
             ClusterId = this.config.ClusterId,
             ControlNodeId = this.config.NodeId,
@@ -354,7 +517,7 @@ public class ControlServer : IDisposable
         BackendServerSnapshot snapshot = this.registry.Upsert(request, this.config.NodeId, this.healthThreshold);
         Logger.Debug($"SocketServer heartbeat received. controlNodeId={this.config.NodeId}, instanceId={request.InstanceId}, current={request.CurrentConnections}, available={request.AvailableConnections}, cpu={request.ResourceUsage.CpuUsagePercent}, memory={request.ResourceUsage.MemoryUsagePercent}, storage={request.ResourceUsage.StorageUsagePercent}, health={snapshot.Health}");
         RelayLogger.Debug($"Server heartbeat registry upsert received. controlNodeId={this.config.NodeId}, instanceId={request.InstanceId}, version={snapshot.Version}, health={snapshot.Health}, current={snapshot.CurrentConnections}, available={snapshot.AvailableConnections}");
-        await ControlProtocol.SendAsync(connection, frame.ClientId, ControlMessageIds.ServerHeartbeatAck, new ServerHeartbeatAck
+        await SendControlResponseAsync(connection, frame.ClientId, ControlMessageIds.ServerHeartbeatAck, new ServerHeartbeatAck
         {
             ClusterId = this.config.ClusterId,
             ControlNodeId = this.config.NodeId,
@@ -410,7 +573,7 @@ public class ControlServer : IDisposable
             await PublishClientLocationAsync(sessionEvent, ControlMessageIds.ClientLocationRemove);
         }
 
-        await ControlProtocol.SendAsync(connection, frame.ClientId, ControlMessageIds.ServerHeartbeatAck, new ServerHeartbeatAck
+        await SendControlResponseAsync(connection, frame.ClientId, ControlMessageIds.ServerHeartbeatAck, new ServerHeartbeatAck
         {
             ClusterId = this.config.ClusterId,
             ControlNodeId = this.config.NodeId,
@@ -429,7 +592,7 @@ public class ControlServer : IDisposable
 
         ClientLocationResponse response = this.registry.ResolveClientLocation(request);
         RelayLogger.Info($"Client location resolved. controlNodeId={this.config.NodeId}, sourceClientId={request.SourceClientId}, targetClientId={request.TargetClientId}, success={response.Success}, targetInstanceId={response.InstanceId}");
-        await ControlProtocol.SendAsync(
+        await SendControlResponseAsync(
             connection,
             request.SourceClientId,
             response.Success ? ControlMessageIds.ClientLocationResponse : ControlMessageIds.ClientLocationNotFound,
@@ -449,7 +612,7 @@ public class ControlServer : IDisposable
             TimeSpan.FromSeconds(Math.Max(1, this.config.RouteReservationSeconds)));
         Logger.Info($"Route request resolved. controlNodeId={this.config.NodeId}, clientId={request.ClientId}, success={response.Success}, instanceId={response.InstanceId}, endpoint={response.Host}:{response.Port}, reason={response.ErrorMessage}");
         RelayLogger.Info($"Route reservation evaluated. controlNodeId={this.config.NodeId}, clientId={request.ClientId}, success={response.Success}, instanceId={response.InstanceId}, reservationId={response.ReservationId}");
-        await ControlProtocol.SendAsync(connection, request.ClientId, ControlMessageIds.RouteResponse, response);
+        await SendControlResponseAsync(connection, request.ClientId, ControlMessageIds.RouteResponse, response);
         if (response.Success)
         {
             RouteReservationMessage? reservation = this.registry.Reservations
@@ -471,7 +634,7 @@ public class ControlServer : IDisposable
 
         this.registry.UpsertPeerSnapshot(snapshot);
         RelayLogger.Info($"Peer server registry upsert applied. controlNodeId={this.config.NodeId}, instanceId={snapshot.InstanceId}, sourceNodeId={snapshot.SourceControlNodeId}, version={snapshot.Version}, health={snapshot.Health}");
-        await ControlProtocol.SendAsync(connection, frame.ClientId, ControlMessageIds.ControlRegisterAck, new ControlAckMessage
+        await SendControlResponseAsync(connection, frame.ClientId, ControlMessageIds.ControlRegisterAck, new ControlAckMessage
         {
             ClusterId = this.config.ClusterId,
             ControlNodeId = this.config.NodeId,
@@ -549,7 +712,7 @@ public class ControlServer : IDisposable
     {
         ClusterStatusSnapshot status = this.registry.GetStatus();
         RelayLogger.Info($"Registry snapshot response started. controlNodeId={this.config.NodeId}, servers={status.ServerCount}, sessions={status.TotalSessionCount}, current={status.TotalCurrentConnections}, available={status.TotalAvailableConnections}");
-        await ControlProtocol.SendAsync(
+        await SendControlResponseAsync(
             connection,
             frame.ClientId,
             ControlMessageIds.RegistrySnapshotResponse,
@@ -604,54 +767,122 @@ public class ControlServer : IDisposable
         await PublishAsync(ControlMessageIds.RouteReservationRelease, reservation);
     }
 
-    private async Task PublishAsync<T>(uint messageId, T payload)
+    private Task PublishAsync<T>(uint messageId, T payload)
     {
-        List<Task> tasks = new();
-        RelayLogger.Debug($"Control peer relay fanout started. controlNodeId={this.config.NodeId}, messageId={messageId}, peerCount={this.peers.Count}, payloadType={typeof(T).Name}");
-        foreach (EndpointConfig peer in this.peers)
+        if (this.peers.Count == 0)
         {
-            tasks.Add(PublishToPeerAsync(peer, messageId, payload));
+            return Task.CompletedTask;
         }
 
-        await Task.WhenAll(tasks);
-        RelayLogger.Debug($"Control peer relay fanout completed. controlNodeId={this.config.NodeId}, messageId={messageId}, peerCount={this.peers.Count}, payloadType={typeof(T).Name}");
+        PeerRelayCommand command = new(messageId, payload!, payload?.GetType().Name ?? typeof(T).Name);
+        if (!this.peerRelayRequestChannel.Writer.TryWrite(command))
+        {
+            RelayLogger.Warn($"Control peer relay queue rejected command. controlNodeId={this.config.NodeId}, messageId={messageId}, payloadType={command.PayloadType}");
+        }
+        else
+        {
+            RelayLogger.Debug($"Control peer relay queued. controlNodeId={this.config.NodeId}, messageId={messageId}, peerCount={this.peers.Count}, payloadType={command.PayloadType}");
+        }
+
+        return Task.CompletedTask;
     }
 
-    private async Task PublishToPeerAsync<T>(EndpointConfig peer, uint messageId, T payload)
+    private async Task RunPeerRelayRequestLoopAsync(CancellationToken cancellationToken)
     {
         try
         {
-            RelayLogger.Debug($"Control peer relay send started. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={typeof(T).Name}");
+            await foreach (PeerRelayCommand command in this.peerRelayRequestChannel.Reader.ReadAllAsync(cancellationToken))
+            {
+                await PublishQueuedCommandAsync(command);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Logger.Warn($"ControlServer peer relay request worker stopped unexpectedly. controlNodeId={this.config.NodeId}", exception);
+        }
+    }
+
+    private async Task RunPeerRelayResponseLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (PeerRelayResult result in this.peerRelayResponseChannel.Reader.ReadAllAsync(cancellationToken))
+            {
+                if (result.Success)
+                {
+                    RelayLogger.Info($"Control peer relay send completed. controlNodeId={this.config.NodeId}, peer={result.Peer.Host}:{result.Peer.Port}, messageId={result.MessageId}, payloadType={result.PayloadType}");
+                }
+                else
+                {
+                    RelayLogger.Warn($"Control peer relay send failed. controlNodeId={this.config.NodeId}, peer={result.Peer.Host}:{result.Peer.Port}, messageId={result.MessageId}, payloadType={result.PayloadType}, error={result.ErrorMessage}");
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Logger.Warn($"ControlServer peer relay response worker stopped unexpectedly. controlNodeId={this.config.NodeId}", exception);
+        }
+    }
+
+    private async Task PublishQueuedCommandAsync(PeerRelayCommand command)
+    {
+        List<Task> tasks = new();
+        RelayLogger.Debug($"Control peer relay fanout started. controlNodeId={this.config.NodeId}, messageId={command.MessageId}, peerCount={this.peers.Count}, payloadType={command.PayloadType}");
+        foreach (EndpointConfig peer in this.peers)
+        {
+            tasks.Add(PublishToPeerAsync(peer, command.MessageId, command.Payload, command.PayloadType));
+        }
+
+        await Task.WhenAll(tasks);
+        RelayLogger.Debug($"Control peer relay fanout completed. controlNodeId={this.config.NodeId}, messageId={command.MessageId}, peerCount={this.peers.Count}, payloadType={command.PayloadType}");
+    }
+
+    private async Task PublishToPeerAsync(EndpointConfig peer, uint messageId, object payload, string payloadType)
+    {
+        try
+        {
+            RelayLogger.Debug($"Control peer relay send started. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={payloadType}");
             Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
             await SocketFactory.ConnectAsync(socket, IPAddress.Parse(peer.Host), peer.Port);
             using SecureSocketConnection connection =
                 await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketControl");
-            await ControlProtocol.SendAndReceiveAsync(
+            (bool success, _) = await ControlProtocol.SendAndReceiveAsync(
                 connection,
                 0,
                 messageId,
-                payload);
-            RelayLogger.Info($"Control peer relay send completed. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={typeof(T).Name}");
+                payload,
+                GetPeerOperationTimeoutMilliseconds());
+            this.peerRelayResponseChannel.Writer.TryWrite(new PeerRelayResult(peer, messageId, payloadType, success, success ? "" : "Peer relay response timed out or failed."));
         }
         catch (SocketException exception)
         {
             Logger.Warn($"ControlServer peer event relay failed. peer={peer.Host}:{peer.Port}, messageId={messageId}", exception);
-            RelayLogger.Warn($"Control peer relay socket failed. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={typeof(T).Name}", exception);
+            RelayLogger.Warn($"Control peer relay socket failed. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={payloadType}", exception);
+            this.peerRelayResponseChannel.Writer.TryWrite(new PeerRelayResult(peer, messageId, payloadType, false, exception.Message));
         }
         catch (IOException exception)
         {
             Logger.Warn($"ControlServer peer event relay I/O failed. peer={peer.Host}:{peer.Port}, messageId={messageId}", exception);
-            RelayLogger.Warn($"Control peer relay I/O failed. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={typeof(T).Name}", exception);
+            RelayLogger.Warn($"Control peer relay I/O failed. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={payloadType}", exception);
+            this.peerRelayResponseChannel.Writer.TryWrite(new PeerRelayResult(peer, messageId, payloadType, false, exception.Message));
         }
         catch (AuthenticationException exception)
         {
             Logger.Warn($"ControlServer peer event relay authentication failed. peer={peer.Host}:{peer.Port}, messageId={messageId}", exception);
-            RelayLogger.Warn($"Control peer relay authentication failed. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={typeof(T).Name}", exception);
+            RelayLogger.Warn($"Control peer relay authentication failed. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={payloadType}", exception);
+            this.peerRelayResponseChannel.Writer.TryWrite(new PeerRelayResult(peer, messageId, payloadType, false, exception.Message));
         }
         catch (TimeoutException exception)
         {
             Logger.Warn($"ControlServer peer event relay timed out. peer={peer.Host}:{peer.Port}, messageId={messageId}", exception);
-            RelayLogger.Warn($"Control peer relay timed out. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={typeof(T).Name}", exception);
+            RelayLogger.Warn($"Control peer relay timed out. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={payloadType}", exception);
+            this.peerRelayResponseChannel.Writer.TryWrite(new PeerRelayResult(peer, messageId, payloadType, false, exception.Message));
         }
     }
 
@@ -727,7 +958,7 @@ public class ControlServer : IDisposable
 
     private Task SendPeerAckAsync(SecureSocketConnection connection, uint clientId)
     {
-        return ControlProtocol.SendAsync(connection, clientId, ControlMessageIds.ControlRegisterAck, new ControlAckMessage
+        return SendControlResponseAsync(connection, clientId, ControlMessageIds.ControlRegisterAck, new ControlAckMessage
         {
             ClusterId = this.config.ClusterId,
             ControlNodeId = this.config.NodeId,
@@ -768,6 +999,13 @@ public class ControlServer : IDisposable
             : this.config.PeerSnapshotSyncIntervalSeconds);
     }
 
+    private static int GetPeerOperationTimeoutMilliseconds()
+    {
+        return Math.Min(
+            5000,
+            Math.Max(1000, SocketFactory.ReadTimeoutMilliseconds));
+    }
+
     private static async Task WaitForTaskAsync(Task? task, TimeSpan timeout)
     {
         if (task == null || task.IsCompleted)
@@ -789,6 +1027,9 @@ public class ControlServer : IDisposable
         {
         }
         catch (SocketException)
+        {
+        }
+        catch (OperationCanceledException)
         {
         }
     }
@@ -819,6 +1060,73 @@ public class ControlServer : IDisposable
             Interlocked.Exchange(ref this.lastReceivedAtTicks, DateTimeOffset.UtcNow.Ticks);
         }
     }
+
+    private sealed class ControlCommandRequest
+    {
+        public ControlCommandRequest(
+            SecureSocketConnection connection,
+            SocketMessageFrame frame,
+            ActiveControlConnection activeConnection,
+            string serverInstanceId)
+        {
+            this.Connection = connection;
+            this.Frame = frame;
+            this.ActiveConnection = activeConnection;
+            this.ServerInstanceId = serverInstanceId;
+        }
+
+        public SecureSocketConnection Connection { get; }
+
+        public SocketMessageFrame Frame { get; }
+
+        public ActiveControlConnection ActiveConnection { get; }
+
+        public string ServerInstanceId { get; }
+
+        public TaskCompletionSource<ControlCommandResult> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private sealed record ControlCommandResult(string ServerInstanceId);
+
+    private sealed class ControlResponseCommand
+    {
+        public ControlResponseCommand(
+            SecureSocketConnection connection,
+            uint clientId,
+            uint messageId,
+            object payload,
+            string payloadType)
+        {
+            this.Connection = connection;
+            this.ClientId = clientId;
+            this.MessageId = messageId;
+            this.Payload = payload;
+            this.PayloadType = payloadType;
+        }
+
+        public SecureSocketConnection Connection { get; }
+
+        public uint ClientId { get; }
+
+        public uint MessageId { get; }
+
+        public object Payload { get; }
+
+        public string PayloadType { get; }
+
+        public TaskCompletionSource<bool> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private sealed record PeerRelayCommand(uint MessageId, object Payload, string PayloadType);
+
+    private sealed record PeerRelayResult(
+        EndpointConfig Peer,
+        uint MessageId,
+        string PayloadType,
+        bool Success,
+        string ErrorMessage);
 
     public void Dispose()
     {

@@ -253,7 +253,9 @@ public class TcpClient : IClient, IDisposable
 
         this.healthCheckCancellation?.Dispose();
         this.healthCheckCancellation = new CancellationTokenSource();
-        this.healthCheckTask = this.RunHealthCheckLoopAsync(interval, this.healthCheckCancellation.Token);
+        this.healthCheckTask = DedicatedWorker.Start(
+            token => this.RunHealthCheckLoopAsync(interval, token),
+            this.healthCheckCancellation.Token);
         Logger.Info($"Healthcheck loop started. clientId={this.ClientId}, intervalSeconds={interval.TotalSeconds}");
         return true;
     }

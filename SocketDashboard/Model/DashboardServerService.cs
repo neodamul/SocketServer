@@ -21,6 +21,9 @@ public class DashboardServerService : IDisposable
 
     private readonly TcpServer server;
     private readonly IReadOnlyCollection<EndpointConfig> controlEndpoints;
+    private readonly object statusCacheLock = new();
+    private readonly Dictionary<string, DashboardControlServerStatus> lastHealthyControlStatusByEndpoint = new(StringComparer.OrdinalIgnoreCase);
+    private ClusterStatusSnapshot? lastSuccessfulCluster;
     private bool disposedValue;
 
     public DashboardServerService()
@@ -53,8 +56,13 @@ public class DashboardServerService : IDisposable
 
     public DashboardServerStatus GetStatus()
     {
+        return this.GetStatusAsync().GetAwaiter().GetResult();
+    }
+
+    public async Task<DashboardServerStatus> GetStatusAsync()
+    {
         TcpServerStatus serverStatus = this.server.GetStatus();
-        ControlServerQueryResult controlStatus = this.GetControlServerStatuses();
+        ControlServerQueryResult controlStatus = await this.GetControlServerStatusesAsync();
         return new DashboardServerStatus
         {
             DashboardStartedAt = this.StartedAt,
@@ -93,7 +101,12 @@ public class DashboardServerService : IDisposable
 
     public DashboardMetrics GetMetrics()
     {
-        DashboardServerStatus status = this.GetStatus();
+        return this.GetMetricsAsync().GetAwaiter().GetResult();
+    }
+
+    public async Task<DashboardMetrics> GetMetricsAsync()
+    {
+        DashboardServerStatus status = await this.GetStatusAsync();
         return new DashboardMetrics
         {
             DashboardStartedAt = this.StartedAt,
@@ -126,7 +139,7 @@ public class DashboardServerService : IDisposable
         };
     }
 
-    private ControlServerQueryResult GetControlServerStatuses()
+    private async Task<ControlServerQueryResult> GetControlServerStatusesAsync()
     {
         ControlServerEndpointQuery[] queries = this.controlEndpoints
             .Select(endpoint => QueryControlServerStatusAsync(endpoint))
@@ -136,9 +149,9 @@ public class DashboardServerService : IDisposable
             return new ControlServerQueryResult();
         }
 
-        Task.WhenAll(queries.Select(query => query.Task)).GetAwaiter().GetResult();
+        await Task.WhenAll(queries.Select(query => query.Task));
         DashboardControlServerStatus[] controlServers = queries
-            .Select(query => query.Task.GetAwaiter().GetResult())
+            .Select(query => query.Task.Result)
             .ToArray();
         ClusterStatusSnapshot? mergedCluster = MergeClusterSnapshots(
             queries
@@ -146,11 +159,60 @@ public class DashboardServerService : IDisposable
                 .Where(snapshot => snapshot != null)
                 .Cast<ClusterStatusSnapshot>());
 
-        return new ControlServerQueryResult
+        return this.ApplyStatusCache(controlServers, mergedCluster);
+    }
+
+    private ControlServerQueryResult ApplyStatusCache(
+        IReadOnlyCollection<DashboardControlServerStatus> controlServers,
+        ClusterStatusSnapshot? mergedCluster)
+    {
+        lock (this.statusCacheLock)
         {
-            Cluster = mergedCluster,
-            ControlServers = controlServers
-        };
+            if (mergedCluster != null)
+            {
+                this.lastSuccessfulCluster = mergedCluster;
+            }
+
+            DashboardControlServerStatus[] statuses = controlServers
+                .Select(status =>
+                {
+                    string key = CreateEndpointKey(status.Host, status.Port);
+                    if (status.IsHealthy)
+                    {
+                        this.lastHealthyControlStatusByEndpoint[key] = status;
+                        return status;
+                    }
+
+                    if (!this.lastHealthyControlStatusByEndpoint.TryGetValue(key, out DashboardControlServerStatus cached))
+                    {
+                        return status;
+                    }
+
+                    return new DashboardControlServerStatus
+                    {
+                        Host = status.Host,
+                        Port = status.Port,
+                        IsHealthy = status.IsHealthy,
+                        Status = status.Status,
+                        ServerCount = cached.ServerCount,
+                        HealthyServerCount = cached.HealthyServerCount,
+                        TotalCurrentConnections = cached.TotalCurrentConnections,
+                        TotalAvailableConnections = cached.TotalAvailableConnections,
+                        TotalSessionCount = cached.TotalSessionCount,
+                        CheckedAt = status.CheckedAt,
+                        ErrorMessage = string.IsNullOrWhiteSpace(status.ErrorMessage)
+                            ? "Using last known counters because the current query did not return a snapshot."
+                            : $"{status.ErrorMessage} Last known counters are retained."
+                    };
+                })
+                .ToArray();
+
+            return new ControlServerQueryResult
+            {
+                Cluster = mergedCluster ?? this.lastSuccessfulCluster,
+                ControlServers = statuses
+            };
+        }
     }
 
     private static ClusterStatusSnapshot? MergeClusterSnapshots(IEnumerable<ClusterStatusSnapshot> snapshots)
@@ -302,6 +364,11 @@ public class DashboardServerService : IDisposable
             CheckedAt = checkedAt,
             ErrorMessage = errorMessage
         };
+    }
+
+    private static string CreateEndpointKey(string host, int port)
+    {
+        return $"{host}:{port}";
     }
 
     private static IEnumerable<EndpointConfig> NormalizeControlEndpoints(IEnumerable<EndpointConfig> endpoints)

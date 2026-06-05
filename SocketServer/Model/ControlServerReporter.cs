@@ -67,7 +67,7 @@ public class ControlServerReporter : IDisposable
         this.server.SessionOpenedAsync += this.SendSessionOpenedAsync;
         this.server.SessionUpdatedAsync += this.SendSessionUpdatedAsync;
         this.server.SessionClosedAsync += this.SendSessionClosedAsync;
-        this.reportWorkerTask = this.RunReportWorkerAsync(this.reportCancellation.Token);
+        this.reportWorkerTask = DedicatedWorker.Start(this.RunReportWorkerAsync, this.reportCancellation.Token);
     }
 
     public async Task RegisterAsync()
@@ -155,7 +155,9 @@ public class ControlServerReporter : IDisposable
         this.cancellation?.Dispose();
         this.cancellation = new CancellationTokenSource();
         TimeSpan normalizedInterval = NormalizeHeartbeatInterval(interval);
-        this.heartbeatTask = this.RunHeartbeatLoopAsync(normalizedInterval, this.cancellation.Token);
+        this.heartbeatTask = DedicatedWorker.Start(
+            token => this.RunHeartbeatLoopAsync(normalizedInterval, token),
+            this.cancellation.Token);
         Logger.Info($"SocketServer heartbeat loop started. instanceId={this.server.InstanceId}, intervalMs={normalizedInterval.TotalMilliseconds}, controlEndpoints={this.connections.Count}");
     }
 
@@ -301,7 +303,7 @@ public class ControlServerReporter : IDisposable
         return SendSessionEventAsync(session, ControlMessageIds.SessionUpdated, "Updated");
     }
 
-    private async Task SendSessionEventAsync(ConnectionSession session, uint messageId, string state)
+    private Task SendSessionEventAsync(ConnectionSession session, uint messageId, string state)
     {
         SessionEventMessage message = new()
         {
@@ -317,7 +319,16 @@ public class ControlServerReporter : IDisposable
             Version = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
 
-        await BroadcastSessionEventAsync(0, messageId, message);
+        if (!this.reportChannel.Writer.TryWrite(new ControlReportMessage(messageId, message)))
+        {
+            Logger.Warn($"ControlServer session event queue rejected item. instanceId={this.server.InstanceId}, messageId={messageId}, sessionId={session.Id}, clientId={session.ClientId}");
+        }
+        else
+        {
+            Logger.Debug($"ControlServer session event queued. instanceId={this.server.InstanceId}, messageId={messageId}, sessionId={session.Id}, clientId={session.ClientId}");
+        }
+
+        return Task.CompletedTask;
     }
 
     private async Task RunReportWorkerAsync(CancellationToken cancellationToken)
@@ -328,11 +339,7 @@ public class ControlServerReporter : IDisposable
             {
                 try
                 {
-                    await BroadcastAsync(
-                        0,
-                        report.MessageId,
-                        report.Message,
-                        RequiresAllEndpointReports(report.MessageId));
+                    await BroadcastSessionEventAsync(0, report.MessageId, report.Message);
                 }
                 catch (Exception exception)
                 {

@@ -7,6 +7,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using SocketCommon;
 using SocketCommon.Configuration;
@@ -24,10 +25,36 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<TcpServer>();
     private static readonly SocketLogger RelayLogger = SocketLogManager.GetRelayLogger<TcpServer>();
+    private const int ClientCommandWorkerCount = 4;
+    private const int ServerRelayWorkerCount = 8;
 
     private readonly ConcurrentDictionary<long, ConnectionSession> connectedClients = new();
     private readonly ConcurrentDictionary<uint, ConnectionSession> connectedClientsById = new();
     private readonly ConcurrentDictionary<string, BackendServerSnapshot> relayServers = new();
+    private readonly Channel<ClientCommandRequest> clientCommandRequestChannel = Channel.CreateUnbounded<ClientCommandRequest>(
+        new UnboundedChannelOptions
+        {
+            SingleReader = false,
+            SingleWriter = false
+        });
+    private readonly Channel<ClientResponseCommand> clientResponseChannel = Channel.CreateUnbounded<ClientResponseCommand>(
+        new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        });
+    private readonly Channel<ServerRelayCommand> serverRelayRequestChannel = Channel.CreateUnbounded<ServerRelayCommand>(
+        new UnboundedChannelOptions
+        {
+            SingleReader = false,
+            SingleWriter = false
+        });
+    private readonly Channel<ServerRelayResult> serverRelayResponseChannel = Channel.CreateUnbounded<ServerRelayResult>(
+        new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = false
+        });
     private readonly int maxConnections;
     private readonly int pendingAcceptCount;
     private readonly TimeSpan idleTimeout;
@@ -38,6 +65,10 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     private string clusterId = "socket-cluster-1";
     private CancellationTokenSource acceptLoopCancellation;
     private Task acceptLoopTask;
+    private Task clientResponseTask;
+    private Task serverRelayResponseTask;
+    private Task[] clientCommandWorkerTasks = Array.Empty<Task>();
+    private Task[] serverRelayWorkerTasks = Array.Empty<Task>();
     private bool isListening;
     private DateTimeOffset? startedAt;
     private int activeConnectionSlots;
@@ -347,9 +378,25 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         this.isListening = false;
         this.CloseConnectedClients();
         await WaitForTaskAsync(this.acceptLoopTask, timeout);
+        foreach (Task task in this.clientCommandWorkerTasks)
+        {
+            await WaitForTaskAsync(task, timeout);
+        }
+
+        foreach (Task task in this.serverRelayWorkerTasks)
+        {
+            await WaitForTaskAsync(task, timeout);
+        }
+
+        await WaitForTaskAsync(this.clientResponseTask, timeout);
+        await WaitForTaskAsync(this.serverRelayResponseTask, timeout);
         this.acceptLoopCancellation?.Dispose();
         this.acceptLoopCancellation = null;
         this.acceptLoopTask = null;
+        this.clientResponseTask = null;
+        this.serverRelayResponseTask = null;
+        this.clientCommandWorkerTasks = Array.Empty<Task>();
+        this.serverRelayWorkerTasks = Array.Empty<Task>();
         Logger.Info($"Server ended. endpoint={this.GetIpAddress()}:{this.GetPort()}");
         return true;
     }
@@ -369,8 +416,22 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         this.acceptLoopCancellation?.Dispose();
         this.acceptLoopCancellation = new CancellationTokenSource();
-        this.acceptLoopTask = this.RunClientAcceptLoopAsync(this.acceptLoopCancellation.Token);
-        Logger.Info($"Accept loop started. endpoint={this.GetIpAddress()}:{this.GetPort()}");
+        this.clientCommandWorkerTasks = DedicatedWorker.StartMany(
+            ClientCommandWorkerCount,
+            this.RunClientCommandRequestLoopAsync,
+            this.acceptLoopCancellation.Token);
+        this.clientResponseTask = DedicatedWorker.Start(
+            this.RunClientResponseLoopAsync,
+            this.acceptLoopCancellation.Token);
+        this.serverRelayWorkerTasks = DedicatedWorker.StartMany(
+            ServerRelayWorkerCount,
+            this.RunServerRelayRequestLoopAsync,
+            this.acceptLoopCancellation.Token);
+        this.serverRelayResponseTask = DedicatedWorker.Start(
+            this.RunServerRelayResponseLoopAsync,
+            this.acceptLoopCancellation.Token);
+        this.acceptLoopTask = DedicatedWorker.Start(this.RunClientAcceptLoopAsync, this.acceptLoopCancellation.Token);
+        Logger.Info($"Accept loop started. endpoint={this.GetIpAddress()}:{this.GetPort()}, commandWorkers={ClientCommandWorkerCount}, relayWorkers={ServerRelayWorkerCount}");
         return true;
     }
 
@@ -623,7 +684,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 {
                     session.MarkReceived(frame.ClientId);
                     Interlocked.Increment(ref this.totalReceivedMessages);
-                    await this.HandleServerRelayAsync(session, relayMessage);
+                    await this.EnqueueServerRelayReceiveAsync(session, relayMessage);
                     break;
                 }
 
@@ -636,7 +697,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                     session.MarkReportedOpened();
                 }
 
-                bool handled = await this.HandleClientMessageAsync(session, frame);
+                bool handled = await this.EnqueueClientCommandAsync(session, frame);
                 if (shouldReportOpened)
                 {
                     _ = this.NotifySessionOpenedAsync(session);
@@ -655,6 +716,88 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         }
     }
 
+    private async Task<bool> EnqueueClientCommandAsync(ConnectionSession session, SocketMessageFrame frame)
+    {
+        ClientCommandRequest request = new(session, frame);
+        if (!this.clientCommandRequestChannel.Writer.TryWrite(request))
+        {
+            Logger.Warn($"Client command queue rejected frame. instanceId={this.instanceId}, connectionId={session.Id}, messageId={frame.MessageId}");
+            return await this.HandleClientMessageAsync(session, frame);
+        }
+
+        return await request.Completion.Task;
+    }
+
+    private async Task RunClientCommandRequestLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (ClientCommandRequest request in this.clientCommandRequestChannel.Reader.ReadAllAsync(cancellationToken))
+            {
+                try
+                {
+                    bool result = await this.HandleClientMessageAsync(request.Session, request.Frame);
+                    request.Completion.TrySetResult(result);
+                }
+                catch (Exception exception)
+                {
+                    request.Completion.TrySetException(exception);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Logger.Warn($"Client command worker stopped unexpectedly. instanceId={this.instanceId}", exception);
+        }
+    }
+
+    private async Task<bool> EnqueueClientResponseAsync(ConnectionSession session, byte[] payload, string operation)
+    {
+        ClientResponseCommand command = new(session, payload, operation);
+        if (!this.clientResponseChannel.Writer.TryWrite(command))
+        {
+            Logger.Warn($"Client response queue rejected command. instanceId={this.instanceId}, connectionId={session.Id}, operation={operation}");
+            return await session.SendAsync(payload);
+        }
+
+        return await command.Completion.Task;
+    }
+
+    private async Task<bool> EnqueueClientResponseAsync(ConnectionSession session, SocketMessageFrame frame, string operation)
+    {
+        return await this.EnqueueClientResponseAsync(session, frame.Encode(), operation);
+    }
+
+    private async Task RunClientResponseLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (ClientResponseCommand command in this.clientResponseChannel.Reader.ReadAllAsync(cancellationToken))
+            {
+                try
+                {
+                    bool sent = await command.Session.SendAsync(command.Payload);
+                    command.Completion.TrySetResult(sent);
+                    Logger.Debug($"Client response command processed. instanceId={this.instanceId}, connectionId={command.Session.Id}, operation={command.Operation}, success={sent}");
+                }
+                catch (Exception exception)
+                {
+                    command.Completion.TrySetException(exception);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Logger.Warn($"Client response worker stopped unexpectedly. instanceId={this.instanceId}", exception);
+        }
+    }
+
     private async Task<bool> HandleClientMessageAsync(ConnectionSession session, SocketMessageFrame frame)
     {
         bool sent;
@@ -666,7 +809,10 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             }
 
             Logger.Debug($"Healthcheck ping received. instanceId={this.InstanceId}, connectionId={session.Id}, clientId={healthCheckMessage.ClientId}");
-            sent = await session.SendAsync(HealthCheckProtocol.Encode(HealthCheckProtocol.CreatePong(healthCheckMessage.ClientId)));
+            sent = await this.EnqueueClientResponseAsync(
+                session,
+                HealthCheckProtocol.Encode(HealthCheckProtocol.CreatePong(healthCheckMessage.ClientId)),
+                "HealthCheckPong");
             if (sent)
             {
                 Interlocked.Increment(ref this.totalSentMessages);
@@ -682,7 +828,10 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         if (HelloWorldProtocol.TryDecodeRequest(frame, out HelloWorldRequest helloWorldRequest))
         {
-            sent = await session.SendAsync(HelloWorldProtocol.Encode(HelloWorldProtocol.CreateResponse(helloWorldRequest.ClientId)));
+            sent = await this.EnqueueClientResponseAsync(
+                session,
+                HelloWorldProtocol.Encode(HelloWorldProtocol.CreateResponse(helloWorldRequest.ClientId)),
+                "HelloWorldResponse");
             if (sent)
             {
                 Interlocked.Increment(ref this.totalSentMessages);
@@ -695,15 +844,18 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         {
             session.MarkReceived(registerRequest.ClientId);
             this.UpdateClientIndex(session);
-            sent = await session.SendAsync(ClientMessageProtocol.CreateFrame(
-                registerRequest.ClientId,
-                ClientMessageIds.ClientRegisterAck,
-                new ClientRegisterAck
-                {
-                    ClientId = registerRequest.ClientId,
-                    Success = registerRequest.ClientId > 0,
-                    ErrorMessage = registerRequest.ClientId == 0 ? "ClientId must be greater than zero." : ""
-                }));
+            sent = await this.EnqueueClientResponseAsync(
+                session,
+                ClientMessageProtocol.CreateFrame(
+                    registerRequest.ClientId,
+                    ClientMessageIds.ClientRegisterAck,
+                    new ClientRegisterAck
+                    {
+                        ClientId = registerRequest.ClientId,
+                        Success = registerRequest.ClientId > 0,
+                        ErrorMessage = registerRequest.ClientId == 0 ? "ClientId must be greater than zero." : ""
+                    }),
+                "ClientRegisterAck");
             if (sent)
             {
                 Interlocked.Increment(ref this.totalSentMessages);
@@ -719,7 +871,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         if (ClientMessageProtocol.TryDecodeRelay(frame, out ServerRelayMessage relayMessage))
         {
-            await this.HandleServerRelayAsync(session, relayMessage);
+            await this.EnqueueServerRelayReceiveAsync(session, relayMessage);
             return false;
         }
 
@@ -801,28 +953,121 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         if (DateTimeOffset.UtcNow - request.CreatedAt > TimeSpan.FromSeconds(Math.Max(1, request.TtlSeconds)))
         {
             RelayLogger.Warn($"Server relay expired. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
-            await relaySession.SendAsync(ClientMessageProtocol.CreateFrame(
-                request.SourceClientId,
-                ServerRelayMessageIds.ServerRelayError,
-                CreateClientMessageError(request, "MessageExpired", "Relay message ttl expired.")));
+            await this.EnqueueClientResponseAsync(
+                relaySession,
+                ClientMessageProtocol.CreateFrame(
+                    request.SourceClientId,
+                    ServerRelayMessageIds.ServerRelayError,
+                    CreateClientMessageError(request, "MessageExpired", "Relay message ttl expired.")),
+                "ServerRelayExpired");
             return;
         }
 
         if (!await this.DeliverToLocalClientAsync(request))
         {
             RelayLogger.Debug($"Server relay target not connected. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
-            await relaySession.SendAsync(ClientMessageProtocol.CreateFrame(
-                request.SourceClientId,
-                ServerRelayMessageIds.ServerRelayError,
-                CreateClientMessageError(request, "TargetNotConnected", "Target client is not connected to this server.")));
+            await this.EnqueueClientResponseAsync(
+                relaySession,
+                ClientMessageProtocol.CreateFrame(
+                    request.SourceClientId,
+                    ServerRelayMessageIds.ServerRelayError,
+                    CreateClientMessageError(request, "TargetNotConnected", "Target client is not connected to this server.")),
+                "ServerRelayTargetNotConnected");
             return;
         }
 
-        await relaySession.SendAsync(ClientMessageProtocol.CreateFrame(
-            request.SourceClientId,
-            ServerRelayMessageIds.ServerRelayAck,
-            CreateClientMessageAck(request, this.instanceId)));
+        await this.EnqueueClientResponseAsync(
+            relaySession,
+            ClientMessageProtocol.CreateFrame(
+                request.SourceClientId,
+                ServerRelayMessageIds.ServerRelayAck,
+                CreateClientMessageAck(request, this.instanceId)),
+            "ServerRelayAck");
         RelayLogger.Info($"Server relay delivered. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
+    }
+
+    private async Task EnqueueServerRelayReceiveAsync(ConnectionSession relaySession, ServerRelayMessage relayMessage)
+    {
+        ServerRelayCommand command = new(relaySession, relayMessage);
+        if (!this.serverRelayRequestChannel.Writer.TryWrite(command))
+        {
+            RelayLogger.Warn($"Server relay request queue rejected receive command. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={relayMessage.MessageToken}");
+            await this.HandleServerRelayAsync(relaySession, relayMessage);
+            return;
+        }
+
+        await command.Completion.Task;
+    }
+
+    private async Task RunServerRelayRequestLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (ServerRelayCommand command in this.serverRelayRequestChannel.Reader.ReadAllAsync(cancellationToken))
+            {
+                try
+                {
+                    if (command.IsReceiveCommand)
+                    {
+                        await this.HandleServerRelayAsync(command.Session, command.RelayMessage);
+                        command.Completion.TrySetResult((true, this.instanceId, ""));
+                        this.serverRelayResponseChannel.Writer.TryWrite(new ServerRelayResult(
+                            true,
+                            this.instanceId,
+                            command.RelayMessage?.MessageToken ?? "",
+                            ""));
+                        continue;
+                    }
+
+                    (bool success, string targetInstanceId, string errorMessage) = await this.SendRelayToRemoteServerAsync(
+                        command.Host,
+                        command.Port,
+                        command.TargetInstanceId,
+                        command.Request);
+                    command.Completion.TrySetResult((success, targetInstanceId, errorMessage));
+                    this.serverRelayResponseChannel.Writer.TryWrite(new ServerRelayResult(
+                        success,
+                        targetInstanceId,
+                        command.Request?.MessageToken ?? "",
+                        errorMessage));
+                }
+                catch (Exception exception)
+                {
+                    command.Completion.TrySetException(exception);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            RelayLogger.Warn($"Server relay worker stopped unexpectedly. instanceId={this.instanceId}", exception);
+        }
+    }
+
+    private async Task RunServerRelayResponseLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (ServerRelayResult result in this.serverRelayResponseChannel.Reader.ReadAllAsync(cancellationToken))
+            {
+                if (result.Success)
+                {
+                    RelayLogger.Debug($"Server relay response processed. sourceInstanceId={this.instanceId}, targetInstanceId={result.TargetInstanceId}, messageToken={result.MessageToken}, success=true");
+                    continue;
+                }
+
+                RelayLogger.Warn($"Server relay response failed. sourceInstanceId={this.instanceId}, targetInstanceId={result.TargetInstanceId}, messageToken={result.MessageToken}, error={result.ErrorMessage}");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            RelayLogger.Warn($"Server relay response worker stopped unexpectedly. instanceId={this.instanceId}", exception);
+        }
     }
 
     private async Task<bool> DeliverToLocalClientAsync(ClientMessageSendRequest request)
@@ -834,10 +1079,13 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             return false;
         }
 
-        bool sent = await targetSession.SendAsync(ClientMessageProtocol.CreateFrame(
-            request.TargetClientId,
-            ClientMessageIds.ClientMessageDeliver,
-            ClientMessageProtocol.CreateDelivery(request)));
+        bool sent = await this.EnqueueClientResponseAsync(
+            targetSession,
+            ClientMessageProtocol.CreateFrame(
+                request.TargetClientId,
+                ClientMessageIds.ClientMessageDeliver,
+                ClientMessageProtocol.CreateDelivery(request)),
+            "ClientMessageDeliver");
         if (sent)
         {
             Interlocked.Increment(ref this.totalSentMessages);
@@ -924,6 +1172,22 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     }
 
     private async Task<(bool Success, string TargetInstanceId, string ErrorMessage)> RelayToRemoteServerAsync(
+        string host,
+        int port,
+        string targetInstanceId,
+        ClientMessageSendRequest request)
+    {
+        ServerRelayCommand command = new(host, port, targetInstanceId, request);
+        if (!this.serverRelayRequestChannel.Writer.TryWrite(command))
+        {
+            RelayLogger.Warn($"Server relay request queue rejected command. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}");
+            return await this.SendRelayToRemoteServerAsync(host, port, targetInstanceId, request);
+        }
+
+        return await command.Completion.Task;
+    }
+
+    private async Task<(bool Success, string TargetInstanceId, string ErrorMessage)> SendRelayToRemoteServerAsync(
         string host,
         int port,
         string targetInstanceId,
@@ -1058,10 +1322,13 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     private async Task<bool> SendClientMessageAckAsync(ConnectionSession sourceSession, ClientMessageSendRequest request, string targetInstanceId)
     {
-        bool sent = await sourceSession.SendAsync(ClientMessageProtocol.CreateFrame(
-            request.SourceClientId,
-            ClientMessageIds.ClientMessageAck,
-            CreateClientMessageAck(request, targetInstanceId)));
+        bool sent = await this.EnqueueClientResponseAsync(
+            sourceSession,
+            ClientMessageProtocol.CreateFrame(
+                request.SourceClientId,
+                ClientMessageIds.ClientMessageAck,
+                CreateClientMessageAck(request, targetInstanceId)),
+            "ClientMessageAck");
         if (sent)
         {
             Interlocked.Increment(ref this.totalSentMessages);
@@ -1076,10 +1343,13 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         string errorCode,
         string errorMessage)
     {
-        bool sent = await sourceSession.SendAsync(ClientMessageProtocol.CreateFrame(
-            request.SourceClientId,
-            ClientMessageIds.ClientMessageError,
-            CreateClientMessageError(request, errorCode, errorMessage)));
+        bool sent = await this.EnqueueClientResponseAsync(
+            sourceSession,
+            ClientMessageProtocol.CreateFrame(
+                request.SourceClientId,
+                ClientMessageIds.ClientMessageError,
+                CreateClientMessageError(request, errorCode, errorMessage)),
+            "ClientMessageError");
         if (sent)
         {
             Interlocked.Increment(ref this.totalSentMessages);
@@ -1313,4 +1583,92 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         Dispose(disposing: true);
         GC.SuppressFinalize(this);
     }
+}
+
+internal sealed class ClientCommandRequest
+{
+    public ClientCommandRequest(ConnectionSession session, SocketMessageFrame frame)
+    {
+        this.Session = session;
+        this.Frame = frame;
+    }
+
+    public ConnectionSession Session { get; }
+
+    public SocketMessageFrame Frame { get; }
+
+    public TaskCompletionSource<bool> Completion { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+}
+
+internal sealed class ClientResponseCommand
+{
+    public ClientResponseCommand(ConnectionSession session, byte[] payload, string operation)
+    {
+        this.Session = session;
+        this.Payload = payload;
+        this.Operation = operation;
+    }
+
+    public ConnectionSession Session { get; }
+
+    public byte[] Payload { get; }
+
+    public string Operation { get; }
+
+    public TaskCompletionSource<bool> Completion { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+}
+
+internal sealed class ServerRelayCommand
+{
+    public ServerRelayCommand(string host, int port, string targetInstanceId, ClientMessageSendRequest request)
+    {
+        this.Host = host;
+        this.Port = port;
+        this.TargetInstanceId = targetInstanceId;
+        this.Request = request;
+    }
+
+    public ServerRelayCommand(ConnectionSession session, ServerRelayMessage relayMessage)
+    {
+        this.Session = session;
+        this.RelayMessage = relayMessage;
+    }
+
+    public bool IsReceiveCommand => this.RelayMessage != null;
+
+    public string Host { get; }
+
+    public int Port { get; }
+
+    public string TargetInstanceId { get; }
+
+    public ClientMessageSendRequest Request { get; }
+
+    public ConnectionSession Session { get; }
+
+    public ServerRelayMessage RelayMessage { get; }
+
+    public TaskCompletionSource<(bool Success, string TargetInstanceId, string ErrorMessage)> Completion { get; } =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+}
+
+internal sealed class ServerRelayResult
+{
+    public ServerRelayResult(bool success, string targetInstanceId, string messageToken, string errorMessage)
+    {
+        this.Success = success;
+        this.TargetInstanceId = targetInstanceId;
+        this.MessageToken = messageToken;
+        this.ErrorMessage = errorMessage;
+    }
+
+    public bool Success { get; }
+
+    public string TargetInstanceId { get; }
+
+    public string MessageToken { get; }
+
+    public string ErrorMessage { get; }
 }

@@ -48,10 +48,10 @@ WebApplication app = builder.Build();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-app.MapGet("/api/server/status", (DashboardServerService serverService) => serverService.GetStatus());
+app.MapGet("/api/server/status", async (DashboardServerService serverService) => await serverService.GetStatusAsync());
 app.MapGet("/health/live", (DashboardServerService serverService) => serverService.GetLiveness());
 app.MapGet("/health/ready", (DashboardServerService serverService) => serverService.GetReadiness());
-app.MapGet("/metrics", (DashboardServerService serverService) => serverService.GetMetrics());
+app.MapGet("/metrics", async (DashboardServerService serverService) => await serverService.GetMetricsAsync());
 
 logger.Info("SocketDashboard starting.");
 app.Run();

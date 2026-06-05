@@ -75,6 +75,8 @@ SocketServer는 register 직후 ControlServer registry snapshot에서 healthy So
 
 SocketServer의 session event는 bounded queue를 통해 ControlServerReporter가 전송합니다. 이벤트 폭주 시 무제한 task/memory 증가를 막고, reporter worker에서 endpoint별 전송 실패와 timeout을 기록합니다.
 
+ControlServer와 SocketServer는 request/response와 relay 처리를 전담 큐와 long-running worker로 분리합니다. Listener/receive 루프는 socket accept와 frame read에 집중하고, command worker가 business command를 처리하며, response worker가 실제 socket write를 담당합니다. 서버 간 relay도 request/response queue를 따로 사용해 느린 peer, timeout, TLS handshake 지연이 heartbeat나 다음 command 처리까지 연쇄 지연되지 않도록 합니다. SocketClient의 healthcheck loop와 SocketServer reporter loop도 공통 전담 워커에서 실행되어 ThreadPool 혼잡과 분리됩니다.
+
 서버 기본 정책:
 
 - `maxConnections`: 기본 10,000
@@ -107,7 +109,7 @@ ControlServer가 재시작되면 저장된 registry를 로드하되, heartbeat t
 
 ## Dashboard
 
-Dashboard는 설정된 ControlServer 목록을 조회하고 Server Inventory에 `ControlServer` type으로 표시합니다. 여러 ControlServer가 응답하면 SocketServer `instanceId`별 최신 heartbeat snapshot을 병합해 전체 SocketServer 정보를 표시합니다. Dashboard 내부 서버 상태는 ControlServer 연결 여부와 무관하게 `Dashboard` type으로 항상 함께 표시됩니다. ControlServer가 없으면 로컬 Dashboard server 상태를 fallback cluster로 사용합니다. Server Inventory에서 서버 row를 선택하면 하단의 Server, Traffic, Socket Runtime, Details 패널이 선택된 서버 기준으로 갱신됩니다.
+Dashboard는 설정된 ControlServer 목록을 조회하고 Server Inventory에 `ControlServer` type으로 표시합니다. 여러 ControlServer가 응답하면 SocketServer `instanceId`별 최신 heartbeat snapshot을 병합해 전체 SocketServer 정보를 표시합니다. Dashboard 내부 서버 상태는 ControlServer 연결 여부와 무관하게 `Dashboard` type으로 항상 함께 표시됩니다. ControlServer가 없으면 로컬 Dashboard server 상태를 fallback cluster로 사용합니다. 일시적인 ControlServer timeout이나 unavailable 응답이 발생하면 마지막 정상 cluster snapshot과 endpoint별 counters를 유지해 서버 목록이 갑자기 사라지지 않도록 합니다. Server Inventory에서 서버 row를 선택하면 하단의 Server, Traffic, Socket Runtime, Details 패널이 선택된 서버 기준으로 갱신됩니다.
 브라우저 UI는 기본 30초 간격으로 상태 API를 갱신하고, 사용자가 refresh interval 콤보에서 5초, 10초, 30초, 60초 중 하나를 선택할 수 있습니다.
 
 표시 항목:

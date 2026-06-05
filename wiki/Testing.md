@@ -23,12 +23,14 @@ dotnet test SocketTests/SocketTests.csproj
 - port range binding
 - ControlServer route
 - ControlServer peer registry sync
+- ControlServer command/relay queue isolation
 - ControlServer periodic peer snapshot sync recovery
 - ControlServer dual endpoint direct report with stalled endpoint isolation
 - ControlServer registry file persistence and stale heartbeat normalization
 - ControlServer stale control connection cleanup scheduler
 - client-to-client local delivery
 - SocketServer-to-SocketServer client message relay
+- SocketServer command/response/relay queue workers
 - SocketServer relay server list refresh and broadcast fallback
 - four SocketServer relay list refresh and broadcast fan-out
 - SocketServer control channel disconnect detection

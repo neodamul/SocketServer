@@ -229,6 +229,49 @@ public class DashboardServerServiceTests
     }
 
     [TestMethod]
+    public void GetStatusRetainsLastClusterSnapshotWhenControlServerQueryFailsTest()
+    {
+        using ControlServer controlServer = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-dashboard-cache",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0
+            }
+        });
+        Assert.IsTrue(controlServer.Start());
+        controlServer.Registry.Upsert(CreateHeartbeat(
+            "server-dashboard-cache",
+            2,
+            DateTimeOffset.UtcNow),
+            "control-dashboard-cache",
+            new ControlHealthThreshold());
+
+        int controlPort = controlServer.Port;
+        using DashboardServerService service = new(
+            0,
+            new EndpointConfig { Host = "127.0.0.1", Port = controlPort });
+
+        DashboardServerStatus healthyStatus = service.GetStatus();
+        Assert.AreEqual(1, healthyStatus.Cluster.ServerCount);
+        Assert.IsTrue(healthyStatus.ControlServers.First().IsHealthy);
+
+        controlServer.Stop();
+
+        DashboardServerStatus cachedStatus = service.GetStatus();
+
+        Assert.AreEqual(1, cachedStatus.Cluster.ServerCount);
+        Assert.AreEqual(2, cachedStatus.Cluster.TotalCurrentConnections);
+        Assert.AreEqual("server-dashboard-cache", cachedStatus.Cluster.Servers.First().InstanceId);
+        Assert.IsFalse(cachedStatus.ControlServers.First().IsHealthy);
+        Assert.AreEqual(1, cachedStatus.ControlServers.First().ServerCount);
+        Assert.AreEqual(2, cachedStatus.ControlServers.First().TotalCurrentConnections);
+    }
+
+    [TestMethod]
     public async Task DashboardStatusReflectsSampleClientMessageThroughControlServerTest()
     {
         SocketSecurityConfig security = new()

@@ -28,6 +28,7 @@ SocketServer.sln
 - ControlServer 브로커 기반 서버 등록, heartbeat, route 응답, registry 파일 저장
 - ControlServer client location 조회와 heartbeat timeout 기반 서버 상태 정리
 - ControlServer/SocketServer 비정상 연결 cleanup scheduler
+- ControlServer/SocketServer/SocketClient 전담 워커 기반 command, response, relay, healthcheck 처리
 - ControlServer/SocketServer 목록, 서버 선택형 runtime/detail, 30초 기본 자동 갱신 대시보드, health/metrics API
 - 일반/relay 분리 log4net 로깅과 INFO/DEBUG 추적
 

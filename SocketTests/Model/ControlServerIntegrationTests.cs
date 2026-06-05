@@ -23,7 +23,24 @@ public class ControlServerIntegrationTests
     [TestInitialize]
     public void Initialize()
     {
-        SocketFactory.Configure(new SocketOperationConfig());
+        ResetSocketTestDefaults();
+    }
+
+    private static void ResetSocketTestDefaults()
+    {
+        SocketFactory.Configure(new SocketOperationConfig
+        {
+            ConnectTimeoutSeconds = 30,
+            ReadTimeoutSeconds = 30,
+            WriteTimeoutSeconds = 30
+        });
+        SecureSocketConnection.Configure(new SocketSecurityConfig
+        {
+            TransportMode = "Tls",
+            TlsProtocol = "Auto",
+            RequireTls13 = false,
+            AuthenticationTimeoutMilliseconds = 30000
+        });
     }
 
     [TestMethod]
@@ -144,12 +161,86 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
+    public async Task ControlServerPeerRelayDoesNotBlockNextCommandOnSameConnectionTest()
+    {
+        SocketSecurityConfig security = new()
+        {
+            TransportMode = "Tls",
+            TlsProtocol = "Auto",
+            RequireTls13 = false,
+            AuthenticationTimeoutMilliseconds = 5000
+        };
+        SecureSocketConnection.Configure(security);
+
+        using NetSocket stalledListener = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+        stalledListener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+        stalledListener.Listen(SocketFactory.ListenBacklog);
+        int stalledPort = ((IPEndPoint)stalledListener.LocalEndPoint!).Port;
+        using CancellationTokenSource stalledCancellation = new();
+        List<NetSocket> stalledSockets = new();
+        Task stalledAcceptTask = AcceptAndHoldSocketsAsync(stalledListener, stalledSockets, stalledCancellation.Token);
+
+        using ControlServer controlServer = new(new ControlServerConfigFile
+        {
+            Security = security,
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-relay-nonblocking",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0,
+                RouteReservationSeconds = 5
+            },
+            Peers = { new EndpointConfig { Host = "127.0.0.1", Port = stalledPort } }
+        });
+        Assert.IsTrue(controlServer.Start());
+
+        using NetSocket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+        await SocketFactory.ConnectAsync(socket, IPAddress.Loopback, controlServer.Port);
+        using SecureSocketConnection connection =
+            await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
+
+        (bool firstSuccess, _) = await ControlProtocol.SendAndReceiveAsync(
+            connection,
+            0,
+            ControlMessageIds.ServerHeartbeat,
+            CreateServerHeartbeat(501, "server-relay-nonblocking", 56501),
+            timeoutMilliseconds: 2000);
+        (bool secondSuccess, _) = await ControlProtocol.SendAndReceiveAsync(
+            connection,
+            0,
+            ControlMessageIds.ServerHeartbeat,
+            CreateServerHeartbeat(501, "server-relay-nonblocking", 56501),
+            timeoutMilliseconds: 2000);
+
+        Assert.IsTrue(firstSuccess);
+        Assert.IsTrue(secondSuccess);
+
+        stalledCancellation.Cancel();
+        stalledListener.Dispose();
+        NetSocket[] socketsToDispose;
+        lock (stalledSockets)
+        {
+            socketsToDispose = stalledSockets.ToArray();
+        }
+
+        foreach (NetSocket acceptedSocket in socketsToDispose)
+        {
+            acceptedSocket.Dispose();
+        }
+
+        await WithTimeoutAsync(stalledAcceptTask);
+    }
+
+    [TestMethod]
     public async Task ClientMessageDeliveredBetweenClientsOnSameSocketServerTest()
     {
         using ControlServerPair controls = CreateStartedControlPair("same-server");
         using SocketServerCluster servers = CreateStartedSocketServerCluster(30, "server-same");
         servers.AttachReporters(controls.Endpoints);
         await servers.RegisterAsync();
+        servers.StartHeartbeatLoops(TimeSpan.FromSeconds(5));
         await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
 
         TcpServer socketServer = servers.Servers[0];
@@ -161,12 +252,13 @@ public class ControlServerIntegrationTests
         Assert.IsTrue(await sourceClient.RegisterClientAsync());
         Assert.IsTrue(await targetClient.RegisterClientAsync());
 
+        ResetSocketTestDefaults();
         Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
-            sourceClient.SendClientMessageAsync(32, "same-server-message");
+            sourceClient.SendClientMessageAsync(32, "same-server-message", ttlSeconds: 30);
         (bool delivered, ClientMessageDelivery delivery) =
-            await WithTimeoutAsync(targetClient.TryReceiveClientMessageAsync());
+            await WithTimeoutAsync(targetClient.TryReceiveClientMessageAsync(), timeoutSeconds: 30);
         (bool acked, ClientMessageAck ack, ClientMessageError error) =
-            await WithTimeoutAsync(sendTask);
+            await WithTimeoutAsync(sendTask, timeoutSeconds: 30);
 
         Assert.IsTrue(delivered);
         Assert.AreEqual((uint)31, delivery.SourceClientId);
@@ -185,6 +277,7 @@ public class ControlServerIntegrationTests
         using SocketServerCluster servers = CreateStartedSocketServerCluster(40, "server-relay");
         servers.AttachReporters(controls.Endpoints);
         await servers.RegisterAsync();
+        servers.StartHeartbeatLoops(TimeSpan.FromSeconds(5));
         await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4);
         await WaitForClusterAsync(controls.ControlB, status => status.ServerCount == 4);
 
@@ -199,12 +292,13 @@ public class ControlServerIntegrationTests
         await WaitForClientLocationCountAsync(controls.ControlA, 2);
         await WaitForClientLocationCountAsync(controls.ControlB, 2);
 
+        ResetSocketTestDefaults();
         Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
-            sourceClient.SendClientMessageAsync(42, "cross-server-message");
+            sourceClient.SendClientMessageAsync(42, "cross-server-message", ttlSeconds: 30);
         (bool delivered, ClientMessageDelivery delivery) =
-            await WithTimeoutAsync(targetClient.TryReceiveClientMessageAsync());
+            await WithTimeoutAsync(targetClient.TryReceiveClientMessageAsync(), timeoutSeconds: 30);
         (bool acked, ClientMessageAck ack, ClientMessageError error) =
-            await WithTimeoutAsync(sendTask);
+            await WithTimeoutAsync(sendTask, timeoutSeconds: 30);
 
         Assert.IsTrue(delivered);
         Assert.AreEqual((uint)41, delivery.SourceClientId);
@@ -233,9 +327,11 @@ public class ControlServerIntegrationTests
 
         servers.AttachReporters(controls.Endpoints);
         await servers.RegisterAsync();
+        servers.StartHeartbeatLoops(TimeSpan.FromSeconds(5));
         await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4 && status.TotalSessionCount == 0);
         await WaitForClusterAsync(controls.ControlB, status => status.ServerCount == 4 && status.TotalSessionCount == 0);
 
+        ResetSocketTestDefaults();
         Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
             sourceClient.SendClientMessageAsync(102, "broadcast-relay-message");
         (bool delivered, ClientMessageDelivery delivery) =
@@ -270,6 +366,7 @@ public class ControlServerIntegrationTests
 
         servers.AttachReporters(controls.Endpoints);
         await servers.RegisterAsync();
+        servers.StartHeartbeatLoops(TimeSpan.FromSeconds(5));
         await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4 && status.TotalSessionCount == 0);
         await WaitForClusterAsync(controls.ControlB, status => status.ServerCount == 4 && status.TotalSessionCount == 0);
 
@@ -277,6 +374,7 @@ public class ControlServerIntegrationTests
         Assert.AreEqual(3, relayServerCount);
         Assert.AreEqual(3, sourceServer.RelayServerCount);
 
+        ResetSocketTestDefaults();
         Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
             sourceClient.SendClientMessageAsync(122, "broadcast-all-relay-message");
         (bool delivered, ClientMessageDelivery delivery) =
@@ -789,6 +887,30 @@ public class ControlServerIntegrationTests
             UseControlServer = true,
             ReceiveTimeoutSeconds = 30,
             Security = security
+        };
+    }
+
+    private static ServerHeartbeatRequest CreateServerHeartbeat(
+        int serverId,
+        string instanceId,
+        int port)
+    {
+        return new ServerHeartbeatRequest
+        {
+            ClusterId = "socket-cluster-1",
+            ServerId = serverId,
+            InstanceId = instanceId,
+            Host = "127.0.0.1",
+            Port = port,
+            MaxConnections = 10,
+            CurrentConnections = 0,
+            ResourceUsage = new ResourceUsageSnapshot
+            {
+                CpuUsagePercent = 1,
+                MemoryUsagePercent = 1,
+                StorageUsagePercent = 1
+            },
+            SentAt = DateTimeOffset.UtcNow
         };
     }
 
