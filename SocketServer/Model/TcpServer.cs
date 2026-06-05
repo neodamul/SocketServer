@@ -31,6 +31,8 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     private readonly ConcurrentDictionary<long, ConnectionSession> connectedClients = new();
     private readonly ConcurrentDictionary<uint, ConnectionSession> connectedClientsById = new();
     private readonly ConcurrentDictionary<string, BackendServerSnapshot> relayServers = new();
+    private readonly ConcurrentDictionary<string, PersistentSecureChannel> controlCommandChannels = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, PersistentSecureChannel> serverRelayChannels = new(StringComparer.Ordinal);
     private readonly Channel<ClientCommandRequest> clientCommandRequestChannel = Channel.CreateUnbounded<ClientCommandRequest>(
         new UnboundedChannelOptions
         {
@@ -200,18 +202,19 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             try
             {
                 RelayLogger.Debug($"Relay server snapshot request started. instanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}");
-                using Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-                await SocketFactory.ConnectAsync(socket, IPAddress.Parse(endpoint.Host), endpoint.Port);
-                using SecureSocketConnection connection = await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
-                (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
-                    connection,
-                    0,
-                    ControlMessageIds.RegistrySnapshotRequest,
-                    new RegistrySnapshotRequest { RequestedAt = DateTimeOffset.UtcNow });
+                PersistentSecureChannel channel = this.GetControlCommandChannel(endpoint);
+                (bool success, SocketMessageFrame frame) = await channel.SendAndReceiveAsync(
+                    connection => ControlProtocol.SendAndReceiveAsync(
+                        connection,
+                        0,
+                        ControlMessageIds.RegistrySnapshotRequest,
+                        new RegistrySnapshotRequest { RequestedAt = DateTimeOffset.UtcNow }),
+                    SocketFactory.ReadTimeoutMilliseconds);
 
                 if (!success ||
                     frame.MessageId != ControlMessageIds.RegistrySnapshotResponse ||
-                    !ControlProtocol.TryDecode(frame, ControlMessageIds.RegistrySnapshotResponse, out ClusterStatusSnapshot snapshot))
+                    !ControlProtocol.TryDecode<ClusterStatusSnapshot>(frame, ControlMessageIds.RegistrySnapshotResponse, out var snapshot) ||
+                    snapshot == null)
                 {
                     return (endpoint, null);
                 }
@@ -376,6 +379,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         this.acceptLoopCancellation?.Cancel();
         this.Disconnect();
         this.isListening = false;
+        this.ClosePersistentChannels();
         this.CloseConnectedClients();
         await WaitForTaskAsync(this.acceptLoopTask, timeout);
         foreach (Task task in this.clientCommandWorkerTasks)
@@ -685,7 +689,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                     session.MarkReceived(frame.ClientId);
                     Interlocked.Increment(ref this.totalReceivedMessages);
                     await this.EnqueueServerRelayReceiveAsync(session, relayMessage);
-                    break;
+                    continue;
                 }
 
                 session.MarkReceived(frame.ClientId);
@@ -1105,19 +1109,18 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             try
             {
                 RelayLogger.Debug($"Client location request started. sourceInstanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}, sourceClientId={sourceClientId}, targetClientId={targetClientId}");
-                Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-                await SocketFactory.ConnectAsync(socket, IPAddress.Parse(endpoint.Host), endpoint.Port);
-                using SecureSocketConnection connection =
-                    await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
-                (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
-                    connection,
-                    sourceClientId,
-                    ControlMessageIds.ClientLocationRequest,
-                    new ClientLocationRequest
-                    {
-                        SourceClientId = sourceClientId,
-                        TargetClientId = targetClientId
-                    });
+                PersistentSecureChannel channel = this.GetControlCommandChannel(endpoint);
+                (bool success, SocketMessageFrame frame) = await channel.SendAndReceiveAsync(
+                    connection => ControlProtocol.SendAndReceiveAsync(
+                        connection,
+                        sourceClientId,
+                        ControlMessageIds.ClientLocationRequest,
+                        new ClientLocationRequest
+                        {
+                            SourceClientId = sourceClientId,
+                            TargetClientId = targetClientId
+                        }),
+                    SocketFactory.ReadTimeoutMilliseconds);
 
                 if (success &&
                     (frame.MessageId == ControlMessageIds.ClientLocationResponse ||
@@ -1196,13 +1199,12 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         try
         {
             RelayLogger.Info($"Server relay send started. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
-            Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-            await SocketFactory.ConnectAsync(socket, IPAddress.Parse(host), port);
-            using SecureSocketConnection connection =
-                await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
-            (bool success, SocketMessageFrame frame) = await ClientMessageProtocol.SendRelayAndReceiveAsync(
-                connection,
-                ClientMessageProtocol.CreateRelay(this.clusterId, this.instanceId, request));
+            PersistentSecureChannel channel = this.GetServerRelayChannel(host, port);
+            (bool success, SocketMessageFrame frame) = await channel.SendAndReceiveAsync(
+                connection => ClientMessageProtocol.SendRelayAndReceiveAsync(
+                    connection,
+                    ClientMessageProtocol.CreateRelay(this.clusterId, this.instanceId, request)),
+                SocketFactory.ReadTimeoutMilliseconds);
             if (!success)
             {
                 RelayLogger.Warn($"Server relay send failed without response. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}");
@@ -1318,6 +1320,38 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             !string.IsNullOrWhiteSpace(server.Host) &&
             server.Port > 0 &&
             server.Health == ServerHealthState.Healthy;
+    }
+
+    private PersistentSecureChannel GetControlCommandChannel(EndpointConfig endpoint)
+    {
+        string endpointKey = PersistentSecureChannel.CreateEndpointKey(endpoint.Host, endpoint.Port);
+        return this.controlCommandChannels.GetOrAdd(
+            endpointKey,
+            _ => new PersistentSecureChannel(endpoint, "SocketServer"));
+    }
+
+    private PersistentSecureChannel GetServerRelayChannel(string host, int port)
+    {
+        string endpointKey = PersistentSecureChannel.CreateEndpointKey(host, port);
+        return this.serverRelayChannels.GetOrAdd(
+            endpointKey,
+            _ => new PersistentSecureChannel(host, port, "SocketServer"));
+    }
+
+    private void ClosePersistentChannels()
+    {
+        foreach (PersistentSecureChannel channel in this.controlCommandChannels.Values)
+        {
+            channel.Dispose();
+        }
+
+        foreach (PersistentSecureChannel channel in this.serverRelayChannels.Values)
+        {
+            channel.Dispose();
+        }
+
+        this.controlCommandChannels.Clear();
+        this.serverRelayChannels.Clear();
     }
 
     private async Task<bool> SendClientMessageAckAsync(ConnectionSession sourceSession, ClientMessageSendRequest request, string targetInstanceId)

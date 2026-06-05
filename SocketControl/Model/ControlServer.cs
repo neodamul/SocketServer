@@ -26,6 +26,7 @@ public class ControlServer : IDisposable
     private readonly BackendServerRegistry registry;
     private readonly ControlHealthThreshold healthThreshold;
     private readonly ConcurrentDictionary<long, ActiveControlConnection> activeConnections = new();
+    private readonly ConcurrentDictionary<string, PersistentSecureChannel> peerChannels = new(StringComparer.Ordinal);
     private readonly Channel<ControlCommandRequest> commandRequestChannel = Channel.CreateUnbounded<ControlCommandRequest>(
         new UnboundedChannelOptions
         {
@@ -154,6 +155,8 @@ public class ControlServer : IDisposable
         {
             connection.Socket.Dispose();
         }
+
+        this.ClosePeerChannels();
 
         await WaitForTaskAsync(this.acceptTask, timeout);
         await WaitForTaskAsync(this.peerAcceptTask, timeout);
@@ -848,15 +851,14 @@ public class ControlServer : IDisposable
         try
         {
             RelayLogger.Debug($"Control peer relay send started. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={payloadType}");
-            Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-            await SocketFactory.ConnectAsync(socket, IPAddress.Parse(peer.Host), peer.Port);
-            using SecureSocketConnection connection =
-                await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketControl");
-            (bool success, _) = await ControlProtocol.SendAndReceiveAsync(
-                connection,
-                0,
-                messageId,
-                payload,
+            PersistentSecureChannel channel = this.GetPeerChannel(peer);
+            (bool success, _) = await channel.SendAndReceiveAsync(
+                connection => ControlProtocol.SendAndReceiveAsync(
+                    connection,
+                    0,
+                    messageId,
+                    payload,
+                    GetPeerOperationTimeoutMilliseconds()),
                 GetPeerOperationTimeoutMilliseconds());
             this.peerRelayResponseChannel.Writer.TryWrite(new PeerRelayResult(peer, messageId, payloadType, success, success ? "" : "Peer relay response timed out or failed."));
         }
@@ -915,15 +917,15 @@ public class ControlServer : IDisposable
             try
             {
                 RelayLogger.Debug($"Control peer snapshot sync started. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}");
-                Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-                await SocketFactory.ConnectAsync(socket, IPAddress.Parse(peer.Host), peer.Port);
-                using SecureSocketConnection connection =
-                    await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketControl");
-                (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
-                    connection,
-                    0,
-                    ControlMessageIds.RegistrySnapshotRequest,
-                    new RegistrySnapshotRequest { RequestedAt = DateTimeOffset.UtcNow });
+                PersistentSecureChannel channel = this.GetPeerChannel(peer);
+                (bool success, SocketMessageFrame frame) = await channel.SendAndReceiveAsync(
+                    connection => ControlProtocol.SendAndReceiveAsync(
+                        connection,
+                        0,
+                        ControlMessageIds.RegistrySnapshotRequest,
+                        new RegistrySnapshotRequest { RequestedAt = DateTimeOffset.UtcNow },
+                        GetPeerOperationTimeoutMilliseconds()),
+                    GetPeerOperationTimeoutMilliseconds());
                 if (success &&
                     frame.MessageId == ControlMessageIds.RegistrySnapshotResponse &&
                     ControlProtocol.TryDecode(frame, ControlMessageIds.RegistrySnapshotResponse, out ClusterStatusSnapshot snapshot))
@@ -1004,6 +1006,24 @@ public class ControlServer : IDisposable
         return Math.Min(
             5000,
             Math.Max(1000, SocketFactory.ReadTimeoutMilliseconds));
+    }
+
+    private PersistentSecureChannel GetPeerChannel(EndpointConfig peer)
+    {
+        string endpointKey = PersistentSecureChannel.CreateEndpointKey(peer.Host, peer.Port);
+        return this.peerChannels.GetOrAdd(
+            endpointKey,
+            _ => new PersistentSecureChannel(peer, "SocketControl"));
+    }
+
+    private void ClosePeerChannels()
+    {
+        foreach (PersistentSecureChannel channel in this.peerChannels.Values)
+        {
+            channel.Dispose();
+        }
+
+        this.peerChannels.Clear();
     }
 
     private static async Task WaitForTaskAsync(Task? task, TimeSpan timeout)

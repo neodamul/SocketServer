@@ -311,6 +311,33 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
+    public async Task ClientMessageRelayChannelStaysOpenAcrossSequentialMessagesTest()
+    {
+        using ControlServerPair controls = CreateStartedControlPair("relay-persistent");
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(140, "server-relay-persistent");
+        servers.AttachReporters(controls.Endpoints);
+        await servers.RegisterAsync();
+        servers.StartHeartbeatLoops(TimeSpan.FromSeconds(5));
+        await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4);
+        await WaitForClusterAsync(controls.ControlB, status => status.ServerCount == 4);
+
+        TcpServer sourceServer = servers.Servers[0];
+        TcpServer targetServer = servers.Servers[3];
+        using TcpClient sourceClient = new(141, "source-141", "127.0.0.1", sourceServer.GetPort());
+        using TcpClient targetClient = new(142, "target-142", "127.0.0.1", targetServer.GetPort());
+        Assert.IsTrue(sourceClient.Connect());
+        Assert.IsTrue(targetClient.Connect());
+        Assert.IsTrue(await sourceClient.RegisterClientAsync());
+        Assert.IsTrue(await targetClient.RegisterClientAsync());
+        await WaitForClientLocationCountAsync(controls.ControlA, 2);
+        await WaitForClientLocationCountAsync(controls.ControlB, 2);
+
+        ResetSocketTestDefaults();
+        await AssertClientMessageRelayAsync(sourceClient, targetClient, 141, 142, "persistent-relay-1", targetServer.InstanceId);
+        await AssertClientMessageRelayAsync(sourceClient, targetClient, 141, 142, "persistent-relay-2", targetServer.InstanceId);
+    }
+
+    [TestMethod]
     public async Task SocketServerBroadcastsRelayToKnownServersWhenControlLocationIsMissingTest()
     {
         using ControlServerPair controls = CreateStartedControlPair("broadcast");
@@ -932,6 +959,31 @@ public class ControlServerIntegrationTests
         while (DateTimeOffset.UtcNow < deadline);
 
         Assert.Fail("Timed out waiting for client location count.");
+    }
+
+    private static async Task AssertClientMessageRelayAsync(
+        TcpClient sourceClient,
+        TcpClient targetClient,
+        uint sourceClientId,
+        uint targetClientId,
+        string content,
+        string targetInstanceId)
+    {
+        Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
+            sourceClient.SendClientMessageAsync(targetClientId, content, ttlSeconds: 30);
+        (bool delivered, ClientMessageDelivery delivery) =
+            await WithTimeoutAsync(targetClient.TryReceiveClientMessageAsync(), timeoutSeconds: 30);
+        (bool acked, ClientMessageAck ack, ClientMessageError error) =
+            await WithTimeoutAsync(sendTask, timeoutSeconds: 30);
+
+        Assert.IsTrue(delivered);
+        Assert.AreEqual(sourceClientId, delivery.SourceClientId);
+        Assert.AreEqual(targetClientId, delivery.TargetClientId);
+        Assert.AreEqual(content, delivery.Content);
+        Assert.IsTrue(acked);
+        Assert.IsNotNull(ack);
+        Assert.IsNull(error);
+        Assert.AreEqual(targetInstanceId, ack.TargetInstanceId);
     }
 
     private static async Task WaitForConditionAsync(Func<bool> predicate, int timeoutSeconds = 5)

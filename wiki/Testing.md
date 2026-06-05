@@ -30,6 +30,7 @@ dotnet test SocketTests/SocketTests.csproj
 - ControlServer stale control connection cleanup scheduler
 - client-to-client local delivery
 - SocketServer-to-SocketServer client message relay
+- SocketServer-to-SocketServer persistent relay channel sequential delivery
 - SocketServer command/response/relay queue workers
 - SocketServer relay server list refresh and broadcast fallback
 - four SocketServer relay list refresh and broadcast fan-out

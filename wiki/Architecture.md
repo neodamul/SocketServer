@@ -75,7 +75,7 @@ SocketServer는 register 직후 ControlServer registry snapshot에서 healthy So
 
 SocketServer의 session event는 bounded queue를 통해 ControlServerReporter가 전송합니다. 이벤트 폭주 시 무제한 task/memory 증가를 막고, reporter worker에서 endpoint별 전송 실패와 timeout을 기록합니다.
 
-ControlServer와 SocketServer는 request/response와 relay 처리를 전담 큐와 long-running worker로 분리합니다. Listener/receive 루프는 socket accept와 frame read에 집중하고, command worker가 business command를 처리하며, response worker가 실제 socket write를 담당합니다. 서버 간 relay도 request/response queue를 따로 사용해 느린 peer, timeout, TLS handshake 지연이 heartbeat나 다음 command 처리까지 연쇄 지연되지 않도록 합니다. SocketClient의 healthcheck loop와 SocketServer reporter loop도 공통 전담 워커에서 실행되어 ThreadPool 혼잡과 분리됩니다.
+ControlServer와 SocketServer는 request/response와 relay 처리를 전담 큐와 long-running worker로 분리합니다. Listener/receive 루프는 socket accept와 frame read에 집중하고, command worker가 business command를 처리하며, response worker가 실제 socket write를 담당합니다. 서버 간 relay도 request/response queue를 따로 사용해 느린 peer, timeout, TLS handshake 지연이 heartbeat나 다음 command 처리까지 연쇄 지연되지 않도록 합니다. ControlServer peer relay/snapshot, SocketServer의 ControlServer lookup, SocketServer 간 relay는 endpoint별 persistent secure channel을 유지하며 정상 경로에서 매 요청마다 TCP/TLS handshake를 반복하지 않습니다. 장애, timeout, send/receive 실패가 발생한 channel만 닫고 다음 요청에서 재연결합니다. SocketClient의 healthcheck loop와 SocketServer reporter loop도 공통 전담 워커에서 실행되어 ThreadPool 혼잡과 분리됩니다.
 
 서버 기본 정책:
 
