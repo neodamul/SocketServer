@@ -72,6 +72,29 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void BackendRegistryRandomizesOnlyEqualScoreRouteCandidatesTest()
+    {
+        BackendServerSnapshot[] candidates =
+        [
+            CreateSnapshot(1, "server-a", availableConnections: 10, currentConnections: 0),
+            CreateSnapshot(2, "server-b", availableConnections: 10, currentConnections: 0),
+            CreateSnapshot(3, "server-c", availableConnections: 9, currentConnections: 0),
+            CreateSnapshot(4, "server-d", availableConnections: 10, currentConnections: 1)
+        ];
+
+        BackendServerSnapshot? selected = BackendServerRegistry.SelectRouteCandidate(
+            candidates,
+            maxExclusive =>
+            {
+                Assert.AreEqual(2, maxExclusive);
+                return 1;
+            });
+
+        Assert.IsNotNull(selected);
+        Assert.AreEqual("server-b", selected.InstanceId);
+    }
+
+    [TestMethod]
     public void BackendRegistryReservationUpsertIsIdempotentTest()
     {
         BackendServerRegistry registry = new();
@@ -514,6 +537,34 @@ public class ControlProtocolTests
                 StorageUsagePercent = 10
             },
             SentAt = sentAt
+        };
+    }
+
+    private static BackendServerSnapshot CreateSnapshot(
+        int serverId,
+        string instanceId,
+        int availableConnections,
+        int currentConnections)
+    {
+        return new BackendServerSnapshot
+        {
+            ClusterId = "socket-cluster-1",
+            SourceControlNodeId = "control-1",
+            ServerId = serverId,
+            InstanceId = instanceId,
+            Name = instanceId,
+            Host = "127.0.0.1",
+            Port = 5100 + serverId,
+            MaxConnections = availableConnections + currentConnections,
+            CurrentConnections = currentConnections,
+            ReservedConnections = 0,
+            AvailableConnections = availableConnections,
+            Health = ServerHealthState.Healthy,
+            ResourceUsage = new ResourceUsageSnapshot(),
+            Version = serverId,
+            StartedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+            LastHeartbeatAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
         };
     }
 

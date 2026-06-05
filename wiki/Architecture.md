@@ -63,6 +63,8 @@ availableConnections = maxConnections - currentConnections - reservedConnections
 - heartbeat timeout이 지나지 않음
 - `availableConnections > 0`
 
+후보 선택은 `availableConnections`가 가장 큰 서버를 우선하고, 그 안에서 `currentConnections`가 가장 낮은 서버를 고릅니다. 두 값이 모두 같은 동률 후보가 여러 개이면 해당 동률 그룹 안에서 랜덤으로 선택합니다.
+
 ## SocketServer
 
 SocketServer는 설정된 port range에서 사용 가능한 포트를 찾아 바인딩합니다. TCP listener는 같은 포트에 중복 바인딩되지 않도록 `ReuseAddress`를 기본 적용하지 않으며, 바인딩 후 ControlServer에 등록하고 주기적으로 heartbeat를 전송합니다.

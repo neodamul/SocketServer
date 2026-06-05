@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading;
 using SocketCommon.Model;
 
@@ -17,6 +18,7 @@ public class BackendServerRegistry
     private readonly TimeSpan heartbeatTimeout;
     private readonly IBackendRegistryStore store;
     private long version;
+    private static readonly Func<int, int> DefaultTieBreakerIndexSelector = RandomNumberGenerator.GetInt32;
 
     public BackendServerRegistry()
         : this(TimeSpan.FromSeconds(90))
@@ -195,14 +197,13 @@ public class BackendServerRegistry
         {
             ExpireReservations();
 
-            BackendServerSnapshot? selected = this.servers.Values
+            List<BackendServerSnapshot> candidates = this.servers.Values
                 .Where(server => server.Health == ServerHealthState.Healthy)
                 .Where(server => !IsHeartbeatExpired(server))
                 .Where(server => !request.PreferredServerId.HasValue || server.ServerId == request.PreferredServerId.Value)
                 .Where(server => server.AvailableConnections > 0)
-                .OrderByDescending(server => server.AvailableConnections)
-                .ThenBy(server => server.CurrentConnections)
-                .FirstOrDefault();
+                .ToList();
+            BackendServerSnapshot? selected = SelectRouteCandidate(candidates);
 
             if (selected == null)
             {
@@ -238,6 +239,48 @@ public class BackendServerRegistry
                 ExpiresAt = reservation.ExpiresAt
             };
         }
+    }
+
+    internal static BackendServerSnapshot? SelectRouteCandidate(IReadOnlyCollection<BackendServerSnapshot> candidates)
+    {
+        return SelectRouteCandidate(candidates, DefaultTieBreakerIndexSelector);
+    }
+
+    internal static BackendServerSnapshot? SelectRouteCandidate(
+        IReadOnlyCollection<BackendServerSnapshot> candidates,
+        Func<int, int> tieBreakerIndexSelector)
+    {
+        if (candidates == null || candidates.Count == 0)
+        {
+            return null;
+        }
+
+        int maxAvailableConnections = candidates.Max(server => server.AvailableConnections);
+        int minCurrentConnections = candidates
+            .Where(server => server.AvailableConnections == maxAvailableConnections)
+            .Min(server => server.CurrentConnections);
+        List<BackendServerSnapshot> tiedCandidates = candidates
+            .Where(server => server.AvailableConnections == maxAvailableConnections)
+            .Where(server => server.CurrentConnections == minCurrentConnections)
+            .OrderBy(server => server.InstanceId, StringComparer.Ordinal)
+            .ToList();
+        if (tiedCandidates.Count == 0)
+        {
+            return null;
+        }
+
+        if (tiedCandidates.Count == 1)
+        {
+            return tiedCandidates[0];
+        }
+
+        int selectedIndex = tieBreakerIndexSelector?.Invoke(tiedCandidates.Count) ?? 0;
+        if (selectedIndex < 0 || selectedIndex >= tiedCandidates.Count)
+        {
+            selectedIndex = 0;
+        }
+
+        return tiedCandidates[selectedIndex];
     }
 
     public void UpsertReservation(RouteReservationMessage reservation)
