@@ -103,7 +103,7 @@ public static class SocketFactory
             return;
         }
 
-        await ConnectAsync(socket, ResolveAddress(host, socket.AddressFamily), port);
+        await ConnectAsync(socket, await ResolveAddressAsync(host, socket.AddressFamily), port);
     }
 
     public static async Task ConnectAsync(Socket socket, EndPoint endpoint)
@@ -134,6 +134,37 @@ public static class SocketFactory
         }
 
         IPAddress[] addresses = Dns.GetHostAddresses(host);
+        return SelectAddress(host, addresses, preferredFamily);
+    }
+
+    public static async Task<IPAddress> ResolveAddressAsync(string host, AddressFamily preferredFamily = AddressFamily.InterNetwork)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            throw new ArgumentException("Host is required.", nameof(host));
+        }
+
+        if (IPAddress.TryParse(host, out IPAddress address))
+        {
+            return address;
+        }
+
+        IPAddress[] addresses = await Dns.GetHostAddressesAsync(host);
+        return SelectAddress(host, addresses, preferredFamily);
+    }
+
+    internal static IPAddress SelectAddress(string host, IPAddress[] addresses, AddressFamily preferredFamily)
+    {
+        if (addresses.Length == 0)
+        {
+            throw new SocketException((int)SocketError.HostNotFound);
+        }
+
+        if (preferredFamily == AddressFamily.Unspecified)
+        {
+            return addresses[0];
+        }
+
         foreach (IPAddress candidate in addresses)
         {
             if (candidate.AddressFamily == preferredFamily)
@@ -142,12 +173,7 @@ public static class SocketFactory
             }
         }
 
-        if (addresses.Length == 0)
-        {
-            throw new SocketException((int)SocketError.HostNotFound);
-        }
-
-        return addresses[0];
+        throw new SocketException((int)SocketError.AddressFamilyNotSupported);
     }
 
     public static async Task<bool> WaitForReadWriteAsync(Task operationTask, Socket socket, int timeoutMilliseconds, string operationName)

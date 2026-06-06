@@ -30,6 +30,24 @@ public class ResponseWorkerConfigurationTests
         Assert.IsTrue(source.Contains("SingleReader = false", StringComparison.Ordinal));
     }
 
+    [TestMethod]
+    public void SocketServerSessionSendPreservesPerConnectionOrderTest()
+    {
+        string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketServer/Model/ConnectionSession.cs"));
+
+        Assert.IsTrue(source.Contains("sendQueueTail", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("SendAfterAsync(this.sendQueueTail", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void ControlServerResponseSendPreservesPerConnectionOrderTest()
+    {
+        string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketControl/Model/ControlServer.cs"));
+
+        Assert.IsTrue(source.Contains("activeConnectionsBySecureConnection", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("SendAfterAsync(this.sendQueueTail", StringComparison.Ordinal));
+    }
+
     private static int ReadPrivateConstInt(Type type, string fieldName)
     {
         FieldInfo field = type.GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Static)!;

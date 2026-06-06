@@ -737,7 +737,6 @@ public static class LocalCertificateStore
 
             if (cached != null)
             {
-                cached.Certificate.Dispose();
                 CachedModuleCertificates.Remove(key);
             }
 
@@ -783,11 +782,6 @@ public static class LocalCertificateStore
     {
         lock (ModuleCertificateCacheLock)
         {
-            foreach (CachedModuleCertificate cached in CachedModuleCertificates.Values)
-            {
-                cached.Certificate.Dispose();
-            }
-
             CachedModuleCertificates.Clear();
         }
 
@@ -804,7 +798,6 @@ public static class LocalCertificateStore
 
     private static void ClearRootAuthorityCacheCore()
     {
-        cachedRootAuthority?.Dispose();
         cachedRootAuthority = null;
         cachedRootAuthorityPath = "";
         cachedRootAuthorityPassword = "";
