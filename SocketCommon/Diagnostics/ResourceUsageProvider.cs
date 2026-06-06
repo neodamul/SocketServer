@@ -83,7 +83,7 @@ public class ResourceUsageProvider
     {
         int[] cpuInfo = new int[CpuStateCount];
         uint count = CpuStateCount;
-        int result = host_statistics64(mach_host_self(), HostCpuLoadInfo, cpuInfo, ref count);
+        int result = host_statistics64(MachHostPort.Value, HostCpuLoadInfo, cpuInfo, ref count);
         if (result != 0 || count < CpuStateCount)
         {
             return new CpuSample(0, 0);
@@ -173,16 +173,20 @@ public class ResourceUsageProvider
             return 0;
         }
 
-        VmStatistics64 stats = new();
-        uint count = (uint)(Marshal.SizeOf<VmStatistics64>() / sizeof(int));
-        int result = host_statistics64(mach_host_self(), HostVmInfo64, ref stats, ref count);
-        if (result != 0)
+        int[] vmInfo = new int[HostVmInfo64Count];
+        uint count = HostVmInfo64Count;
+        int result = host_statistics64(MachHostPort.Value, HostVmInfo64, vmInfo, ref count);
+        if (result != 0 || count <= VmSpeculativeCount)
         {
             return 0;
         }
 
         long pageSize = Environment.SystemPageSize;
-        long availableBytes = (long)(stats.FreeCount + stats.InactiveCount + stats.SpeculativeCount) * pageSize;
+        long availablePages =
+            (uint)vmInfo[VmFreeCount] +
+            (uint)vmInfo[VmInactiveCount] +
+            (uint)vmInfo[VmSpeculativeCount];
+        long availableBytes = availablePages * pageSize;
         return (double)(totalMemoryBytes - availableBytes) / totalMemoryBytes * 100;
     }
 
@@ -240,42 +244,19 @@ public class ResourceUsageProvider
 
     private readonly record struct CpuSample(long Idle, long Total);
 
+    private static readonly Lazy<int> MachHostPort = new(mach_host_self, isThreadSafe: true);
+
     private const int HostCpuLoadInfo = 3;
     private const int HostVmInfo64 = 4;
+    private const uint HostVmInfo64Count = 62;
     private const int CpuStateUser = 0;
     private const int CpuStateSystem = 1;
     private const int CpuStateIdle = 2;
     private const int CpuStateNice = 3;
     private const uint CpuStateCount = 4;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct VmStatistics64
-    {
-        public uint FreeCount;
-        public uint ActiveCount;
-        public uint InactiveCount;
-        public uint WireCount;
-        public ulong ZeroFillCount;
-        public ulong Reactivations;
-        public ulong Pageins;
-        public ulong Pageouts;
-        public ulong Faults;
-        public ulong CowFaults;
-        public ulong Lookups;
-        public ulong Hits;
-        public ulong Purges;
-        public uint PurgeableCount;
-        public uint SpeculativeCount;
-        public ulong Decompressions;
-        public ulong Compressions;
-        public ulong Swapins;
-        public ulong Swapouts;
-        public uint CompressorPageCount;
-        public uint ThrottledCount;
-        public uint ExternalPageCount;
-        public uint InternalPageCount;
-        public ulong TotalUncompressedPagesInCompressor;
-    }
+    private const int VmFreeCount = 0;
+    private const int VmInactiveCount = 2;
+    private const int VmSpeculativeCount = 13;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct FileTime
@@ -308,9 +289,6 @@ public class ResourceUsageProvider
 
     [DllImport("libSystem.dylib")]
     private static extern int host_statistics64(int host, int flavor, int[] hostInfoOut, ref uint hostInfoCount);
-
-    [DllImport("libSystem.dylib")]
-    private static extern int host_statistics64(int host, int flavor, ref VmStatistics64 hostInfoOut, ref uint hostInfoCount);
 
     [DllImport("libSystem.dylib")]
     private static extern int sysctlbyname(

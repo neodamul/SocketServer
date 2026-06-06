@@ -1,5 +1,6 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
@@ -496,6 +497,36 @@ public class ControlProtocolTests
         Assert.IsTrue(source.Contains("/proc/stat", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("host_statistics64", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("GlobalMemoryStatusEx", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("MachHostPort", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("HostVmInfo64Count = 62", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void ResourceUsageProviderReturnsNonZeroMachineMemoryAndStorageTest()
+    {
+        ResourceUsageSnapshot snapshot = new ResourceUsageProvider().Capture();
+
+        Assert.IsTrue(snapshot.MemoryUsagePercent > 0 && snapshot.MemoryUsagePercent <= 100);
+        Assert.IsTrue(snapshot.StorageUsagePercent > 0 && snapshot.StorageUsagePercent <= 100);
+    }
+
+    [TestMethod]
+    public void ResourceUsageProviderCpuUsageRespondsToLocalWorkTest()
+    {
+        ResourceUsageProvider provider = new();
+        _ = provider.Capture();
+
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        double value = 0;
+        while (stopwatch.ElapsedMilliseconds < 300)
+        {
+            value += Math.Sqrt(stopwatch.ElapsedTicks + value + 1);
+        }
+
+        ResourceUsageSnapshot snapshot = provider.Capture();
+
+        Assert.IsTrue(value > 0);
+        Assert.IsTrue(snapshot.CpuUsagePercent > 0 && snapshot.CpuUsagePercent <= 100);
     }
 
     [TestMethod]
