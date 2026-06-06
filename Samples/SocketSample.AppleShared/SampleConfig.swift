@@ -5,6 +5,8 @@ struct SampleConfig: Codable, Equatable {
     var clientName: String = "apple-native-client"
     var host: String = "127.0.0.1"
     var port: UInt16 = 10000
+    var useControlServer: Bool = true
+    var autoConnect: Bool = false
     var receiveTimeoutSeconds: Int = 10
     var allowUntrustedLocalCertificate: Bool = true
     var transportMode: String = "Tls"
@@ -28,6 +30,10 @@ struct SampleConfig: Codable, Equatable {
                 config.host = value
             case "port":
                 config.port = UInt16(value) ?? config.port
+            case "use-control-server":
+                config.useControlServer = parseBoolean(value)
+            case "auto-connect":
+                config.autoConnect = parseBoolean(value)
             case "transport":
                 config.transportMode = value
             case "message-secret":
@@ -71,6 +77,13 @@ struct SampleConfig: Codable, Equatable {
         }
 
         return values
+    }
+
+    private static func parseBoolean(_ value: String) -> Bool {
+        value.caseInsensitiveCompare("true") == .orderedSame ||
+            value == "1" ||
+            value.caseInsensitiveCompare("yes") == .orderedSame ||
+            value.caseInsensitiveCompare("on") == .orderedSame
     }
 }
 

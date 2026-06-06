@@ -1,6 +1,8 @@
 import Foundation
 
 enum SocketMessageId {
+    static let routeRequest: UInt32 = 1200
+    static let routeResponse: UInt32 = 1201
     static let clientRegister: UInt32 = 2000
     static let clientRegisterAck: UInt32 = 2001
     static let clientMessageSend: UInt32 = 2002

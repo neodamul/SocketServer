@@ -6,7 +6,30 @@ struct ClientMessageDelivery {
     let content: String
 }
 
+struct RouteTarget {
+    let success: Bool
+    let host: String
+    let port: UInt16
+    let errorMessage: String
+}
+
 enum ProtoCodec {
+    static func routeRequest(clientId: UInt32) -> Data {
+        var data = Data()
+        data.appendVarintField(1, UInt64(clientId))
+        data.appendStringField(3, "MostAvailableConnections")
+        return data
+    }
+
+    static func decodeRouteResponse(_ data: Data) -> RouteTarget {
+        let parsed = fields(from: data)
+        return RouteTarget(
+            success: parsed.bools[1] ?? false,
+            host: parsed.strings[5] ?? "",
+            port: UInt16(parsed.varints[6] ?? 0),
+            errorMessage: parsed.strings[8] ?? "Route failed.")
+    }
+
     static func clientRegister(clientId: UInt32) -> Data {
         var data = Data()
         data.appendVarintField(1, UInt64(clientId))

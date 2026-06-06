@@ -150,10 +150,14 @@ public class SocketSampleClientTests
         Assert.IsTrue(config.Contains("fromProcessArguments", StringComparison.Ordinal));
         Assert.IsTrue(config.Contains("targetClientIdFromProcessArguments", StringComparison.Ordinal));
         Assert.IsTrue(config.Contains("client-id", StringComparison.Ordinal));
+        Assert.IsTrue(config.Contains("use-control-server", StringComparison.Ordinal));
+        Assert.IsTrue(config.Contains("auto-connect", StringComparison.Ordinal));
         Assert.IsTrue(config.Contains("target-client-id", StringComparison.Ordinal));
         Assert.IsTrue(view.Contains("SampleConfig.fromProcessArguments()", StringComparison.Ordinal));
+        Assert.IsTrue(view.Contains("config.autoConnect", StringComparison.Ordinal));
         Assert.IsTrue(readme.Contains("-derivedDataPath Samples/SocketSample.macOS/build", StringComparison.Ordinal));
         Assert.IsTrue(readme.Contains("open -n Samples/SocketSample.macOS/build/Build/Products/Debug/SocketSampleMac.app --args --client-id 101", StringComparison.Ordinal));
+        Assert.IsTrue(readme.Contains("--use-control-server true --auto-connect true", StringComparison.Ordinal));
         Assert.IsTrue(readme.Contains("--target-client-id 101", StringComparison.Ordinal));
     }
 

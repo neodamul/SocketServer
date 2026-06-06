@@ -30,13 +30,56 @@ final class NativeSocketClient {
     func connect() async throws {
         disconnect()
 
+        let target = try await resolveConnectionTarget()
+        try await connectToHost(target.host, port: target.port)
+    }
+
+    private func resolveConnectionTarget() async throws -> (host: String, port: UInt16) {
+        try prepareProtector()
+        guard config.useControlServer else {
+            return (config.host, config.port)
+        }
+
+        let controlConnection = try await openConnection(host: config.host, port: config.port)
+        defer {
+            controlConnection.cancel()
+        }
+
+        let request = SocketFrame(
+            clientId: config.clientId,
+            messageId: SocketMessageId.routeRequest,
+            payload: ProtoCodec.routeRequest(clientId: config.clientId))
+        try await send(request, using: controlConnection)
+        let response = try await receiveFrame(using: controlConnection)
+        guard response.messageId == SocketMessageId.routeResponse else {
+            throw NativeSocketError.messageFailed("Invalid route response.")
+        }
+
+        let route = ProtoCodec.decodeRouteResponse(response.payload)
+        guard route.success, !route.host.isEmpty, route.port > 0 else {
+            throw NativeSocketError.messageFailed(route.errorMessage)
+        }
+
+        return (route.host, route.port)
+    }
+
+    private func connectToHost(_ host: String, port: UInt16) async throws {
+        try prepareProtector()
+        self.connection = try await openConnection(host: host, port: port)
+    }
+
+    private func prepareProtector() throws {
+        protector = config.usesMessageEncryption
+            ? try SocketMessageProtector(secret: config.messageEncryptionSecret)
+            : nil
+    }
+
+    private func openConnection(host: String, port: UInt16) async throws -> NWConnection {
         let tcpOptions = NWProtocolTCP.Options()
         let parameters: NWParameters
         if config.usesMessageEncryption {
-            protector = try SocketMessageProtector(secret: config.messageEncryptionSecret)
             parameters = NWParameters(tls: nil, tcp: tcpOptions)
         } else {
-            protector = nil
             let tlsOptions = NWProtocolTLS.Options()
             if config.allowUntrustedLocalCertificate {
                 sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions, { _, _, complete in
@@ -48,8 +91,8 @@ final class NativeSocketClient {
         }
 
         let connection = NWConnection(
-            host: NWEndpoint.Host(config.host),
-            port: NWEndpoint.Port(rawValue: config.port) ?? 10000,
+            host: NWEndpoint.Host(host),
+            port: NWEndpoint.Port(rawValue: port) ?? 10000,
             using: parameters)
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -68,7 +111,7 @@ final class NativeSocketClient {
             connection.start(queue: queue)
         }
 
-        self.connection = connection
+        return connection
     }
 
     func register() async throws {
@@ -127,6 +170,10 @@ final class NativeSocketClient {
             throw NativeSocketError.connectFailed
         }
 
+        try await send(frame, using: connection)
+    }
+
+    private func send(_ frame: SocketFrame, using connection: NWConnection) async throws {
         let data = try (protector?.protect(frame) ?? frame).encode()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             connection.send(content: data, completion: .contentProcessed { error in
@@ -140,7 +187,15 @@ final class NativeSocketClient {
     }
 
     private func receiveFrame() async throws -> SocketFrame {
-        let header = try await receive(length: SocketFrame.headerLength)
+        guard let connection else {
+            throw NativeSocketError.connectFailed
+        }
+
+        return try await receiveFrame(using: connection)
+    }
+
+    private func receiveFrame(using connection: NWConnection) async throws -> SocketFrame {
+        let header = try await receive(length: SocketFrame.headerLength, using: connection)
         let payloadLength = Int(header.readUInt32BE(at: 8))
         let maxPayloadLength = protector == nil
             ? SocketFrame.maxPayloadLength
@@ -149,7 +204,7 @@ final class NativeSocketClient {
             throw NativeSocketError.invalidFrame
         }
 
-        let payload = payloadLength == 0 ? Data() : try await receive(length: payloadLength)
+        let payload = payloadLength == 0 ? Data() : try await receive(length: payloadLength, using: connection)
         let frame = try SocketFrame.decode(header: header, payload: payload)
         return try protector?.unprotect(frame) ?? frame
     }
@@ -159,6 +214,10 @@ final class NativeSocketClient {
             throw NativeSocketError.connectFailed
         }
 
+        return try await receive(length: length, using: connection)
+    }
+
+    private func receive(length: Int, using connection: NWConnection) async throws -> Data {
         var buffer = Data()
         while buffer.count < length {
             let chunk = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in

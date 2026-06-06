@@ -35,8 +35,8 @@ xcodebuild -project Samples/SocketSample.macOS/SocketSampleMac.xcodeproj -scheme
 두 개의 네이티브 샘플 클라이언트를 동시에 띄워 메시지를 테스트할 수 있습니다.
 
 ```bash
-open -n Samples/SocketSample.macOS/build/Build/Products/Debug/SocketSampleMac.app --args --client-id 101 --client-name native-client-101 --host 127.0.0.1 --port 10000 --target-client-id 102
-open -n Samples/SocketSample.macOS/build/Build/Products/Debug/SocketSampleMac.app --args --client-id 102 --client-name native-client-102 --host 127.0.0.1 --port 10000 --target-client-id 101
+open -n Samples/SocketSample.macOS/build/Build/Products/Debug/SocketSampleMac.app --args --client-id 101 --client-name native-client-101 --host 127.0.0.1 --port 10000 --use-control-server true --auto-connect true --target-client-id 102
+open -n Samples/SocketSample.macOS/build/Build/Products/Debug/SocketSampleMac.app --args --client-id 102 --client-name native-client-102 --host 127.0.0.1 --port 10000 --use-control-server true --auto-connect true --target-client-id 101
 ```
 
 UI의 `Transport`를 `MessageEncryption`으로 바꾸면 TLS 없이 AES-GCM/HMAC 메시지 보호 모드로 접속합니다. 이때 `Message Secret`은 서버의 `SOCKET_MESSAGE_SECRET` 값과 같아야 합니다.

@@ -37,6 +37,7 @@ struct SampleContentView: View {
                                 get: { String(config.port) },
                                 set: { config.port = UInt16($0) ?? config.port }))
                         }
+                        Toggle("Use ControlServer route", isOn: $config.useControlServer)
                         Toggle("Allow local self-signed certificate", isOn: $config.allowUntrustedLocalCertificate)
                         HStack {
                             field("Transport", text: $config.transportMode)
@@ -72,6 +73,14 @@ struct SampleContentView: View {
             .padding()
         }
         .frame(minWidth: 420, minHeight: 520)
+        .onAppear {
+            if config.autoConnect && !state.isConnected {
+                run {
+                    try await connect()
+                    try await register()
+                }
+            }
+        }
     }
 
     private var statusText: String {
