@@ -126,6 +126,8 @@ Dashboard는 설정된 ControlServer 목록을 조회하고 Server Inventory에 
 
 SocketServer heartbeat는 accepted/closed/rejected/idle counters와 함께 received/sent message counters 및 message byte counters를 ControlServer registry snapshot에 전파합니다. Message byte counters는 healthcheck Ping/Pong을 제외한 common frame wire size(`12 byte header + payload length`) 기준 누적값이며, Dashboard의 Selected Traffic에서 서버별로 표시됩니다.
 
+Message byte counters는 transport mode와 무관하게 **application-level frame 기준(12 byte header + 평문 payload length)** 으로 집계합니다. 수신은 unprotect를 마친 평문 frame, 송신은 보호(Protect) 적용 전 frame을 측정하므로, `MessageEncryption` 모드의 envelope overhead(version·nonce·tag·HMAC)나 TLS record overhead는 **포함되지 않습니다**. 따라서 실제 on-wire byte 수보다 작으며, 두 transport mode에서 동일한 논리 메시지 크기를 일관되게 나타냅니다.
+
 표시 항목:
 
 - 전체 수용 가능 클라이언트 수
