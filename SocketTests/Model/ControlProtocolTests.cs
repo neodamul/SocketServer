@@ -485,6 +485,20 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void ResourceUsageProviderUsesMachineMetricsInsteadOfProcessMetricsTest()
+    {
+        string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketCommon/Diagnostics/ResourceUsageProvider.cs"));
+
+        Assert.IsFalse(source.Contains("Process.GetCurrentProcess", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("TotalProcessorTime", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("WorkingSet64", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("GC.GetGCMemoryInfo", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("/proc/stat", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("host_statistics64", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("GlobalMemoryStatusEx", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void PortRangeValidationTest()
     {
         Assert.IsTrue(SocketConfigLoader.IsValidPortRange(5100, 5199));
@@ -580,6 +594,22 @@ public class ControlProtocolTests
     private static string CreateRegistryPath()
     {
         return Path.Combine(Path.GetTempPath(), $"socket-registry-{Guid.NewGuid():N}.json");
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
+        while (directory != null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "SocketServer.sln")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Repository root was not found.");
     }
 
     private static void DeleteRegistryPath(string path)
