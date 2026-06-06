@@ -209,6 +209,16 @@ public class ControlServerReporter : IDisposable
             TotalSentMessages = status.TotalSentMessages,
             TotalReceivedMessageBytes = status.TotalReceivedMessageBytes,
             TotalSentMessageBytes = status.TotalSentMessageBytes,
+            ListenBacklog = status.ListenBacklog,
+            PendingAcceptCount = status.PendingAcceptCount,
+            IdleTimeoutSeconds = status.IdleTimeoutSeconds,
+            NoDelay = status.NoDelay,
+            MaxPayloadLength = status.MaxPayloadLength,
+            SocketAsyncEventArgsAvailableCount = status.SocketAsyncEventArgsAvailableCount,
+            SocketAsyncEventArgsTotalCreatedCount = status.SocketAsyncEventArgsTotalCreatedCount,
+            SocketAsyncEventArgsInUseCount = status.SocketAsyncEventArgsInUseCount,
+            SocketAsyncEventArgsHighWatermarkInUseCount = status.SocketAsyncEventArgsHighWatermarkInUseCount,
+            SocketAsyncEventArgsGrowthCount = status.SocketAsyncEventArgsGrowthCount,
             SentAt = DateTimeOffset.UtcNow
         };
 
