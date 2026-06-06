@@ -320,7 +320,7 @@ public class DashboardServerService : IDisposable
 
     private static async Task<ClusterStatusSnapshot?> QueryControlClusterStatusAsync(EndpointConfig endpoint, Socket socket)
     {
-        await SocketFactory.ConnectAsync(socket, IPAddress.Parse(endpoint.Host), endpoint.Port);
+        await SocketFactory.ConnectAsync(socket, endpoint.Host, endpoint.Port);
         using SecureSocketConnection connection = await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketDashboard");
         (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
             connection,

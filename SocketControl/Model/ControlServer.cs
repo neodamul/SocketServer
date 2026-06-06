@@ -96,7 +96,7 @@ public class ControlServer : IDisposable
         try
         {
             this.listener = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-            this.listener.Bind(new IPEndPoint(IPAddress.Parse(this.config.Host), this.config.Port));
+            this.listener.Bind(new IPEndPoint(SocketFactory.ResolveAddress(this.config.Host), this.config.Port));
             this.listener.Listen(SocketFactory.ListenBacklog);
             LocalCertificateStore.GetOrCreate("SocketControl");
             this.cancellation = new CancellationTokenSource();
@@ -119,7 +119,7 @@ public class ControlServer : IDisposable
             if (this.config.PeerSyncPort > 0 && this.config.PeerSyncPort != this.config.Port)
             {
                 this.peerListener = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-                this.peerListener.Bind(new IPEndPoint(IPAddress.Parse(this.config.Host), this.config.PeerSyncPort));
+                this.peerListener.Bind(new IPEndPoint(SocketFactory.ResolveAddress(this.config.Host), this.config.PeerSyncPort));
                 this.peerListener.Listen(SocketFactory.ListenBacklog);
                 this.peerAcceptTask = DedicatedWorker.Start(
                     token => this.RunAcceptLoopAsync(token, this.peerListener),

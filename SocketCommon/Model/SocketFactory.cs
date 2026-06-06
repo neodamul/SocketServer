@@ -90,6 +90,22 @@ public static class SocketFactory
         return ConnectAsync(socket, new IPEndPoint(address, port));
     }
 
+    public static async Task ConnectAsync(Socket socket, string host, int port)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            throw new ArgumentException("Host is required.", nameof(host));
+        }
+
+        if (IPAddress.TryParse(host, out IPAddress address))
+        {
+            await ConnectAsync(socket, address, port);
+            return;
+        }
+
+        await ConnectAsync(socket, ResolveAddress(host, socket.AddressFamily), port);
+    }
+
     public static async Task ConnectAsync(Socket socket, EndPoint endpoint)
     {
         Task connectTask = socket.ConnectAsync(endpoint);
@@ -103,6 +119,35 @@ public static class SocketFactory
         Logger.Warn($"Socket connect timed out. endpoint={endpoint}, timeoutMs={ConnectTimeoutMilliseconds}");
         socket.Dispose();
         throw new TimeoutException($"Socket connect timed out after {ConnectTimeoutMilliseconds}ms.");
+    }
+
+    public static IPAddress ResolveAddress(string host, AddressFamily preferredFamily = AddressFamily.InterNetwork)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            throw new ArgumentException("Host is required.", nameof(host));
+        }
+
+        if (IPAddress.TryParse(host, out IPAddress address))
+        {
+            return address;
+        }
+
+        IPAddress[] addresses = Dns.GetHostAddresses(host);
+        foreach (IPAddress candidate in addresses)
+        {
+            if (candidate.AddressFamily == preferredFamily)
+            {
+                return candidate;
+            }
+        }
+
+        if (addresses.Length == 0)
+        {
+            throw new SocketException((int)SocketError.HostNotFound);
+        }
+
+        return addresses[0];
     }
 
     public static async Task<bool> WaitForReadWriteAsync(Task operationTask, Socket socket, int timeoutMilliseconds, string operationName)

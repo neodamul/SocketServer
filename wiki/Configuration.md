@@ -10,6 +10,8 @@ SocketClient/config.json
 
 각 프로젝트는 자체 `log4net.config`를 관리합니다. 실행 프로젝트와 테스트 프로젝트는 빌드 출력으로 자신의 `log4net.config`를 복사하고, 라이브러리 프로젝트는 프로젝트별 설정 파일만 보관해 참조 프로젝트 간 설정 파일 충돌을 피합니다.
 
+`host`, `bindHost`, `controlEndpoints[].host`, `controlServers[].host`, `peers[].host`는 `127.0.0.1` 같은 IP literal과 `localhost` 같은 DNS host name을 모두 사용할 수 있습니다. 연결 시 socket address family에 맞는 주소를 우선 선택합니다.
+
 ```text
 SocketCommon/log4net.config
 SocketClient/log4net.config

@@ -130,7 +130,7 @@ public class ControlServerIntegrationTests
                 PeerSyncPort = 0,
                 PeerSnapshotSyncIntervalSeconds = 1
             },
-            Peers = { new EndpointConfig { Host = "127.0.0.1", Port = primaryPort } }
+            Peers = { new EndpointConfig { Host = "localhost", Port = primaryPort } }
         });
         Assert.IsTrue(peerControl.Start());
 

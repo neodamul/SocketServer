@@ -152,7 +152,7 @@ public sealed class PersistentSecureChannel : IDisposable
 
         this.Close();
         this.socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-        await SocketFactory.ConnectAsync(this.socket, IPAddress.Parse(this.host), this.port);
+        await SocketFactory.ConnectAsync(this.socket, this.host, this.port);
         this.connection = await SecureSocketConnection.AuthenticateClientAsync(this.socket, this.moduleName);
     }
 
