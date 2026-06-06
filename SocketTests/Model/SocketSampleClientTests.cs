@@ -214,7 +214,10 @@ public class SocketSampleClientTests
         using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(30));
         try
         {
-            await process.WaitForExitAsync(timeout.Token);
+            await Task.WhenAll(
+                process.WaitForExitAsync(timeout.Token),
+                outputTask.WaitAsync(timeout.Token),
+                errorTask.WaitAsync(timeout.Token));
         }
         catch (OperationCanceledException)
         {
@@ -229,8 +232,8 @@ public class SocketSampleClientTests
             Assert.Fail("Android native protocol validation script timed out after 30 seconds.");
         }
 
-        string output = await outputTask;
-        string error = await errorTask;
+        string output = outputTask.Result;
+        string error = errorTask.Result;
 
         Assert.AreEqual(0, process.ExitCode, output + error);
     }

@@ -97,6 +97,8 @@ public static class SocketAsyncEventArgsTransport
             return Array.Empty<byte>();
         }
 
+        int normalizedTimeout = NormalizeTimeoutMilliseconds(timeoutMilliseconds);
+        long deadlineMilliseconds = Environment.TickCount64 + normalizedTimeout;
         byte[] result = new byte[length];
         int offset = 0;
 
@@ -104,8 +106,15 @@ public static class SocketAsyncEventArgsTransport
         {
             while (offset < length)
             {
+                int remainingTimeout = GetRemainingTimeoutMilliseconds(deadlineMilliseconds);
+                if (remainingTimeout <= 0)
+                {
+                    socket?.Dispose();
+                    return null;
+                }
+
                 int count = Math.Min(BufferSize, length - offset);
-                using SocketMappedReceiveBuffer receiveBuffer = await ReceiveMappedAsync(socket, count, timeoutMilliseconds);
+                using SocketMappedReceiveBuffer receiveBuffer = await ReceiveMappedAsync(socket, count, remainingTimeout);
                 if (receiveBuffer == null || receiveBuffer.Count <= 0)
                 {
                     return null;
@@ -172,6 +181,17 @@ public static class SocketAsyncEventArgsTransport
     private static int NormalizeTimeoutMilliseconds(int timeoutMilliseconds)
     {
         return timeoutMilliseconds > 0 ? timeoutMilliseconds : SocketFactory.ReadTimeoutMilliseconds;
+    }
+
+    private static int GetRemainingTimeoutMilliseconds(long deadlineMilliseconds)
+    {
+        long remaining = deadlineMilliseconds - Environment.TickCount64;
+        if (remaining <= 0)
+        {
+            return 0;
+        }
+
+        return remaining > Int32.MaxValue ? Int32.MaxValue : (int)remaining;
     }
 
     public static Task<Socket> AcceptAsync(Socket socket)
