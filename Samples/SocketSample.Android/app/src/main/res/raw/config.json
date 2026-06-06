@@ -3,6 +3,7 @@
   "clientName": "android-native-client",
   "host": "10.0.2.2",
   "port": 10000,
+  "useControlServer": true,
   "receiveTimeoutSeconds": 10,
   "allowUntrustedLocalCertificate": true,
   "transportMode": "Tls",

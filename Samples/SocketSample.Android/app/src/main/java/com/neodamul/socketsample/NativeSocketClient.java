@@ -12,6 +12,8 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 
 public final class NativeSocketClient implements AutoCloseable {
+    private static final long ROUTE_REQUEST = 1200;
+    private static final long ROUTE_RESPONSE = 1201;
     private static final long CLIENT_REGISTER = 2000;
     private static final long CLIENT_REGISTER_ACK = 2001;
     private static final long CLIENT_MESSAGE_SEND = 2002;
@@ -42,20 +44,55 @@ public final class NativeSocketClient implements AutoCloseable {
         protector = config.useMessageEncryption()
             ? new SocketMessageProtector(config.messageEncryptionSecret)
             : null;
-        if (protector == null) {
-            SSLSocketFactory factory = createSocketFactory(config.allowUntrustedLocalCertificate);
-            SSLSocket sslSocket = (SSLSocket)factory.createSocket(config.host, config.port);
-            sslSocket.startHandshake();
-            socket = sslSocket;
-        } else {
-            socket = new Socket(config.host, config.port);
+
+        ConnectionTarget target = resolveConnectionTarget();
+        openSocket(target.host, target.port);
+        register();
+    }
+
+    private ConnectionTarget resolveConnectionTarget() throws Exception {
+        if (!config.useControlServer) {
+            return new ConnectionTarget(config.host, config.port);
         }
 
+        try (Socket controlSocket = createSocket(config.host, config.port)) {
+            DataInputStream controlInput = new DataInputStream(controlSocket.getInputStream());
+            DataOutputStream controlOutput = new DataOutputStream(controlSocket.getOutputStream());
+            send(
+                controlOutput,
+                new SocketFrame(config.clientId, ROUTE_REQUEST, ProtoCodec.routeRequest(config.clientId)));
+            SocketFrame response = read(controlInput);
+            if (response.messageId != ROUTE_RESPONSE) {
+                throw new IllegalStateException("Invalid route response.");
+            }
+
+            ProtoCodec.RouteTarget route = ProtoCodec.decodeRouteResponse(response.payload);
+            if (!route.success || route.host.isEmpty() || route.port <= 0 || route.port > 65535) {
+                throw new IllegalStateException(route.errorMessage);
+            }
+
+            return new ConnectionTarget(route.host, (int)route.port);
+        }
+    }
+
+    private void openSocket(String host, int port) throws Exception {
+        socket = createSocket(host, port);
         input = new DataInputStream(socket.getInputStream());
         output = new DataOutputStream(socket.getOutputStream());
     }
 
-    public void register() throws Exception {
+    private Socket createSocket(String host, int port) throws Exception {
+        if (protector == null) {
+            SSLSocketFactory factory = createSocketFactory(config.allowUntrustedLocalCertificate);
+            SSLSocket sslSocket = (SSLSocket)factory.createSocket(host, port);
+            sslSocket.startHandshake();
+            return sslSocket;
+        }
+
+        return new Socket(host, port);
+    }
+
+    private void register() throws Exception {
         send(new SocketFrame(config.clientId, CLIENT_REGISTER, ProtoCodec.clientRegister(config.clientId)));
         SocketFrame frame = read();
         if (frame.messageId != CLIENT_REGISTER_ACK || !ProtoCodec.decodeRegisterAck(frame.payload)) {
@@ -68,16 +105,6 @@ public final class NativeSocketClient implements AutoCloseable {
             config.clientId,
             CLIENT_MESSAGE_SEND,
             ProtoCodec.clientMessageSend(config.clientId, targetClientId, content)));
-        SocketFrame frame = read();
-        if (frame.messageId == CLIENT_MESSAGE_ACK && ProtoCodec.decodeAckDelivered(frame.payload)) {
-            return;
-        }
-
-        if (frame.messageId == CLIENT_MESSAGE_ERROR) {
-            throw new IllegalStateException(ProtoCodec.decodeErrorMessage(frame.payload));
-        }
-
-        throw new IllegalStateException("Invalid message response.");
     }
 
     public ProtoCodec.ClientDelivery receiveMessage() throws Exception {
@@ -90,14 +117,43 @@ public final class NativeSocketClient implements AutoCloseable {
         return ProtoCodec.decodeDelivery(frame.payload);
     }
 
+    public String receiveEvent() throws Exception {
+        SocketFrame frame = read();
+        if (frame.messageId == CLIENT_MESSAGE_DELIVER) {
+            ProtoCodec.ClientDelivery delivery = ProtoCodec.decodeDelivery(frame.payload);
+            return "Received from " + delivery.sourceClientId + ": " + delivery.content;
+        }
+
+        if (frame.messageId == CLIENT_MESSAGE_ACK) {
+            long targetClientId = ProtoCodec.decodeAckTargetClientId(frame.payload);
+            return ProtoCodec.decodeAckDelivered(frame.payload)
+                ? "Message delivered to " + targetClientId
+                : "Message not delivered to " + targetClientId;
+        }
+
+        if (frame.messageId == CLIENT_MESSAGE_ERROR) {
+            return "Message failed: " + ProtoCodec.decodeErrorMessage(frame.payload);
+        }
+
+        return "";
+    }
+
     private void send(SocketFrame frame) throws Exception {
+        send(output, frame);
+    }
+
+    private void send(DataOutputStream targetOutput, SocketFrame frame) throws Exception {
         SocketFrame wireFrame = protector == null ? frame : protector.protect(frame);
-        output.write(wireFrame.encode());
-        output.flush();
+        targetOutput.write(wireFrame.encode());
+        targetOutput.flush();
     }
 
     private SocketFrame read() throws Exception {
-        return protector == null ? SocketFrame.read(input) : protector.read(input);
+        return read(input);
+    }
+
+    private SocketFrame read(DataInputStream targetInput) throws Exception {
+        return protector == null ? SocketFrame.read(targetInput) : protector.read(targetInput);
     }
 
     @Override
@@ -136,6 +192,16 @@ public final class NativeSocketClient implements AutoCloseable {
         @Override
         public X509Certificate[] getAcceptedIssuers() {
             return new X509Certificate[0];
+        }
+    }
+
+    private static final class ConnectionTarget {
+        final String host;
+        final int port;
+
+        ConnectionTarget(String host, int port) {
+            this.host = host;
+            this.port = port;
         }
     }
 }

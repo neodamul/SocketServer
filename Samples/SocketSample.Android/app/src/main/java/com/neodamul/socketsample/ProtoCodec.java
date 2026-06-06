@@ -17,6 +17,13 @@ public final class ProtoCodec {
         return output.toByteArray();
     }
 
+    public static byte[] routeRequest(long clientId) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        writeVarintField(output, 1, clientId);
+        writeStringField(output, 3, "MostAvailableConnections");
+        return output.toByteArray();
+    }
+
     public static byte[] clientMessageSend(long sourceClientId, long targetClientId, String content) {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         writeStringField(output, 1, UUID.randomUUID().toString().replace("-", ""));
@@ -36,8 +43,21 @@ public final class ProtoCodec {
         return parse(payload).bools.getOrDefault(4, false);
     }
 
+    public static long decodeAckTargetClientId(byte[] payload) {
+        return parse(payload).varints.getOrDefault(3, 0L);
+    }
+
     public static String decodeErrorMessage(byte[] payload) {
         return parse(payload).strings.getOrDefault(5, "Message failed.");
+    }
+
+    public static RouteTarget decodeRouteResponse(byte[] payload) {
+        Parsed parsed = parse(payload);
+        return new RouteTarget(
+            parsed.bools.getOrDefault(1, false),
+            parsed.strings.getOrDefault(5, ""),
+            parsed.varints.getOrDefault(6, 0L),
+            parsed.strings.getOrDefault(8, "Route failed."));
     }
 
     public static ClientDelivery decodeDelivery(byte[] payload) {
@@ -128,6 +148,20 @@ public final class ProtoCodec {
             this.sourceClientId = sourceClientId;
             this.targetClientId = targetClientId;
             this.content = content;
+        }
+    }
+
+    public static final class RouteTarget {
+        public final boolean success;
+        public final String host;
+        public final long port;
+        public final String errorMessage;
+
+        RouteTarget(boolean success, String host, long port, String errorMessage) {
+            this.success = success;
+            this.host = host;
+            this.port = port;
+            this.errorMessage = errorMessage;
         }
     }
 }

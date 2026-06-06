@@ -6,6 +6,7 @@ SRC_DIR="$ROOT_DIR/app/src/main/java/com/neodamul/socketsample"
 BUILD_DIR="$ROOT_DIR/build/validation"
 CLASS_DIR="$BUILD_DIR/classes"
 TEST_SRC="$BUILD_DIR/AndroidProtocolValidation.java"
+CONFIG_STUB_SRC="$BUILD_DIR/SampleConfig.java"
 SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 
 if [ -z "$SDK_ROOT" ] && [ -d "/opt/homebrew/share/android-commandlinetools/platforms" ]; then
@@ -18,7 +19,28 @@ fi
 
 mkdir -p "$CLASS_DIR"
 
-javac -d "$CLASS_DIR" "$SRC_DIR/SocketFrame.java" "$SRC_DIR/ProtoCodec.java" "$SRC_DIR/SocketMessageProtector.java"
+cat > "$CONFIG_STUB_SRC" <<'JAVA'
+package com.neodamul.socketsample;
+
+public final class SampleConfig {
+    public int clientId = 1;
+    public String host = "127.0.0.1";
+    public int port = 10000;
+    public boolean useControlServer = true;
+    public int receiveTimeoutSeconds = 10;
+    public boolean allowUntrustedLocalCertificate = true;
+    public String transportMode = "Tls";
+    public String messageEncryptionSecret = "";
+
+    public boolean useMessageEncryption() {
+        return "MessageEncryption".equalsIgnoreCase(transportMode) ||
+            "Encrypted".equalsIgnoreCase(transportMode) ||
+            "PlainEncrypted".equalsIgnoreCase(transportMode);
+    }
+}
+JAVA
+
+javac -d "$CLASS_DIR" "$CONFIG_STUB_SRC" "$SRC_DIR/SocketFrame.java" "$SRC_DIR/ProtoCodec.java" "$SRC_DIR/SocketMessageProtector.java" "$SRC_DIR/NativeSocketClient.java"
 
 cat > "$TEST_SRC" <<'JAVA'
 import com.neodamul.socketsample.ProtoCodec;
@@ -34,6 +56,21 @@ public final class AndroidProtocolValidation {
         ProtoCodec.ClientDelivery delivery = ProtoCodec.decodeDelivery(payload);
         if (delivery.sourceClientId != 101 || delivery.targetClientId != 202 || !"hello-android".equals(delivery.content)) {
             throw new IllegalStateException("Client message protobuf payload did not round-trip.");
+        }
+
+        byte[] routeRequest = ProtoCodec.routeRequest(101);
+        if (routeRequest.length == 0) {
+            throw new IllegalStateException("Route request payload was not encoded.");
+        }
+
+        byte[] routeResponse = new byte[] {
+            0x08, 0x01,
+            0x2a, 0x09, 0x31, 0x32, 0x37, 0x2e, 0x30, 0x2e, 0x30, 0x2e, 0x31,
+            0x30, (byte)0xF1, 0x4E
+        };
+        ProtoCodec.RouteTarget route = ProtoCodec.decodeRouteResponse(routeResponse);
+        if (!route.success || !"127.0.0.1".equals(route.host) || route.port != 10097) {
+            throw new IllegalStateException("Route response protobuf payload did not decode.");
         }
 
         SocketFrame frame = new SocketFrame(101, 2002, "payload".getBytes(StandardCharsets.UTF_8));

@@ -165,6 +165,29 @@ public class SocketSampleClientTests
     }
 
     [TestMethod]
+    public void AndroidNativeSampleUsesConnectRegisterAndReceiveLoopTest()
+    {
+        string root = FindRepositoryRoot();
+        string activity = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/MainActivity.java"));
+        string client = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/NativeSocketClient.java"));
+        string config = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/SampleConfig.java"));
+        string rawConfig = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/res/raw/config.json"));
+
+        Assert.IsTrue(config.Contains("useControlServer", StringComparison.Ordinal));
+        Assert.IsTrue(rawConfig.Contains("\"useControlServer\": true", StringComparison.Ordinal));
+        Assert.IsTrue(activity.Contains("Use ControlServer route", StringComparison.Ordinal));
+        Assert.IsTrue(activity.Contains("Connected and registered", StringComparison.Ordinal));
+        Assert.IsTrue(activity.Contains("startReceiveLoop()", StringComparison.Ordinal));
+        Assert.IsTrue(activity.Contains("receiveExecutor", StringComparison.Ordinal));
+        Assert.IsFalse(activity.Contains("button(\"Register\"", StringComparison.Ordinal));
+        Assert.IsFalse(activity.Contains("button(\"Receive\"", StringComparison.Ordinal));
+        Assert.IsTrue(client.Contains("resolveConnectionTarget", StringComparison.Ordinal));
+        Assert.IsTrue(client.Contains("ProtoCodec.routeRequest", StringComparison.Ordinal));
+        Assert.IsTrue(client.Contains("register();", StringComparison.Ordinal));
+        Assert.IsTrue(client.Contains("receiveEvent()", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void DotNetSampleWebUiUsesDynamicPortByDefaultTest()
     {
         string root = FindRepositoryRoot();

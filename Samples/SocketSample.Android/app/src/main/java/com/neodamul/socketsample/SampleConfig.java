@@ -10,6 +10,7 @@ public final class SampleConfig {
     public String clientName = "android-native-client";
     public String host = "10.0.2.2";
     public int port = 10000;
+    public boolean useControlServer = true;
     public int receiveTimeoutSeconds = 10;
     public boolean allowUntrustedLocalCertificate = true;
     public String transportMode = "Tls";
@@ -30,6 +31,7 @@ public final class SampleConfig {
             config.clientName = json.optString("clientName", config.clientName);
             config.host = json.optString("host", config.host);
             config.port = json.optInt("port", config.port);
+            config.useControlServer = json.optBoolean("useControlServer", config.useControlServer);
             config.receiveTimeoutSeconds = json.optInt("receiveTimeoutSeconds", config.receiveTimeoutSeconds);
             config.allowUntrustedLocalCertificate = json.optBoolean("allowUntrustedLocalCertificate", config.allowUntrustedLocalCertificate);
             config.transportMode = json.optString("transportMode", config.transportMode);
