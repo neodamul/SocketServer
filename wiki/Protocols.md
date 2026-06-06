@@ -17,7 +17,7 @@
 
 `security.profile=EndToEndTls`는 앱까지 TLS를 유지하는 기본 profile입니다. `security.profile=EdgeTerminated`는 edge TLS 종단 이후 내부 신뢰망에서 앱 비-TLS 전송을 사용하는 profile이며 `trustedNetwork=true`와 명시적인 loopback/private SocketServer `bindHost`가 필요합니다.
 
-`EndToEndTls` TLS 인증서 검증은 로컬 Root CA 서명 여부, 서버 인증서 SAN/name 일치, serverAuth/clientAuth EKU를 확인합니다.
+`EndToEndTls` TLS 인증서 검증은 로컬 Root CA 서명 여부, 서버 인증서 SAN/name 일치, serverAuth/clientAuth EKU를 확인합니다. SocketClient 인증서 SAN의 `socket-client-{clientId}` 값은 client-facing frame header clientId와 바인딩됩니다.
 
 `MessageEncryption` 모드는 TLS handshake를 사용하지 않고 각 frame payload를 보호합니다. wire payload는 다음 envelope입니다.
 

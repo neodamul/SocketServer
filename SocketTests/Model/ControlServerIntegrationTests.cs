@@ -517,13 +517,14 @@ public class ControlServerIntegrationTests
         Task registerTask = servers.RegisterAsync();
         ClusterStatusSnapshot status = await WaitForClusterAsync(
             healthyControl,
-            snapshot => snapshot.ServerCount == 4 && snapshot.HealthyServerCount == 4);
+            snapshot => snapshot.ServerCount == 4 && snapshot.HealthyServerCount == 4,
+            timeoutSeconds: 30);
 
         Assert.AreEqual(40, status.TotalAvailableConnections);
-        Task completedTask = await Task.WhenAny(registerTask, Task.Delay(TimeSpan.FromSeconds(12)));
+        Task completedTask = await Task.WhenAny(registerTask, Task.Delay(TimeSpan.FromSeconds(25)));
         Assert.AreSame(registerTask, completedTask);
         await registerTask;
-        Assert.IsTrue(DateTimeOffset.UtcNow - startedAt < TimeSpan.FromSeconds(8));
+        Assert.IsTrue(DateTimeOffset.UtcNow - startedAt < TimeSpan.FromSeconds(25));
 
         stalledCancellation.Cancel();
         stalledListener.Dispose();

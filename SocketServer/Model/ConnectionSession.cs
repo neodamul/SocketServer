@@ -28,6 +28,8 @@ public class ConnectionSession
 
     public SecureSocketConnection Connection { get; }
 
+    public uint? AuthenticatedClientId => this.Connection.RemoteCertificateClientId;
+
     public string RemoteEndPoint { get; }
 
     public DateTimeOffset ConnectedAt { get; }

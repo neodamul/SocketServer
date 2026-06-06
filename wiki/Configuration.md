@@ -62,7 +62,7 @@ SocketTests/log4net.config
 `MessageEncryption` 모드는 모든 노드와 클라이언트가 같은 secret을 환경 변수로 제공해야 합니다. 기본 변수명은 `SOCKET_MESSAGE_SECRET`이며, `messageEncryptionSecretEnvironmentVariable`로 바꿀 수 있습니다. secret은 base64 또는 일반 문자열을 사용할 수 있고 내부적으로 AES-GCM key와 HMAC key를 분리 파생합니다.
 
 `tlsProtocol`은 기본 `Tls13`입니다. `Auto`로 설정하면 OS/.NET 기본 협상을 사용합니다. 운영 설정은 TLS 1.3 강제를 기본으로 둡니다.
-`EndToEndTls` profile은 mTLS를 강제하므로 `requireClientCertificate`가 false여도 내부적으로 true로 정규화됩니다. 클라이언트도 같은 Root CA로 서명된 모듈 인증서를 제시해야 합니다. `EndToEndTls` 인증서 검증은 Root CA 서명, SAN/name mismatch, serverAuth/clientAuth EKU를 확인합니다.
+`EndToEndTls` profile은 mTLS를 강제하므로 `requireClientCertificate`가 false여도 내부적으로 true로 정규화됩니다. 클라이언트도 같은 Root CA로 서명된 모듈 인증서를 제시해야 합니다. `EndToEndTls` 인증서 검증은 Root CA 서명, SAN/name mismatch, serverAuth/clientAuth EKU를 확인합니다. SocketClient 인증서는 SAN에 `socket-client-{clientId}`를 포함하며, SocketServer는 client-facing frame의 header clientId가 인증서 clientId와 다르면 연결을 거부합니다.
 
 ## Socket Options
 

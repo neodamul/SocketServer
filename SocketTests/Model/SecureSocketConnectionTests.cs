@@ -41,7 +41,7 @@ public class SecureSocketConnectionTests
     [TestMethod]
     public void LocalCertificateContainsServerAndClientEnhancedKeyUsagesTest()
     {
-        using var certificate = LocalCertificateStore.GetOrCreate("SocketTestsEku");
+        using var certificate = LocalCertificateStore.GetOrCreate("SocketClient-123");
 
         Assert.IsTrue(LocalCertificateStore.HasEnhancedKeyUsage(
             certificate,
@@ -50,6 +50,8 @@ public class SecureSocketConnectionTests
             certificate,
             SecureSocketConnection.ClientAuthenticationEkuOid));
         Assert.IsFalse(LocalCertificateStore.HasEnhancedKeyUsage(certificate, "1.2.3.4"));
+        Assert.IsTrue(LocalCertificateStore.TryGetClientId(certificate, out uint clientId));
+        Assert.AreEqual((uint)123, clientId);
     }
 
     [TestMethod]

@@ -703,6 +703,11 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                     continue;
                 }
 
+                if (!this.IsClientFrameAuthorized(session, frame.ClientId))
+                {
+                    break;
+                }
+
                 session.MarkReceived(frame.ClientId);
                 this.UpdateClientIndex(session);
                 Interlocked.Increment(ref this.totalReceivedMessages);
@@ -734,6 +739,28 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         {
             this.RemoveConnectedClient(session);
         }
+    }
+
+    private bool IsClientFrameAuthorized(ConnectionSession session, uint clientId)
+    {
+        if (SecureSocketConnection.SecurityProfile != SocketSecurityProfile.EndToEndTls || clientId == 0)
+        {
+            return true;
+        }
+
+        if (!session.AuthenticatedClientId.HasValue)
+        {
+            Logger.Warn($"Client frame rejected because TLS certificate has no clientId binding. instanceId={this.InstanceId}, connectionId={session.Id}, frameClientId={clientId}");
+            return false;
+        }
+
+        if (session.AuthenticatedClientId.Value != clientId)
+        {
+            Logger.Warn($"Client frame rejected because TLS certificate clientId does not match frame clientId. instanceId={this.InstanceId}, connectionId={session.Id}, authenticatedClientId={session.AuthenticatedClientId.Value}, frameClientId={clientId}");
+            return false;
+        }
+
+        return true;
     }
 
     private async Task<bool> EnqueueClientCommandAsync(ConnectionSession session, SocketMessageFrame frame)

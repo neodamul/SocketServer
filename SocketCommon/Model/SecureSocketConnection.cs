@@ -63,18 +63,22 @@ public sealed class SecureSocketConnection : IDisposable
         NetworkStream networkStream,
         SslStream sslStream,
         SocketMessageProtector messageProtector,
-        string moduleName)
+        string moduleName,
+        uint? remoteCertificateClientId = null)
     {
         this.Socket = socket;
         this.networkStream = networkStream;
         this.sslStream = sslStream;
         this.messageProtector = messageProtector;
         this.ModuleName = moduleName;
+        this.RemoteCertificateClientId = remoteCertificateClientId;
     }
 
     public Socket Socket { get; }
 
     public string ModuleName { get; }
+
+    public uint? RemoteCertificateClientId { get; }
 
     public SslProtocols NegotiatedProtocol => this.sslStream?.SslProtocol ?? SslProtocols.None;
 
@@ -257,7 +261,13 @@ public sealed class SecureSocketConnection : IDisposable
         await WaitForAuthenticationAsync(sslStream.AuthenticateAsServerAsync(options));
         EnsureTls13IfRequired(sslStream);
 
-        return new SecureSocketConnection(socket, networkStream, sslStream, null, moduleName);
+        uint? remoteCertificateClientId = LocalCertificateStore.TryGetClientId(
+            sslStream.RemoteCertificate,
+            out uint clientId)
+            ? clientId
+            : null;
+
+        return new SecureSocketConnection(socket, networkStream, sslStream, null, moduleName, remoteCertificateClientId);
     }
 
     public async Task<bool> SendAsync(byte[] bytes)
@@ -784,7 +794,7 @@ public static class LocalCertificateStore
         if (File.Exists(path))
         {
             X509Certificate2 existingCertificate = TryLoad(path);
-            if (existingCertificate != null && IsModuleCertificateValid(existingCertificate, rootCertificate))
+            if (existingCertificate != null && IsModuleCertificateValid(existingCertificate, rootCertificate, moduleName))
             {
                 return existingCertificate;
             }
@@ -849,7 +859,7 @@ public static class LocalCertificateStore
                 string.Equals(cached.Path, path, StringComparison.Ordinal) &&
                 string.Equals(cached.Password, password, StringComparison.Ordinal) &&
                 cached.WriteTimeUtc == writeTimeUtc &&
-                IsModuleCertificateValid(cached.Certificate, rootCertificate))
+                IsModuleCertificateValid(cached.Certificate, rootCertificate, key))
             {
                 return cached.Certificate;
             }
@@ -1068,6 +1078,11 @@ public static class LocalCertificateStore
         SubjectAlternativeNameBuilder subjectAlternativeNameBuilder = new();
         subjectAlternativeNameBuilder.AddDnsName(SecureSocketConnection.TargetHost);
         subjectAlternativeNameBuilder.AddDnsName("localhost");
+        if (TryGetClientIdFromModuleName(moduleName, out uint clientId))
+        {
+            subjectAlternativeNameBuilder.AddDnsName(CreateClientIdDnsName(clientId));
+        }
+
         request.CertificateExtensions.Add(subjectAlternativeNameBuilder.Build());
 
         using X509Certificate2 certificate = request.Create(
@@ -1117,6 +1132,57 @@ public static class LocalCertificateStore
         return false;
     }
 
+    public static bool TryGetClientId(X509Certificate certificate, out uint clientId)
+    {
+        clientId = 0;
+        if (certificate == null)
+        {
+            return false;
+        }
+
+        using X509Certificate2 certificate2 = new(certificate);
+        return TryGetClientId(certificate2, out clientId);
+    }
+
+    public static bool TryGetClientId(X509Certificate2 certificate, out uint clientId)
+    {
+        clientId = 0;
+        if (certificate == null)
+        {
+            return false;
+        }
+
+        foreach (X509Extension extension in certificate.Extensions)
+        {
+            if (extension.Oid?.Value != "2.5.29.17")
+            {
+                continue;
+            }
+
+            string formattedSubjectAlternativeNames = extension.Format(false);
+            int markerIndex = formattedSubjectAlternativeNames.IndexOf("socket-client-", StringComparison.OrdinalIgnoreCase);
+            if (markerIndex < 0)
+            {
+                return false;
+            }
+
+            int startIndex = markerIndex + "socket-client-".Length;
+            int endIndex = startIndex;
+            while (endIndex < formattedSubjectAlternativeNames.Length && char.IsDigit(formattedSubjectAlternativeNames[endIndex]))
+            {
+                endIndex++;
+            }
+
+            return endIndex > startIndex &&
+                uint.TryParse(
+                    formattedSubjectAlternativeNames[startIndex..endIndex],
+                    out clientId) &&
+                clientId > 0;
+        }
+
+        return false;
+    }
+
     public static bool IsSignedByRoot(X509Certificate2 certificate, X509Certificate2 rootCertificate)
     {
         using X509Chain chain = new();
@@ -1127,8 +1193,14 @@ public static class LocalCertificateStore
         return chain.Build(certificate);
     }
 
-    private static bool IsModuleCertificateValid(X509Certificate2 certificate, X509Certificate2 rootCertificate)
+    private static bool IsModuleCertificateValid(X509Certificate2 certificate, X509Certificate2 rootCertificate, string moduleName)
     {
+        if (TryGetClientIdFromModuleName(moduleName, out uint expectedClientId) &&
+            (!TryGetClientId(certificate, out uint certificateClientId) || certificateClientId != expectedClientId))
+        {
+            return false;
+        }
+
         return certificate.GetECDsaPrivateKey() != null &&
             certificate.Subject.Contains(SecureSocketConnection.LocalCertificateSubject, StringComparison.Ordinal) &&
             IsWithinRotationWindow(certificate) &&
@@ -1162,6 +1234,23 @@ public static class LocalCertificateStore
         }
 
         return false;
+    }
+
+    private static bool TryGetClientIdFromModuleName(string moduleName, out uint clientId)
+    {
+        clientId = 0;
+        if (string.IsNullOrWhiteSpace(moduleName) ||
+            !moduleName.StartsWith("SocketClient-", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return uint.TryParse(moduleName["SocketClient-".Length..], out clientId) && clientId > 0;
+    }
+
+    private static string CreateClientIdDnsName(uint clientId)
+    {
+        return $"socket-client-{clientId}";
     }
 
     private static byte[] CreateSerialNumber()

@@ -99,7 +99,7 @@ public class TcpClient : IClient, IDisposable
             }
 
             SocketFactory.ConnectAsync(this.Socket, this.IpAddress, this.Port).GetAwaiter().GetResult();
-            this.Connection = SecureSocketConnection.AuthenticateClientAsync(this.Socket, "SocketClient").GetAwaiter().GetResult();
+            this.Connection = SecureSocketConnection.AuthenticateClientAsync(this.Socket, this.GetCertificateModuleName()).GetAwaiter().GetResult();
             Logger.Info($"Client connected. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}");
             return true;
         }
@@ -157,7 +157,7 @@ public class TcpClient : IClient, IDisposable
             Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family);
             await SocketFactory.ConnectAsync(controlSocket, controlHost, controlPort);
             using SecureSocketConnection controlConnection =
-                await SecureSocketConnection.AuthenticateClientAsync(controlSocket, "SocketClient");
+                await SecureSocketConnection.AuthenticateClientAsync(controlSocket, this.GetCertificateModuleName());
             (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
                 controlConnection,
                 this.ClientId,
@@ -191,6 +191,11 @@ public class TcpClient : IClient, IDisposable
         }
 
         return false;
+    }
+
+    private string GetCertificateModuleName()
+    {
+        return this.ClientId > 0 ? $"SocketClient-{this.ClientId}" : "SocketClient";
     }
 
     public bool Disconnect()

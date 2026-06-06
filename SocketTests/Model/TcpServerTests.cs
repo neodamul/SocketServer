@@ -25,6 +25,7 @@ public class TcpServerTests
     [TestInitialize]
     public void Initialize()
     {
+        SecureSocketConnection.Configure(CreateTestSecurityConfig());
         this.testPortMutex = new Mutex(false, "SocketServer.TestPort.5001");
         this.testPortMutex.WaitOne();
     }
@@ -33,8 +34,20 @@ public class TcpServerTests
     public void Cleanup()
     {
         SocketFactory.Configure(new SocketOperationConfig());
+        SecureSocketConnection.Configure(CreateTestSecurityConfig());
         this.testPortMutex?.ReleaseMutex();
         this.testPortMutex?.Dispose();
+    }
+
+    private static SocketSecurityConfig CreateTestSecurityConfig()
+    {
+        return new SocketSecurityConfig
+        {
+            TransportMode = "Tls",
+            TlsProtocol = "Auto",
+            RequireTls13 = false,
+            AuthenticationTimeoutMilliseconds = 30000
+        };
     }
 
     [TestMethod()]
@@ -172,6 +185,38 @@ public class TcpServerTests
 
         client.Disconnect();
         server.End();
+    }
+
+    [TestMethod()]
+    public async Task ClientRegisterRejectsCertificateClientIdMismatchTest()
+    {
+        SecureSocketConnection.Configure(CreateTestSecurityConfig());
+
+        TcpServer server = new(1, "testServer", "127.0.0.1", 0);
+        try
+        {
+            Assert.IsTrue(server.BindInPortRange(0, 0));
+            Assert.IsTrue(server.Listen());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+
+            using Socket clientSocket = SocketFactory.CreateTcpSocket();
+            await SocketFactory.ConnectAsync(clientSocket, IPAddress.Loopback, server.GetPort());
+            using SecureSocketConnection connection =
+                await SecureSocketConnection.AuthenticateClientAsync(clientSocket, "SocketClient-123");
+
+            Assert.IsTrue(await ClientMessageProtocol.SendRegisterAsync(connection, 456));
+            (bool success, _) = await SocketMessageFrame.TryReceiveAsync(
+                connection,
+                headerTimeoutMilliseconds: 1000,
+                payloadTimeoutMilliseconds: 1000);
+
+            Assert.IsFalse(success);
+        }
+        finally
+        {
+            server.End();
+            SecureSocketConnection.Configure(CreateTestSecurityConfig());
+        }
     }
 
     [TestMethod()]
