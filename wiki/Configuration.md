@@ -88,11 +88,11 @@ SocketTests/log4net.config
     "controlServers": [
       {
         "host": "127.0.0.1",
-        "port": 5000
+        "port": 10001
       },
       {
         "host": "127.0.0.1",
-        "port": 5002
+        "port": 10002
       }
     ]
   }
@@ -124,8 +124,8 @@ TLS handshake 경로는 Root CA와 모듈 인증서를 프로세스 캐시에 �
     "clusterId": "socket-cluster-1",
     "nodeId": "control-1",
     "host": "127.0.0.1",
-    "port": 5000,
-    "peerSyncPort": 5020,
+    "port": 10001,
+    "peerSyncPort": 10021,
     "heartbeatTimeoutSeconds": 90,
     "peerSnapshotSyncIntervalSeconds": 30,
     "routeReservationSeconds": 10,
@@ -169,7 +169,7 @@ TLS handshake 경로는 Root CA와 모듈 인증서를 프로세스 캐시에 �
   "controlServers": [
     {
       "host": "127.0.0.1",
-      "port": 5000
+      "port": 10000
     }
   ],
   "servers": [
@@ -178,8 +178,8 @@ TLS handshake 경로는 Root CA와 모듈 인증서를 프로세스 캐시에 �
       "instanceId": "server-1-a",
       "name": "socket-server-1",
       "bindHost": "127.0.0.1",
-      "portRangeStart": 5100,
-      "portRangeEnd": 5199,
+      "portRangeStart": 10100,
+      "portRangeEnd": 10199,
       "maxConnections": 10000,
       "pendingAcceptCount": 100,
       "idleTimeoutSeconds": 90,
@@ -204,7 +204,7 @@ TLS handshake 경로는 Root CA와 모듈 인증서를 프로세스 캐시에 �
     "controlEndpoints": [
       {
         "host": "127.0.0.1",
-        "port": 5000
+        "port": 10000
       }
     ],
     "healthCheckIntervalSeconds": 30

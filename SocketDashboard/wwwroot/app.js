@@ -36,6 +36,11 @@ const fields = {
 };
 
 const DEFAULT_REFRESH_SECONDS = 30;
+const SERVER_TYPE_ORDER = {
+  Dashboard: 0,
+  ControlServer: 1,
+  SocketServer: 2
+};
 let refreshTimer = null;
 let refreshInFlight = false;
 let selectedServerKey = "";
@@ -83,9 +88,16 @@ function serverRowKey(server) {
   return `${server.type}:${server.instanceId}:${server.host}:${server.port}`;
 }
 
-function sortByInstanceDescending(servers) {
-  return [...servers].sort((left, right) =>
-    String(right.instanceId).localeCompare(String(left.instanceId), undefined, { numeric: true }));
+function sortInventoryRows(servers) {
+  return [...servers].sort((left, right) => {
+    const leftTypeOrder = SERVER_TYPE_ORDER[left.type] ?? 99;
+    const rightTypeOrder = SERVER_TYPE_ORDER[right.type] ?? 99;
+    if (leftTypeOrder !== rightTypeOrder) {
+      return leftTypeOrder - rightTypeOrder;
+    }
+
+    return String(left.instanceId).localeCompare(String(right.instanceId), undefined, { numeric: true });
+  });
 }
 
 function buildDashboardServerRow(server) {
@@ -211,7 +223,7 @@ function renderServers(clusterServers, dashboardServer, controlServers) {
   const socketRows = (clusterServers || [])
     .filter(server => !sameEndpoint(server, dashboardRow))
     .map(buildSocketServerRow);
-  const rows = [dashboardRow, ...sortByInstanceDescending(controlRows), ...sortByInstanceDescending(socketRows)];
+  const rows = sortInventoryRows([dashboardRow, ...controlRows, ...socketRows].filter(Boolean));
   currentInventoryRows = rows.map(server => ({
     ...server,
     key: serverRowKey(server)

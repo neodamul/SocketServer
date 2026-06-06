@@ -94,11 +94,11 @@ public class SocketLoadTestTests
             new[]
             {
                 "--ui",
-                "--ui-port", "0",
+                "--ui-port", "10060",
                 "--clients", "4",
                 "--batch-size", "4",
                 "--host", "127.0.0.1",
-                "--port", "56200",
+                "--port", "10000",
                 "--use-control-server"
             },
             out LoadTestOptions options,
@@ -106,11 +106,11 @@ public class SocketLoadTestTests
 
         Assert.AreEqual(string.Empty, error);
         Assert.IsTrue(options.UiMode);
-        Assert.AreEqual(0, options.UiPort);
+        Assert.AreEqual(10060, options.UiPort);
         Assert.AreEqual(4, options.Clients);
         Assert.AreEqual(4, options.BatchSize);
         Assert.AreEqual("127.0.0.1", options.Host);
-        Assert.AreEqual(56200, options.Port);
+        Assert.AreEqual(10000, options.Port);
         Assert.IsTrue(options.UseControlServer);
     }
 
@@ -122,6 +122,7 @@ public class SocketLoadTestTests
             out LoadTestOptions options,
             out string error));
         Assert.AreEqual(string.Empty, error);
+        Assert.AreEqual(10060, options.UiPort);
 
         LoadTestUiService service = new(options);
         LoadTestUiState state = service.GetState();

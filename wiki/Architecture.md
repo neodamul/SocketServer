@@ -5,7 +5,8 @@
 SocketServer는 TCP 서버를 여러 인스턴스로 확장하고, ControlServer가 서버 상태를 취합해 클라이언트에게 접속할 SocketServer 정보를 내려주는 구조입니다.
 
 ```text
-Client -> ControlServer:5000  ROUTE_REQUEST
+Client -> nginx:10000       ROUTE_REQUEST
+nginx  -> ControlServer     TCP stream proxy to 10001/10002
 Client <- ControlServer       ROUTE_RESPONSE(host, port)
 Client -> SocketServer        direct TCP connection
 ```

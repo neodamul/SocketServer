@@ -2,7 +2,7 @@
   "clientId": 1,
   "clientName": "android-native-client",
   "host": "10.0.2.2",
-  "port": 5000,
+  "port": 10000,
   "receiveTimeoutSeconds": 10,
   "allowUntrustedLocalCertificate": true,
   "transportMode": "Tls",

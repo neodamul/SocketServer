@@ -19,7 +19,7 @@ dotnet build SocketServer.sln --no-restore --disable-build-servers -p:UseSharedC
 dotnet run --project SocketControl/SocketControl.csproj
 ```
 
-기본 endpoint는 `127.0.0.1:5000`입니다.
+기본 client-facing endpoint는 nginx TCP stream proxy인 `127.0.0.1:10000`입니다. ControlServer 인스턴스는 기본적으로 `10001`부터 실행합니다.
 
 ## Run SocketServer
 
@@ -44,7 +44,7 @@ dotnet run --project SocketDashboard/SocketDashboard.csproj
 대시보드 기본 URL:
 
 ```text
-http://127.0.0.1:5080
+http://127.0.0.1:10050
 ```
 
 API:
@@ -77,19 +77,19 @@ export SOCKET_CERTIFICATE_PASSWORD='change-this-local-secret'
 직접 서버 접속:
 
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --port 5000
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --port 10000
 ```
 
 외부 서버 접속:
 
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --host 127.0.0.1 --port 5000 --external-server
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --host 127.0.0.1 --port 10000 --external-server
 ```
 
 ControlServer route 사용:
 
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k --host 127.0.0.1 --port 5000 --use-control-server --report-file reports/soak-10k.json
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k --host 127.0.0.1 --port 10000 --use-control-server --report-file reports/soak-10k.json
 ```
 
 부하 테스트 preset:

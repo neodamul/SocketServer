@@ -24,7 +24,7 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(new WebApplicationO
 if (String.IsNullOrEmpty(builder.Configuration["urls"]) &&
     String.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
 {
-    builder.WebHost.UseUrls("http://127.0.0.1:5080");
+    builder.WebHost.UseUrls("http://127.0.0.1:10050");
 }
 
 IReadOnlyCollection<EndpointConfig> controlEndpoints = ReadControlEndpoints(builder);

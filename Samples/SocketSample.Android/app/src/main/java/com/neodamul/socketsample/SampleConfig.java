@@ -9,7 +9,7 @@ public final class SampleConfig {
     public int clientId = 1;
     public String clientName = "android-native-client";
     public String host = "10.0.2.2";
-    public int port = 5000;
+    public int port = 10000;
     public int receiveTimeoutSeconds = 10;
     public boolean allowUntrustedLocalCertificate = true;
     public String transportMode = "Tls";

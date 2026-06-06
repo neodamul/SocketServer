@@ -437,7 +437,7 @@ internal sealed record LoadTestOptions(
             BatchSize: 100,
             HoldSeconds: 60,
             Host: "127.0.0.1",
-            Port: 5000,
+            Port: 10000,
             ExternalServer: false,
             UseControlServer: false,
             MessageTest: false,
@@ -449,7 +449,7 @@ internal sealed record LoadTestOptions(
             Profile: "custom",
             ReportFile: "",
             UiMode: false,
-            UiPort: 0);
+            UiPort: 10060);
         error = string.Empty;
 
         for (int index = 0; index < args.Length; index++)

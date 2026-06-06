@@ -64,7 +64,7 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --b
 UI 모드는 브라우저에서 부하 클라이언트를 시작/중지하고 상태를 조회합니다.
 
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 0 --clients 4 --batch-size 4 --host 127.0.0.1 --port 5000 --use-control-server
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 10060 --clients 4 --batch-size 4 --host 127.0.0.1 --port 10000 --use-control-server
 ```
 
 표시 항목:
@@ -113,4 +113,4 @@ cd Samples/SocketSample.Android
 
 ## Test Port
 
-일부 기존 테스트는 `5001`을 사용합니다. 통합 테스트는 가능한 동적 포트 `0`을 사용해 충돌을 줄입니다.
+일부 기존 테스트는 `5001`을 사용합니다. 기본 런타임 포트는 nginx `10000`, ControlServer `10001`부터, SocketServer `10100`부터 사용합니다. 통합 테스트는 가능한 동적 포트 `0`을 사용해 충돌을 줄입니다.

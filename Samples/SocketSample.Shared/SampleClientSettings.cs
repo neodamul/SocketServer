@@ -10,7 +10,7 @@ public sealed class SampleClientSettings
 
     public string Host { get; set; } = "127.0.0.1";
 
-    public int Port { get; set; } = 5000;
+    public int Port { get; set; } = 10000;
 
     public bool UseControlServer { get; set; } = true;
 

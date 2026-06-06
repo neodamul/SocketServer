@@ -49,7 +49,7 @@ final class NativeSocketClient {
 
         let connection = NWConnection(
             host: NWEndpoint.Host(config.host),
-            port: NWEndpoint.Port(rawValue: config.port) ?? 5000,
+            port: NWEndpoint.Port(rawValue: config.port) ?? 10000,
             using: parameters)
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in

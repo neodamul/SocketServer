@@ -3,7 +3,6 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using SocketCommon;
 using SocketCommon.Configuration;
 using SocketCommon.Model;
 using SocketControl.Model;
@@ -19,7 +18,7 @@ public class DashboardServerServiceTests
     [TestMethod]
     public void GetStatusReturnsRunningServerStatusTest()
     {
-        using DashboardServerService service = new(0);
+        using DashboardServerService service = new(0, CreateUnavailableControlEndpoint());
 
         DashboardServerStatus status = service.GetStatus();
 
@@ -42,13 +41,14 @@ public class DashboardServerServiceTests
         Assert.AreEqual(1, status.Cluster.ServerCount);
         Assert.AreEqual(1, status.ControlServers.Count);
         Assert.AreEqual("127.0.0.1", status.ControlServers.First().Host);
-        Assert.AreEqual(Constants.LocalHostPort, status.ControlServers.First().Port);
+        Assert.AreEqual(1, status.ControlServers.First().Port);
+        Assert.IsFalse(status.ControlServers.First().IsHealthy);
     }
 
     [TestMethod]
     public void HealthAndMetricsEndpointsExposeOperationalStateTest()
     {
-        using DashboardServerService service = new(0);
+        using DashboardServerService service = new(0, CreateUnavailableControlEndpoint());
 
         DashboardHealthStatus liveness = service.GetLiveness();
         DashboardHealthStatus readiness = service.GetReadiness();
@@ -63,6 +63,11 @@ public class DashboardServerServiceTests
         Assert.AreEqual(TcpServer.DefaultMaxConnections, metrics.TotalMaxConnections);
         Assert.IsTrue(metrics.SocketAsyncEventArgsAvailableCount >= 0);
         Assert.IsTrue(metrics.SocketAsyncEventArgsHighWatermarkInUseCount >= 0);
+    }
+
+    private static EndpointConfig CreateUnavailableControlEndpoint()
+    {
+        return new EndpointConfig { Host = "127.0.0.1", Port = 1 };
     }
 
     [TestMethod]
@@ -106,8 +111,14 @@ public class DashboardServerServiceTests
         Assert.IsTrue(appJs.Contains("function buildControlServerRow(server)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("renderServers(status.cluster.servers, server, status.controlServers)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("function renderSelectedServer(server)", StringComparison.Ordinal));
-        Assert.IsTrue(appJs.Contains("function sortByInstanceDescending(servers)", StringComparison.Ordinal));
-        Assert.IsTrue(appJs.Contains("const rows = [dashboardRow, ...sortByInstanceDescending(controlRows), ...sortByInstanceDescending(socketRows)];", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("const SERVER_TYPE_ORDER = {", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("Dashboard: 0", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("ControlServer: 1", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("SocketServer: 2", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("function sortInventoryRows(servers)", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("leftTypeOrder - rightTypeOrder", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("String(left.instanceId).localeCompare(String(right.instanceId)", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("const rows = sortInventoryRows([dashboardRow, ...controlRows, ...socketRows].filter(Boolean));", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("data-row-key", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("selected-row", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("fields.clusterServers?.addEventListener(\"click\"", StringComparison.Ordinal));

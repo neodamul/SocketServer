@@ -60,7 +60,7 @@ internal static class LoadTestUiHost
         html.AppendLine("<div><label>Clients</label><input id=\"clients\" type=\"number\" min=\"1\" value=\"4\"></div>");
         html.AppendLine("<div><label>Batch Size</label><input id=\"batchSize\" type=\"number\" min=\"1\" value=\"4\"></div>");
         html.AppendLine("<div><label>Host</label><input id=\"host\" value=\"127.0.0.1\"></div>");
-        html.AppendLine("<div><label>Port</label><input id=\"port\" type=\"number\" min=\"0\" max=\"65535\" value=\"56200\"></div>");
+        html.AppendLine("<div><label>Port</label><input id=\"port\" type=\"number\" min=\"0\" max=\"65535\" value=\"10000\"></div>");
         html.AppendLine("<div><label>Ramp Delay ms</label><input id=\"rampDelayMilliseconds\" type=\"number\" min=\"0\" value=\"0\"></div>");
         html.AppendLine("<div><label>Use ControlServer</label><input id=\"useControlServer\" type=\"checkbox\" checked></div>");
         html.AppendLine("</div><div style=\"display:flex;gap:8px;margin-top:12px\"><button onclick=\"start()\">Start</button><button class=\"secondary\" onclick=\"stop()\">Stop</button><button class=\"secondary\" onclick=\"refresh()\">Refresh</button></div></section>");
