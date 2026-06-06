@@ -20,6 +20,7 @@ public class ControlServer : IDisposable
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<ControlServer>();
     private static readonly SocketLogger RelayLogger = SocketLogManager.GetRelayLogger<ControlServer>();
     private const int CommandWorkerCount = 4;
+    private const int CommandResponseWorkerCount = 4;
 
     private readonly ControlServerNodeConfig config;
     private readonly IReadOnlyCollection<EndpointConfig> peers;
@@ -36,7 +37,7 @@ public class ControlServer : IDisposable
     private readonly Channel<ControlResponseCommand> commandResponseChannel = Channel.CreateUnbounded<ControlResponseCommand>(
         new UnboundedChannelOptions
         {
-            SingleReader = true,
+            SingleReader = false,
             SingleWriter = false
         });
     private readonly Channel<PeerRelayCommand> peerRelayRequestChannel = Channel.CreateUnbounded<PeerRelayCommand>(
@@ -58,10 +59,10 @@ public class ControlServer : IDisposable
     private Task? peerAcceptTask;
     private Task? connectionCleanupTask;
     private Task? peerSnapshotSyncTask;
-    private Task? commandResponseTask;
     private Task? peerRelayRequestTask;
     private Task? peerRelayResponseTask;
     private Task[] commandWorkerTasks = Array.Empty<Task>();
+    private Task[] commandResponseWorkerTasks = Array.Empty<Task>();
     private long nextActiveSocketId;
     private bool disposedValue;
 
@@ -107,7 +108,8 @@ public class ControlServer : IDisposable
                 CommandWorkerCount,
                 this.RunCommandRequestLoopAsync,
                 this.cancellation.Token);
-            this.commandResponseTask = DedicatedWorker.Start(
+            this.commandResponseWorkerTasks = DedicatedWorker.StartMany(
+                CommandResponseWorkerCount,
                 this.RunCommandResponseLoopAsync,
                 this.cancellation.Token);
             this.peerRelayRequestTask = DedicatedWorker.Start(
@@ -167,7 +169,11 @@ public class ControlServer : IDisposable
             await WaitForTaskAsync(commandWorkerTask, timeout);
         }
 
-        await WaitForTaskAsync(this.commandResponseTask, timeout);
+        foreach (Task commandResponseWorkerTask in this.commandResponseWorkerTasks)
+        {
+            await WaitForTaskAsync(commandResponseWorkerTask, timeout);
+        }
+
         await WaitForTaskAsync(this.peerRelayRequestTask, timeout);
         await WaitForTaskAsync(this.peerRelayResponseTask, timeout);
 
@@ -178,7 +184,7 @@ public class ControlServer : IDisposable
         this.connectionCleanupTask = null;
         this.peerSnapshotSyncTask = null;
         this.commandWorkerTasks = Array.Empty<Task>();
-        this.commandResponseTask = null;
+        this.commandResponseWorkerTasks = Array.Empty<Task>();
         this.peerRelayRequestTask = null;
         this.peerRelayResponseTask = null;
         this.cancellation?.Dispose();
