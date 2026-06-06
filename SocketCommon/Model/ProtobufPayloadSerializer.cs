@@ -355,6 +355,16 @@ internal static class ProtobufPayloadSerializer
             TotalSentMessages = value.TotalSentMessages,
             TotalReceivedMessageBytes = value.TotalReceivedMessageBytes,
             TotalSentMessageBytes = value.TotalSentMessageBytes,
+            ListenBacklog = value.ListenBacklog,
+            PendingAcceptCount = value.PendingAcceptCount,
+            IdleTimeoutSeconds = value.IdleTimeoutSeconds,
+            NoDelay = value.NoDelay,
+            MaxPayloadLength = value.MaxPayloadLength,
+            SocketAsyncEventArgsAvailableCount = value.SocketAsyncEventArgsAvailableCount,
+            SocketAsyncEventArgsTotalCreatedCount = value.SocketAsyncEventArgsTotalCreatedCount,
+            SocketAsyncEventArgsInUseCount = value.SocketAsyncEventArgsInUseCount,
+            SocketAsyncEventArgsHighWatermarkInUseCount = value.SocketAsyncEventArgsHighWatermarkInUseCount,
+            SocketAsyncEventArgsGrowthCount = value.SocketAsyncEventArgsGrowthCount,
             SentAtUnixMs = ToUnixMs(value.SentAt)
         };
     }
@@ -382,6 +392,16 @@ internal static class ProtobufPayloadSerializer
             TotalSentMessages = value.TotalSentMessages,
             TotalReceivedMessageBytes = value.TotalReceivedMessageBytes,
             TotalSentMessageBytes = value.TotalSentMessageBytes,
+            ListenBacklog = value.ListenBacklog,
+            PendingAcceptCount = value.PendingAcceptCount,
+            IdleTimeoutSeconds = value.IdleTimeoutSeconds,
+            NoDelay = value.NoDelay,
+            MaxPayloadLength = value.MaxPayloadLength,
+            SocketAsyncEventArgsAvailableCount = value.SocketAsyncEventArgsAvailableCount,
+            SocketAsyncEventArgsTotalCreatedCount = value.SocketAsyncEventArgsTotalCreatedCount,
+            SocketAsyncEventArgsInUseCount = value.SocketAsyncEventArgsInUseCount,
+            SocketAsyncEventArgsHighWatermarkInUseCount = value.SocketAsyncEventArgsHighWatermarkInUseCount,
+            SocketAsyncEventArgsGrowthCount = value.SocketAsyncEventArgsGrowthCount,
             SentAt = FromUnixMs(value.SentAtUnixMs)
         };
     }
@@ -581,7 +601,17 @@ internal static class ProtobufPayloadSerializer
             TotalReceivedMessages = value.TotalReceivedMessages,
             TotalSentMessages = value.TotalSentMessages,
             TotalReceivedMessageBytes = value.TotalReceivedMessageBytes,
-            TotalSentMessageBytes = value.TotalSentMessageBytes
+            TotalSentMessageBytes = value.TotalSentMessageBytes,
+            ListenBacklog = value.ListenBacklog,
+            PendingAcceptCount = value.PendingAcceptCount,
+            IdleTimeoutSeconds = value.IdleTimeoutSeconds,
+            NoDelay = value.NoDelay,
+            MaxPayloadLength = value.MaxPayloadLength,
+            SocketAsyncEventArgsAvailableCount = value.SocketAsyncEventArgsAvailableCount,
+            SocketAsyncEventArgsTotalCreatedCount = value.SocketAsyncEventArgsTotalCreatedCount,
+            SocketAsyncEventArgsInUseCount = value.SocketAsyncEventArgsInUseCount,
+            SocketAsyncEventArgsHighWatermarkInUseCount = value.SocketAsyncEventArgsHighWatermarkInUseCount,
+            SocketAsyncEventArgsGrowthCount = value.SocketAsyncEventArgsGrowthCount
         };
     }
 
@@ -615,7 +645,17 @@ internal static class ProtobufPayloadSerializer
             TotalReceivedMessages = value.TotalReceivedMessages,
             TotalSentMessages = value.TotalSentMessages,
             TotalReceivedMessageBytes = value.TotalReceivedMessageBytes,
-            TotalSentMessageBytes = value.TotalSentMessageBytes
+            TotalSentMessageBytes = value.TotalSentMessageBytes,
+            ListenBacklog = value.ListenBacklog,
+            PendingAcceptCount = value.PendingAcceptCount,
+            IdleTimeoutSeconds = value.IdleTimeoutSeconds,
+            NoDelay = value.NoDelay,
+            MaxPayloadLength = value.MaxPayloadLength,
+            SocketAsyncEventArgsAvailableCount = value.SocketAsyncEventArgsAvailableCount,
+            SocketAsyncEventArgsTotalCreatedCount = value.SocketAsyncEventArgsTotalCreatedCount,
+            SocketAsyncEventArgsInUseCount = value.SocketAsyncEventArgsInUseCount,
+            SocketAsyncEventArgsHighWatermarkInUseCount = value.SocketAsyncEventArgsHighWatermarkInUseCount,
+            SocketAsyncEventArgsGrowthCount = value.SocketAsyncEventArgsGrowthCount
         };
     }
 

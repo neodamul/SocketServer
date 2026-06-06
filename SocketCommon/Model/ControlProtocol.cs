@@ -135,6 +135,26 @@ public class ServerHeartbeatRequest
 
     public long TotalSentMessageBytes { get; set; }
 
+    public int ListenBacklog { get; set; }
+
+    public int PendingAcceptCount { get; set; }
+
+    public int IdleTimeoutSeconds { get; set; }
+
+    public bool NoDelay { get; set; }
+
+    public int MaxPayloadLength { get; set; }
+
+    public int SocketAsyncEventArgsAvailableCount { get; set; }
+
+    public int SocketAsyncEventArgsTotalCreatedCount { get; set; }
+
+    public int SocketAsyncEventArgsInUseCount { get; set; }
+
+    public int SocketAsyncEventArgsHighWatermarkInUseCount { get; set; }
+
+    public int SocketAsyncEventArgsGrowthCount { get; set; }
+
     public DateTimeOffset SentAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
@@ -279,6 +299,26 @@ public class BackendServerSnapshot
     public long TotalReceivedMessageBytes { get; set; }
 
     public long TotalSentMessageBytes { get; set; }
+
+    public int ListenBacklog { get; set; }
+
+    public int PendingAcceptCount { get; set; }
+
+    public int IdleTimeoutSeconds { get; set; }
+
+    public bool NoDelay { get; set; }
+
+    public int MaxPayloadLength { get; set; }
+
+    public int SocketAsyncEventArgsAvailableCount { get; set; }
+
+    public int SocketAsyncEventArgsTotalCreatedCount { get; set; }
+
+    public int SocketAsyncEventArgsInUseCount { get; set; }
+
+    public int SocketAsyncEventArgsHighWatermarkInUseCount { get; set; }
+
+    public int SocketAsyncEventArgsGrowthCount { get; set; }
 
     public long Version { get; set; }
 

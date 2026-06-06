@@ -95,6 +95,16 @@ public class ControlProtocolTests
         heartbeat.TotalSentMessages = 12;
         heartbeat.TotalReceivedMessageBytes = 130;
         heartbeat.TotalSentMessageBytes = 220;
+        heartbeat.ListenBacklog = 128;
+        heartbeat.PendingAcceptCount = 4;
+        heartbeat.IdleTimeoutSeconds = 90;
+        heartbeat.NoDelay = true;
+        heartbeat.MaxPayloadLength = 4096;
+        heartbeat.SocketAsyncEventArgsAvailableCount = 7;
+        heartbeat.SocketAsyncEventArgsTotalCreatedCount = 9;
+        heartbeat.SocketAsyncEventArgsInUseCount = 3;
+        heartbeat.SocketAsyncEventArgsHighWatermarkInUseCount = 5;
+        heartbeat.SocketAsyncEventArgsGrowthCount = 1;
 
         SocketMessageFrame heartbeatFrame = ControlProtocol.CreateFrame(0, ControlMessageIds.ServerHeartbeat, heartbeat);
         Assert.IsTrue(ControlProtocol.TryDecode(heartbeatFrame, ControlMessageIds.ServerHeartbeat, out ServerHeartbeatRequest decodedHeartbeat));
@@ -108,11 +118,25 @@ public class ControlProtocolTests
         Assert.AreEqual(12, snapshot.TotalSentMessages);
         Assert.AreEqual(130, snapshot.TotalReceivedMessageBytes);
         Assert.AreEqual(220, snapshot.TotalSentMessageBytes);
+        Assert.AreEqual(128, snapshot.ListenBacklog);
+        Assert.AreEqual(4, snapshot.PendingAcceptCount);
+        Assert.AreEqual(90, snapshot.IdleTimeoutSeconds);
+        Assert.IsTrue(snapshot.NoDelay);
+        Assert.AreEqual(4096, snapshot.MaxPayloadLength);
+        Assert.AreEqual(7, snapshot.SocketAsyncEventArgsAvailableCount);
+        Assert.AreEqual(9, snapshot.SocketAsyncEventArgsTotalCreatedCount);
+        Assert.AreEqual(3, snapshot.SocketAsyncEventArgsInUseCount);
+        Assert.AreEqual(5, snapshot.SocketAsyncEventArgsHighWatermarkInUseCount);
+        Assert.AreEqual(1, snapshot.SocketAsyncEventArgsGrowthCount);
 
         SocketMessageFrame snapshotFrame = ControlProtocol.CreateFrame(0, ControlMessageIds.ServerRegistryUpsert, snapshot);
         Assert.IsTrue(ControlProtocol.TryDecode(snapshotFrame, ControlMessageIds.ServerRegistryUpsert, out BackendServerSnapshot decodedSnapshot));
         Assert.AreEqual(130, decodedSnapshot.TotalReceivedMessageBytes);
         Assert.AreEqual(220, decodedSnapshot.TotalSentMessageBytes);
+        Assert.AreEqual(128, decodedSnapshot.ListenBacklog);
+        Assert.IsTrue(decodedSnapshot.NoDelay);
+        Assert.AreEqual(4096, decodedSnapshot.MaxPayloadLength);
+        Assert.AreEqual(3, decodedSnapshot.SocketAsyncEventArgsInUseCount);
     }
 
     [TestMethod]

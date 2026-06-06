@@ -76,6 +76,16 @@ message ProtoServerHeartbeatRequest {
   int64 total_sent_messages = 18;
   int64 total_received_message_bytes = 19;
   int64 total_sent_message_bytes = 20;
+  int32 listen_backlog = 21;
+  int32 pending_accept_count = 22;
+  int32 idle_timeout_seconds = 23;
+  bool no_delay = 24;
+  int32 max_payload_length = 25;
+  int32 socket_async_event_args_available_count = 26;
+  int32 socket_async_event_args_total_created_count = 27;
+  int32 socket_async_event_args_in_use_count = 28;
+  int32 socket_async_event_args_high_watermark_in_use_count = 29;
+  int32 socket_async_event_args_growth_count = 30;
 }
 
 message ProtoServerHeartbeatAck {
@@ -162,6 +172,16 @@ message ProtoBackendServerSnapshot {
   int64 total_sent_messages = 25;
   int64 total_received_message_bytes = 26;
   int64 total_sent_message_bytes = 27;
+  int32 listen_backlog = 28;
+  int32 pending_accept_count = 29;
+  int32 idle_timeout_seconds = 30;
+  bool no_delay = 31;
+  int32 max_payload_length = 32;
+  int32 socket_async_event_args_available_count = 33;
+  int32 socket_async_event_args_total_created_count = 34;
+  int32 socket_async_event_args_in_use_count = 35;
+  int32 socket_async_event_args_high_watermark_in_use_count = 36;
+  int32 socket_async_event_args_growth_count = 37;
 }
 
 message ProtoRouteReservationMessage {
