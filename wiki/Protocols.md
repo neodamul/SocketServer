@@ -105,6 +105,8 @@ Server-Control:
 1102 SESSION_CLOSED
 ```
 
+`SERVER_HEARTBEAT` payload에는 SocketServer의 connection counters, resource usage, traffic counters가 포함됩니다. `total_received_message_bytes`와 `total_sent_message_bytes`는 healthcheck를 제외한 message frame wire bytes(`12 byte header + payload`) 누적값입니다. ControlServer는 이 값을 `BackendServerSnapshot`에 저장하고 peer snapshot 및 Dashboard status API로 전파합니다.
+
 Client-Control:
 
 ```text

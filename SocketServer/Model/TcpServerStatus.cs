@@ -42,6 +42,10 @@ public class TcpServerStatus
 
     public long TotalSentMessages { get; init; }
 
+    public long TotalReceivedMessageBytes { get; init; }
+
+    public long TotalSentMessageBytes { get; init; }
+
     public int ListenBacklog { get; init; }
 
     public bool NoDelay { get; init; }

@@ -127,6 +127,14 @@ public class ServerHeartbeatRequest
 
     public long TotalIdleTimeoutClients { get; set; }
 
+    public long TotalReceivedMessages { get; set; }
+
+    public long TotalSentMessages { get; set; }
+
+    public long TotalReceivedMessageBytes { get; set; }
+
+    public long TotalSentMessageBytes { get; set; }
+
     public DateTimeOffset SentAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
@@ -255,6 +263,22 @@ public class BackendServerSnapshot
     public ServerHealthState Health { get; set; }
 
     public ResourceUsageSnapshot ResourceUsage { get; set; } = new();
+
+    public long TotalAcceptedClients { get; set; }
+
+    public long TotalClosedClients { get; set; }
+
+    public long TotalRejectedClients { get; set; }
+
+    public long TotalIdleTimeoutClients { get; set; }
+
+    public long TotalReceivedMessages { get; set; }
+
+    public long TotalSentMessages { get; set; }
+
+    public long TotalReceivedMessageBytes { get; set; }
+
+    public long TotalSentMessageBytes { get; set; }
 
     public long Version { get; set; }
 

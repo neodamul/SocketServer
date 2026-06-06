@@ -118,6 +118,8 @@ ControlServer가 재시작되면 저장된 registry를 로드하되, heartbeat t
 Dashboard는 설정된 ControlServer 목록을 조회하고 Server Inventory에 `ControlServer` type으로 표시합니다. 여러 ControlServer가 응답하면 SocketServer `instanceId`별 최신 heartbeat snapshot을 병합해 전체 SocketServer 정보를 표시합니다. Dashboard 내부 서버 상태는 ControlServer 연결 여부와 무관하게 `Dashboard` type으로 항상 함께 표시됩니다. ControlServer가 없으면 로컬 Dashboard server 상태를 fallback cluster로 사용합니다. 일시적인 ControlServer timeout이나 unavailable 응답이 발생하면 마지막 정상 cluster snapshot과 endpoint별 counters를 유지해 서버 목록이 갑자기 사라지지 않도록 합니다. Server Inventory에서 서버 row를 선택하면 하단의 Server, Traffic, Socket Runtime, Details 패널이 선택된 서버 기준으로 갱신됩니다.
 브라우저 UI는 기본 30초 간격으로 상태 API를 갱신하고, 사용자가 refresh interval 콤보에서 5초, 10초, 30초, 60초 중 하나를 선택할 수 있습니다.
 
+SocketServer heartbeat는 accepted/closed/rejected/idle counters와 함께 received/sent message counters 및 message byte counters를 ControlServer registry snapshot에 전파합니다. Message byte counters는 healthcheck Ping/Pong을 제외한 common frame wire size(`12 byte header + payload length`) 기준 누적값이며, Dashboard의 Selected Traffic에서 서버별로 표시됩니다.
+
 표시 항목:
 
 - 전체 수용 가능 클라이언트 수

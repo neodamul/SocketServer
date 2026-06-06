@@ -309,6 +309,39 @@ public class TcpServerTests
             Assert.AreEqual(0, status.TotalIdleTimeoutClients);
             Assert.IsTrue(status.TotalReceivedMessages >= 2);
             Assert.IsTrue(status.TotalSentMessages >= 2);
+            Assert.AreEqual(0, status.TotalReceivedMessageBytes);
+            Assert.AreEqual(0, status.TotalSentMessageBytes);
+        }
+        finally
+        {
+            client.Disconnect();
+            server.End();
+        }
+    }
+
+    [TestMethod()]
+    public async Task MessageByteCountersExcludeHealthCheckFramesTest()
+    {
+        TcpServer server = new(1, "testServer", "127.0.0.1", TestPort);
+        TcpClient client = new(1, "testClient", "127.0.0.1", TestPort);
+
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+            Assert.IsTrue(client.Connect());
+
+            await SendHealthCheckAndHelloWorldAsync(client);
+
+            int requestBytes = HelloWorldProtocol.Encode(HelloWorldProtocol.CreateRequest(1)).Length;
+            int responseBytes = HelloWorldProtocol.Encode(HelloWorldProtocol.CreateResponse(1)).Length;
+            TcpServerStatus status = await WaitForStatusAsync(
+                server,
+                snapshot => snapshot.TotalReceivedMessageBytes == requestBytes &&
+                    snapshot.TotalSentMessageBytes == responseBytes);
+
+            Assert.AreEqual(requestBytes, status.TotalReceivedMessageBytes);
+            Assert.AreEqual(responseBytes, status.TotalSentMessageBytes);
         }
         finally
         {

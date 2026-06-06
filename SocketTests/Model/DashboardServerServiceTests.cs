@@ -98,6 +98,8 @@ public class DashboardServerServiceTests
         Assert.IsTrue(indexHtml.Contains("Selected Server", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("Selected Details", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("id=\"selectedServerName\"", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("id=\"receivedMessageBytes\"", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("id=\"sentMessageBytes\"", StringComparison.Ordinal));
         Assert.IsTrue(
             indexHtml.IndexOf("summary-capacity", StringComparison.Ordinal) <
                 indexHtml.IndexOf("summary-counts", StringComparison.Ordinal));
@@ -112,6 +114,9 @@ public class DashboardServerServiceTests
         Assert.IsTrue(appJs.Contains("function buildControlServerRow(server)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("renderServers(status.cluster.servers, server, status.controlServers)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("function renderSelectedServer(server)", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("totalReceivedMessageBytes: server.totalReceivedMessageBytes", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("fields.receivedMessageBytes.textContent = bytes(server.totalReceivedMessageBytes);", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("fields.sentMessageBytes.textContent = bytes(server.totalSentMessageBytes);", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("const SERVER_TYPE_ORDER = {", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("Dashboard: 0", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("ControlServer: 1", StringComparison.Ordinal));
@@ -242,6 +247,10 @@ public class DashboardServerServiceTests
         Assert.AreEqual(7, status.Cluster.TotalAvailableConnections);
         Assert.AreEqual("server-dashboard-merge", status.Cluster.Servers.First().InstanceId);
         Assert.AreEqual(ServerHealthState.Healthy, status.Cluster.Servers.First().Health);
+        Assert.AreEqual(30, status.Cluster.Servers.First().TotalReceivedMessages);
+        Assert.AreEqual(31, status.Cluster.Servers.First().TotalSentMessages);
+        Assert.AreEqual(3000, status.Cluster.Servers.First().TotalReceivedMessageBytes);
+        Assert.AreEqual(3100, status.Cluster.Servers.First().TotalSentMessageBytes);
     }
 
     [TestMethod]
@@ -421,6 +430,14 @@ public class DashboardServerServiceTests
                 StorageUsagePercent = 30,
                 CapturedAt = sentAt
             },
+            TotalAcceptedClients = currentConnections,
+            TotalClosedClients = currentConnections + 1,
+            TotalRejectedClients = currentConnections + 2,
+            TotalIdleTimeoutClients = currentConnections + 3,
+            TotalReceivedMessages = currentConnections * 10,
+            TotalSentMessages = (currentConnections * 10) + 1,
+            TotalReceivedMessageBytes = currentConnections * 1000,
+            TotalSentMessageBytes = (currentConnections * 1000) + 100,
             SentAt = sentAt
         };
     }

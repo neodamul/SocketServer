@@ -351,6 +351,10 @@ internal static class ProtobufPayloadSerializer
             TotalClosedClients = value.TotalClosedClients,
             TotalRejectedClients = value.TotalRejectedClients,
             TotalIdleTimeoutClients = value.TotalIdleTimeoutClients,
+            TotalReceivedMessages = value.TotalReceivedMessages,
+            TotalSentMessages = value.TotalSentMessages,
+            TotalReceivedMessageBytes = value.TotalReceivedMessageBytes,
+            TotalSentMessageBytes = value.TotalSentMessageBytes,
             SentAtUnixMs = ToUnixMs(value.SentAt)
         };
     }
@@ -374,6 +378,10 @@ internal static class ProtobufPayloadSerializer
             TotalClosedClients = value.TotalClosedClients,
             TotalRejectedClients = value.TotalRejectedClients,
             TotalIdleTimeoutClients = value.TotalIdleTimeoutClients,
+            TotalReceivedMessages = value.TotalReceivedMessages,
+            TotalSentMessages = value.TotalSentMessages,
+            TotalReceivedMessageBytes = value.TotalReceivedMessageBytes,
+            TotalSentMessageBytes = value.TotalSentMessageBytes,
             SentAt = FromUnixMs(value.SentAtUnixMs)
         };
     }
@@ -565,7 +573,15 @@ internal static class ProtobufPayloadSerializer
             Version = value.Version,
             StartedAtUnixMs = ToUnixMs(value.StartedAt),
             LastHeartbeatAtUnixMs = ToUnixMs(value.LastHeartbeatAt),
-            UpdatedAtUnixMs = ToUnixMs(value.UpdatedAt)
+            UpdatedAtUnixMs = ToUnixMs(value.UpdatedAt),
+            TotalAcceptedClients = value.TotalAcceptedClients,
+            TotalClosedClients = value.TotalClosedClients,
+            TotalRejectedClients = value.TotalRejectedClients,
+            TotalIdleTimeoutClients = value.TotalIdleTimeoutClients,
+            TotalReceivedMessages = value.TotalReceivedMessages,
+            TotalSentMessages = value.TotalSentMessages,
+            TotalReceivedMessageBytes = value.TotalReceivedMessageBytes,
+            TotalSentMessageBytes = value.TotalSentMessageBytes
         };
     }
 
@@ -591,7 +607,15 @@ internal static class ProtobufPayloadSerializer
             Version = value.Version,
             StartedAt = FromUnixMs(value.StartedAtUnixMs),
             LastHeartbeatAt = FromUnixMs(value.LastHeartbeatAtUnixMs),
-            UpdatedAt = FromUnixMs(value.UpdatedAtUnixMs)
+            UpdatedAt = FromUnixMs(value.UpdatedAtUnixMs),
+            TotalAcceptedClients = value.TotalAcceptedClients,
+            TotalClosedClients = value.TotalClosedClients,
+            TotalRejectedClients = value.TotalRejectedClients,
+            TotalIdleTimeoutClients = value.TotalIdleTimeoutClients,
+            TotalReceivedMessages = value.TotalReceivedMessages,
+            TotalSentMessages = value.TotalSentMessages,
+            TotalReceivedMessageBytes = value.TotalReceivedMessageBytes,
+            TotalSentMessageBytes = value.TotalSentMessageBytes
         };
     }
 

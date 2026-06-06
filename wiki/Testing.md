@@ -42,6 +42,7 @@ dotnet test SocketTests/SocketTests.csproj
 - degraded resource route exclusion
 - dashboard cluster snapshot
 - dashboard, ControlServer, SocketServer, sample client registration and message send/receive integration
+- dashboard Selected Traffic message byte counters with healthcheck exclusion
 - dashboard liveness, readiness, metrics models
 - sample client settings and client-to-client message flow
 - native Android sample protocol validation script

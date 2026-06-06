@@ -127,6 +127,8 @@ public class DashboardServerService : IDisposable
             LocalIdleTimeoutClients = status.Server.TotalIdleTimeoutClients,
             LocalReceivedMessages = status.Server.TotalReceivedMessages,
             LocalSentMessages = status.Server.TotalSentMessages,
+            LocalReceivedMessageBytes = status.Server.TotalReceivedMessageBytes,
+            LocalSentMessageBytes = status.Server.TotalSentMessageBytes,
             SocketAsyncEventArgsAvailableCount = status.Server.SocketAsyncEventArgsAvailableCount,
             SocketAsyncEventArgsInUseCount = status.Server.SocketAsyncEventArgsInUseCount,
             SocketAsyncEventArgsHighWatermarkInUseCount = status.Server.SocketAsyncEventArgsHighWatermarkInUseCount,
@@ -403,6 +405,14 @@ public class DashboardServerService : IDisposable
             CurrentConnections = status.ConnectedClientCount,
             AvailableConnections = status.AvailableConnections,
             Health = status.IsListening ? ServerHealthState.Healthy : ServerHealthState.Unhealthy,
+            TotalAcceptedClients = status.TotalAcceptedClients,
+            TotalClosedClients = status.TotalClosedClients,
+            TotalRejectedClients = status.TotalRejectedClients,
+            TotalIdleTimeoutClients = status.TotalIdleTimeoutClients,
+            TotalReceivedMessages = status.TotalReceivedMessages,
+            TotalSentMessages = status.TotalSentMessages,
+            TotalReceivedMessageBytes = status.TotalReceivedMessageBytes,
+            TotalSentMessageBytes = status.TotalSentMessageBytes,
             LastHeartbeatAt = status.UpdatedAt,
             UpdatedAt = status.UpdatedAt,
             StartedAt = status.StartedAt ?? status.UpdatedAt
@@ -533,6 +543,10 @@ public class DashboardMetrics
     public long LocalReceivedMessages { get; init; }
 
     public long LocalSentMessages { get; init; }
+
+    public long LocalReceivedMessageBytes { get; init; }
+
+    public long LocalSentMessageBytes { get; init; }
 
     public int SocketAsyncEventArgsAvailableCount { get; init; }
 

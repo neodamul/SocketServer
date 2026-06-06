@@ -205,6 +205,10 @@ public class ControlServerReporter : IDisposable
             TotalClosedClients = status.TotalClosedClients,
             TotalRejectedClients = status.TotalRejectedClients,
             TotalIdleTimeoutClients = status.TotalIdleTimeoutClients,
+            TotalReceivedMessages = status.TotalReceivedMessages,
+            TotalSentMessages = status.TotalSentMessages,
+            TotalReceivedMessageBytes = status.TotalReceivedMessageBytes,
+            TotalSentMessageBytes = status.TotalSentMessageBytes,
             SentAt = DateTimeOffset.UtcNow
         };
 

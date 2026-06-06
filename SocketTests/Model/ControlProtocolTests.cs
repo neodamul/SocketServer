@@ -83,6 +83,39 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void BackendRegistryStoresHeartbeatTrafficCountersTest()
+    {
+        BackendServerRegistry registry = new();
+        ServerHeartbeatRequest heartbeat = CreateHeartbeat(1, "server-1", 5101, 2, 10);
+        heartbeat.TotalAcceptedClients = 3;
+        heartbeat.TotalClosedClients = 1;
+        heartbeat.TotalRejectedClients = 2;
+        heartbeat.TotalIdleTimeoutClients = 1;
+        heartbeat.TotalReceivedMessages = 11;
+        heartbeat.TotalSentMessages = 12;
+        heartbeat.TotalReceivedMessageBytes = 130;
+        heartbeat.TotalSentMessageBytes = 220;
+
+        SocketMessageFrame heartbeatFrame = ControlProtocol.CreateFrame(0, ControlMessageIds.ServerHeartbeat, heartbeat);
+        Assert.IsTrue(ControlProtocol.TryDecode(heartbeatFrame, ControlMessageIds.ServerHeartbeat, out ServerHeartbeatRequest decodedHeartbeat));
+        BackendServerSnapshot snapshot = registry.Upsert(decodedHeartbeat, "control-1", new ControlHealthThreshold());
+
+        Assert.AreEqual(3, snapshot.TotalAcceptedClients);
+        Assert.AreEqual(1, snapshot.TotalClosedClients);
+        Assert.AreEqual(2, snapshot.TotalRejectedClients);
+        Assert.AreEqual(1, snapshot.TotalIdleTimeoutClients);
+        Assert.AreEqual(11, snapshot.TotalReceivedMessages);
+        Assert.AreEqual(12, snapshot.TotalSentMessages);
+        Assert.AreEqual(130, snapshot.TotalReceivedMessageBytes);
+        Assert.AreEqual(220, snapshot.TotalSentMessageBytes);
+
+        SocketMessageFrame snapshotFrame = ControlProtocol.CreateFrame(0, ControlMessageIds.ServerRegistryUpsert, snapshot);
+        Assert.IsTrue(ControlProtocol.TryDecode(snapshotFrame, ControlMessageIds.ServerRegistryUpsert, out BackendServerSnapshot decodedSnapshot));
+        Assert.AreEqual(130, decodedSnapshot.TotalReceivedMessageBytes);
+        Assert.AreEqual(220, decodedSnapshot.TotalSentMessageBytes);
+    }
+
+    [TestMethod]
     public void BackendRegistryRandomizesOnlyEqualScoreRouteCandidatesTest()
     {
         BackendServerSnapshot[] candidates =

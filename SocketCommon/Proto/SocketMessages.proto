@@ -72,6 +72,10 @@ message ProtoServerHeartbeatRequest {
   int64 total_rejected_clients = 14;
   int64 total_idle_timeout_clients = 15;
   int64 sent_at_unix_ms = 16;
+  int64 total_received_messages = 17;
+  int64 total_sent_messages = 18;
+  int64 total_received_message_bytes = 19;
+  int64 total_sent_message_bytes = 20;
 }
 
 message ProtoServerHeartbeatAck {
@@ -150,6 +154,14 @@ message ProtoBackendServerSnapshot {
   int64 started_at_unix_ms = 17;
   int64 last_heartbeat_at_unix_ms = 18;
   int64 updated_at_unix_ms = 19;
+  int64 total_accepted_clients = 20;
+  int64 total_closed_clients = 21;
+  int64 total_rejected_clients = 22;
+  int64 total_idle_timeout_clients = 23;
+  int64 total_received_messages = 24;
+  int64 total_sent_messages = 25;
+  int64 total_received_message_bytes = 26;
+  int64 total_sent_message_bytes = 27;
 }
 
 message ProtoRouteReservationMessage {

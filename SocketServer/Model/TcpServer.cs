@@ -82,6 +82,8 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     private long totalIdleTimeoutClients;
     private long totalReceivedMessages;
     private long totalSentMessages;
+    private long totalReceivedMessageBytes;
+    private long totalSentMessageBytes;
     private bool disposedValue;
 
     public event Func<ConnectionSession, Task> SessionOpenedAsync;
@@ -473,6 +475,8 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             TotalIdleTimeoutClients = Interlocked.Read(ref this.totalIdleTimeoutClients),
             TotalReceivedMessages = Interlocked.Read(ref this.totalReceivedMessages),
             TotalSentMessages = Interlocked.Read(ref this.totalSentMessages),
+            TotalReceivedMessageBytes = Interlocked.Read(ref this.totalReceivedMessageBytes),
+            TotalSentMessageBytes = Interlocked.Read(ref this.totalSentMessageBytes),
             ListenBacklog = SocketFactory.ListenBacklog,
             NoDelay = SocketFactory.NoDelay,
             MaxPayloadLength = SocketMessageFrame.MaxPayloadLength,
@@ -694,6 +698,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 {
                     session.MarkReceived(frame.ClientId);
                     Interlocked.Increment(ref this.totalReceivedMessages);
+                    this.AddReceivedMessageBytes(frame);
                     await this.EnqueueServerRelayReceiveAsync(session, relayMessage);
                     continue;
                 }
@@ -701,6 +706,11 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 session.MarkReceived(frame.ClientId);
                 this.UpdateClientIndex(session);
                 Interlocked.Increment(ref this.totalReceivedMessages);
+                if (!HealthCheckProtocol.TryDecode(frame, out _))
+                {
+                    this.AddReceivedMessageBytes(frame);
+                }
+
                 bool shouldReportOpened = !session.HasReportedOpened;
                 if (!session.HasReportedOpened)
                 {
@@ -838,13 +848,17 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         if (HelloWorldProtocol.TryDecodeRequest(frame, out HelloWorldRequest helloWorldRequest))
         {
+            SocketMessageFrame.TryDecode(
+                HelloWorldProtocol.Encode(HelloWorldProtocol.CreateResponse(helloWorldRequest.ClientId)),
+                out SocketMessageFrame responseFrame);
             sent = await this.EnqueueClientResponseAsync(
                 session,
-                HelloWorldProtocol.Encode(HelloWorldProtocol.CreateResponse(helloWorldRequest.ClientId)),
+                responseFrame,
                 "HelloWorldResponse");
             if (sent)
             {
                 Interlocked.Increment(ref this.totalSentMessages);
+                this.AddSentMessageBytes(responseFrame);
             }
 
             return sent;
@@ -854,21 +868,23 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         {
             session.MarkReceived(registerRequest.ClientId);
             this.UpdateClientIndex(session);
+            SocketMessageFrame ackFrame = ClientMessageProtocol.CreateFrame(
+                registerRequest.ClientId,
+                ClientMessageIds.ClientRegisterAck,
+                new ClientRegisterAck
+                {
+                    ClientId = registerRequest.ClientId,
+                    Success = registerRequest.ClientId > 0,
+                    ErrorMessage = registerRequest.ClientId == 0 ? "ClientId must be greater than zero." : ""
+                });
             sent = await this.EnqueueClientResponseAsync(
                 session,
-                ClientMessageProtocol.CreateFrame(
-                    registerRequest.ClientId,
-                    ClientMessageIds.ClientRegisterAck,
-                    new ClientRegisterAck
-                    {
-                        ClientId = registerRequest.ClientId,
-                        Success = registerRequest.ClientId > 0,
-                        ErrorMessage = registerRequest.ClientId == 0 ? "ClientId must be greater than zero." : ""
-                    }),
+                ackFrame,
                 "ClientRegisterAck");
             if (sent)
             {
                 Interlocked.Increment(ref this.totalSentMessages);
+                this.AddSentMessageBytes(ackFrame);
             }
 
             return sent;
@@ -1089,16 +1105,18 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             return false;
         }
 
+        SocketMessageFrame deliveryFrame = ClientMessageProtocol.CreateFrame(
+            request.TargetClientId,
+            ClientMessageIds.ClientMessageDeliver,
+            ClientMessageProtocol.CreateDelivery(request));
         bool sent = await this.EnqueueClientResponseAsync(
             targetSession,
-            ClientMessageProtocol.CreateFrame(
-                request.TargetClientId,
-                ClientMessageIds.ClientMessageDeliver,
-                ClientMessageProtocol.CreateDelivery(request)),
+            deliveryFrame,
             "ClientMessageDeliver");
         if (sent)
         {
             Interlocked.Increment(ref this.totalSentMessages);
+            this.AddSentMessageBytes(deliveryFrame);
             RelayLogger.Debug($"Local client delivery sent. instanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, connectionId={targetSession.Id}");
             return true;
         }
@@ -1362,16 +1380,18 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     private async Task<bool> SendClientMessageAckAsync(ConnectionSession sourceSession, ClientMessageSendRequest request, string targetInstanceId)
     {
+        SocketMessageFrame ackFrame = ClientMessageProtocol.CreateFrame(
+            request.SourceClientId,
+            ClientMessageIds.ClientMessageAck,
+            CreateClientMessageAck(request, targetInstanceId));
         bool sent = await this.EnqueueClientResponseAsync(
             sourceSession,
-            ClientMessageProtocol.CreateFrame(
-                request.SourceClientId,
-                ClientMessageIds.ClientMessageAck,
-                CreateClientMessageAck(request, targetInstanceId)),
+            ackFrame,
             "ClientMessageAck");
         if (sent)
         {
             Interlocked.Increment(ref this.totalSentMessages);
+            this.AddSentMessageBytes(ackFrame);
         }
 
         return sent;
@@ -1383,19 +1403,36 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         string errorCode,
         string errorMessage)
     {
+        SocketMessageFrame errorFrame = ClientMessageProtocol.CreateFrame(
+            request.SourceClientId,
+            ClientMessageIds.ClientMessageError,
+            CreateClientMessageError(request, errorCode, errorMessage));
         bool sent = await this.EnqueueClientResponseAsync(
             sourceSession,
-            ClientMessageProtocol.CreateFrame(
-                request.SourceClientId,
-                ClientMessageIds.ClientMessageError,
-                CreateClientMessageError(request, errorCode, errorMessage)),
+            errorFrame,
             "ClientMessageError");
         if (sent)
         {
             Interlocked.Increment(ref this.totalSentMessages);
+            this.AddSentMessageBytes(errorFrame);
         }
 
         return sent;
+    }
+
+    private void AddReceivedMessageBytes(SocketMessageFrame frame)
+    {
+        Interlocked.Add(ref this.totalReceivedMessageBytes, GetFrameWireBytes(frame));
+    }
+
+    private void AddSentMessageBytes(SocketMessageFrame frame)
+    {
+        Interlocked.Add(ref this.totalSentMessageBytes, GetFrameWireBytes(frame));
+    }
+
+    private static int GetFrameWireBytes(SocketMessageFrame frame)
+    {
+        return SocketMessageFrame.HeaderLength + (frame?.Payload?.Length ?? 0);
     }
 
     private bool TryAcquireConnectionSlot()

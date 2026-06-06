@@ -12,7 +12,9 @@ const fields = {
   rejectedClients: document.getElementById("rejectedClients"),
   idleTimeoutClients: document.getElementById("idleTimeoutClients"),
   receivedMessages: document.getElementById("receivedMessages"),
+  receivedMessageBytes: document.getElementById("receivedMessageBytes"),
   sentMessages: document.getElementById("sentMessages"),
+  sentMessageBytes: document.getElementById("sentMessageBytes"),
   saeaPool: document.getElementById("saeaPool"),
   totalMaxConnections: document.getElementById("totalMaxConnections"),
   totalCurrentConnections: document.getElementById("totalCurrentConnections"),
@@ -81,7 +83,28 @@ function durationSeconds(value) {
 }
 
 function bytes(value) {
-  return value === null || value === undefined ? "-" : `${value} bytes`;
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+
+  const size = Number(value);
+  if (!Number.isFinite(size)) {
+    return "-";
+  }
+
+  if (size >= 1024 * 1024 * 1024) {
+    return `${Math.round((size / 1024 / 1024 / 1024) * 10) / 10} GB`;
+  }
+
+  if (size >= 1024 * 1024) {
+    return `${Math.round((size / 1024 / 1024) * 10) / 10} MB`;
+  }
+
+  if (size >= 1024) {
+    return `${Math.round((size / 1024) * 10) / 10} KB`;
+  }
+
+  return `${size} bytes`;
 }
 
 function serverRowKey(server) {
@@ -119,6 +142,8 @@ function buildDashboardServerRow(server) {
     totalIdleTimeoutClients: server.totalIdleTimeoutClients,
     totalReceivedMessages: server.totalReceivedMessages,
     totalSentMessages: server.totalSentMessages,
+    totalReceivedMessageBytes: server.totalReceivedMessageBytes,
+    totalSentMessageBytes: server.totalSentMessageBytes,
     listenBacklog: server.listenBacklog,
     pendingAcceptCount: server.pendingAcceptCount,
     idleTimeoutSeconds: server.idleTimeoutSeconds,
@@ -156,12 +181,14 @@ function buildSocketServerRow(server) {
     resourceUsage: server.resourceUsage || null,
     isListening: server.health === 1 || server.health === "Healthy",
     isAcceptLoopRunning: server.health === 1 || server.health === "Healthy",
-    totalAcceptedClients: "-",
-    totalClosedClients: "-",
-    totalRejectedClients: "-",
-    totalIdleTimeoutClients: "-",
-    totalReceivedMessages: "-",
-    totalSentMessages: "-",
+    totalAcceptedClients: server.totalAcceptedClients ?? "-",
+    totalClosedClients: server.totalClosedClients ?? "-",
+    totalRejectedClients: server.totalRejectedClients ?? "-",
+    totalIdleTimeoutClients: server.totalIdleTimeoutClients ?? "-",
+    totalReceivedMessages: server.totalReceivedMessages ?? "-",
+    totalSentMessages: server.totalSentMessages ?? "-",
+    totalReceivedMessageBytes: server.totalReceivedMessageBytes ?? "-",
+    totalSentMessageBytes: server.totalSentMessageBytes ?? "-",
     listenBacklog: "-",
     pendingAcceptCount: "-",
     idleTimeoutSeconds: "-",
@@ -196,6 +223,8 @@ function buildControlServerRow(server) {
     totalIdleTimeoutClients: "-",
     totalReceivedMessages: "-",
     totalSentMessages: "-",
+    totalReceivedMessageBytes: "-",
+    totalSentMessageBytes: "-",
     listenBacklog: "-",
     pendingAcceptCount: "-",
     idleTimeoutSeconds: "-",
@@ -271,7 +300,9 @@ function renderSelectedServer(server) {
     fields.rejectedClients.textContent = "-";
     fields.idleTimeoutClients.textContent = "-";
     fields.receivedMessages.textContent = "-";
+    fields.receivedMessageBytes.textContent = "-";
     fields.sentMessages.textContent = "-";
+    fields.sentMessageBytes.textContent = "-";
     fields.saeaPool.textContent = "-";
     fields.address.textContent = "-";
     fields.backlog.textContent = "-";
@@ -298,7 +329,9 @@ function renderSelectedServer(server) {
   fields.rejectedClients.textContent = displayValue(server.totalRejectedClients);
   fields.idleTimeoutClients.textContent = displayValue(server.totalIdleTimeoutClients);
   fields.receivedMessages.textContent = displayValue(server.totalReceivedMessages);
+  fields.receivedMessageBytes.textContent = bytes(server.totalReceivedMessageBytes);
   fields.sentMessages.textContent = displayValue(server.totalSentMessages);
+  fields.sentMessageBytes.textContent = bytes(server.totalSentMessageBytes);
   fields.saeaPool.textContent = displayValue(server.socketAsyncEventArgsAvailableCount);
   fields.address.textContent = `${server.host}:${server.port}`;
   fields.backlog.textContent = displayValue(server.listenBacklog);
