@@ -183,7 +183,8 @@ public class DashboardServerService : IDisposable
                         return status;
                     }
 
-                    if (!this.lastHealthyControlStatusByEndpoint.TryGetValue(key, out DashboardControlServerStatus cached))
+                    DashboardControlServerStatus? cached = null;
+                    if (!this.lastHealthyControlStatusByEndpoint.TryGetValue(key, out cached))
                     {
                         return status;
                     }

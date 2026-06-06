@@ -962,7 +962,7 @@ public static class LocalCertificateStore
             rootCertificate,
             DateTimeOffset.UtcNow.AddDays(-1),
             DateTimeOffset.UtcNow.AddYears(SecureSocketConnection.ModuleCertificateLifetimeYears),
-            CreateSerialNumber(moduleName));
+            CreateSerialNumber());
         return certificate.CopyWithPrivateKey(ecdsa);
     }
 
@@ -1026,7 +1026,7 @@ public static class LocalCertificateStore
         return false;
     }
 
-    private static byte[] CreateSerialNumber(string moduleName)
+    private static byte[] CreateSerialNumber()
     {
         byte[] serialNumber = new byte[16];
         RandomNumberGenerator.Fill(serialNumber);
