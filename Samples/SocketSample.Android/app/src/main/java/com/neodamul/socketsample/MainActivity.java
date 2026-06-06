@@ -15,7 +15,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
-    private final ExecutorService commandExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private final ExecutorService receiveExecutor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private SampleConfig config;
@@ -30,8 +30,10 @@ public final class MainActivity extends Activity {
     private CheckBox useControlServer;
     private CheckBox allowUntrusted;
     private TextView status;
-    private volatile boolean registered;
-    private volatile boolean receiveLoopRunning;
+    private boolean registered;
+    private int receiveLoopGeneration;
+    private String lastReceived = "";
+    private String lastError = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -84,6 +86,7 @@ public final class MainActivity extends Activity {
         root.addView(button("Connect", () -> run("Connected and registered", () -> {
             stopReceiveLoop();
             client.connect();
+            client.register();
             registered = true;
             startReceiveLoop();
         })));
@@ -97,6 +100,7 @@ public final class MainActivity extends Activity {
             stopReceiveLoop();
             client.close();
             registered = false;
+            lastError = "";
             showStatus("Disconnected");
         }));
         root.addView(status);
@@ -140,38 +144,89 @@ public final class MainActivity extends Activity {
     private void run(String successStatus, ThrowingRunnable action) {
         readConfig();
         client.update(config);
-        commandExecutor.execute(() -> {
+        executor.execute(() -> {
             try {
                 action.run();
-                mainHandler.post(() -> showStatus(successStatus));
+                mainHandler.post(() -> {
+                    lastError = "";
+                    showStatus(successStatus);
+                });
             } catch (Exception exception) {
-                mainHandler.post(() -> showStatus("Failed: " + exception.getMessage()));
+                mainHandler.post(() -> {
+                    lastError = exception.getMessage();
+                    showStatus("Failed");
+                });
             }
         });
     }
 
     private void startReceiveLoop() {
-        receiveLoopRunning = true;
-        receiveExecutor.execute(() -> {
-            while (receiveLoopRunning && client.isConnected()) {
-                try {
-                    String line = client.receiveEvent();
-                    if (!line.isEmpty()) {
-                        mainHandler.post(() -> showStatus(line));
-                    }
-                } catch (Exception exception) {
-                    if (receiveLoopRunning) {
-                        mainHandler.post(() -> showStatus("Receive loop stopped: " + exception.getMessage()));
-                    }
+        int generation;
+        synchronized (this) {
+            receiveLoopGeneration++;
+            generation = receiveLoopGeneration;
+        }
 
-                    receiveLoopRunning = false;
-                }
-            }
-        });
+        receiveExecutor.execute(() -> runReceiveLoop(generation));
     }
 
     private void stopReceiveLoop() {
-        receiveLoopRunning = false;
+        synchronized (this) {
+            receiveLoopGeneration++;
+        }
+    }
+
+    private boolean isActiveReceiveLoop(int generation) {
+        synchronized (this) {
+            return generation == receiveLoopGeneration;
+        }
+    }
+
+    private void runReceiveLoop(int generation) {
+        while (isActiveReceiveLoop(generation)) {
+            try {
+                NativeSocketClient.ClientEvent event = client.receiveEvent();
+                if (!isActiveReceiveLoop(generation)) {
+                    return;
+                }
+
+                mainHandler.post(() -> handleClientEvent(generation, event));
+            } catch (Exception exception) {
+                if (isActiveReceiveLoop(generation)) {
+                    mainHandler.post(() -> {
+                        if (!isActiveReceiveLoop(generation)) {
+                            return;
+                        }
+
+                        registered = false;
+                        lastError = exception.getMessage();
+                        showStatus("Receive loop stopped");
+                    });
+                }
+
+                return;
+            }
+        }
+    }
+
+    private void handleClientEvent(int generation, NativeSocketClient.ClientEvent event) {
+        if (!isActiveReceiveLoop(generation)) {
+            return;
+        }
+
+        if (event.type == NativeSocketClient.ClientEvent.TYPE_DELIVERY) {
+            lastReceived = event.delivery.sourceClientId + ": " + event.delivery.content;
+            lastError = "";
+            showStatus("Message received");
+        } else if (event.type == NativeSocketClient.ClientEvent.TYPE_ACK) {
+            lastError = event.ack.delivered ? "" : "Message was not delivered.";
+            showStatus(event.ack.delivered
+                ? "Message delivered to " + event.ack.targetClientId
+                : "Message not delivered to " + event.ack.targetClientId);
+        } else if (event.type == NativeSocketClient.ClientEvent.TYPE_ERROR) {
+            lastError = event.errorMessage;
+            showStatus("Message failed");
+        }
     }
 
     private void showStatus(String line) {
@@ -179,6 +234,8 @@ public final class MainActivity extends Activity {
             "Status: " + line + "\n" +
             "Connected: " + client.isConnected() + "\n" +
             "Registered: " + registered + "\n" +
+            "Last Received: " + lastReceived + "\n" +
+            "Last Error: " + lastError + "\n" +
             "Client ID: " + config.clientId + "\n" +
             "Endpoint: " + config.host + ":" + config.port + "\n" +
             "Use ControlServer: " + config.useControlServer + "\n" +
@@ -189,8 +246,8 @@ public final class MainActivity extends Activity {
     protected void onDestroy() {
         stopReceiveLoop();
         client.close();
-        commandExecutor.shutdownNow();
         receiveExecutor.shutdownNow();
+        executor.shutdownNow();
         super.onDestroy();
     }
 

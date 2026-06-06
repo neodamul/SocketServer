@@ -165,29 +165,6 @@ public class SocketSampleClientTests
     }
 
     [TestMethod]
-    public void AndroidNativeSampleUsesConnectRegisterAndReceiveLoopTest()
-    {
-        string root = FindRepositoryRoot();
-        string activity = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/MainActivity.java"));
-        string client = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/NativeSocketClient.java"));
-        string config = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/SampleConfig.java"));
-        string rawConfig = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/res/raw/config.json"));
-
-        Assert.IsTrue(config.Contains("useControlServer", StringComparison.Ordinal));
-        Assert.IsTrue(rawConfig.Contains("\"useControlServer\": true", StringComparison.Ordinal));
-        Assert.IsTrue(activity.Contains("Use ControlServer route", StringComparison.Ordinal));
-        Assert.IsTrue(activity.Contains("Connected and registered", StringComparison.Ordinal));
-        Assert.IsTrue(activity.Contains("startReceiveLoop()", StringComparison.Ordinal));
-        Assert.IsTrue(activity.Contains("receiveExecutor", StringComparison.Ordinal));
-        Assert.IsFalse(activity.Contains("button(\"Register\"", StringComparison.Ordinal));
-        Assert.IsFalse(activity.Contains("button(\"Receive\"", StringComparison.Ordinal));
-        Assert.IsTrue(client.Contains("resolveConnectionTarget", StringComparison.Ordinal));
-        Assert.IsTrue(client.Contains("ProtoCodec.routeRequest", StringComparison.Ordinal));
-        Assert.IsTrue(client.Contains("register();", StringComparison.Ordinal));
-        Assert.IsTrue(client.Contains("receiveEvent()", StringComparison.Ordinal));
-    }
-
-    [TestMethod]
     public void DotNetSampleWebUiUsesDynamicPortByDefaultTest()
     {
         string root = FindRepositoryRoot();
@@ -236,6 +213,29 @@ public class SocketSampleClientTests
         await process.WaitForExitAsync();
 
         Assert.AreEqual(0, process.ExitCode, output + error);
+    }
+
+    [TestMethod]
+    public void AndroidNativeSampleUsesControlRouteHostFallbackAndReceiveLoopGenerationTest()
+    {
+        string root = FindRepositoryRoot();
+        string config = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/res/raw/config.json"));
+        string sampleConfig = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/SampleConfig.java"));
+        string client = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/NativeSocketClient.java"));
+        string codec = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/ProtoCodec.java"));
+        string activity = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Android/app/src/main/java/com/neodamul/socketsample/MainActivity.java"));
+        string readme = File.ReadAllText(Path.Combine(root, "Samples/README.md"));
+
+        Assert.IsTrue(config.Contains("\"useControlServer\": true", StringComparison.Ordinal));
+        Assert.IsTrue(sampleConfig.Contains("useControlServer", StringComparison.Ordinal));
+        Assert.IsTrue(client.Contains("ProtoCodec.resolveRouteHost(route.host, config.host)", StringComparison.Ordinal));
+        Assert.IsTrue(codec.Contains("isLoopbackHost", StringComparison.Ordinal));
+        Assert.IsTrue(codec.Contains("\"localhost\".equals(value)", StringComparison.Ordinal));
+        Assert.IsTrue(codec.Contains("\"::1\".equals(value)", StringComparison.Ordinal));
+        Assert.IsTrue(activity.Contains("receiveLoopGeneration", StringComparison.Ordinal));
+        Assert.IsTrue(activity.Contains("isActiveReceiveLoop(generation)", StringComparison.Ordinal));
+        Assert.IsFalse(activity.Contains("receiveLoopRunning", StringComparison.Ordinal));
+        Assert.IsTrue(readme.Contains("원래 ControlServer 접속 host(기본 `10.0.2.2`)로 치환", StringComparison.Ordinal));
     }
 
     private static SampleClientSettings CreateSettings(int clientId, int port)

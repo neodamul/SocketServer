@@ -6,7 +6,6 @@ SRC_DIR="$ROOT_DIR/app/src/main/java/com/neodamul/socketsample"
 BUILD_DIR="$ROOT_DIR/build/validation"
 CLASS_DIR="$BUILD_DIR/classes"
 TEST_SRC="$BUILD_DIR/AndroidProtocolValidation.java"
-CONFIG_STUB_SRC="$BUILD_DIR/SampleConfig.java"
 SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 
 if [ -z "$SDK_ROOT" ] && [ -d "/opt/homebrew/share/android-commandlinetools/platforms" ]; then
@@ -19,34 +18,14 @@ fi
 
 mkdir -p "$CLASS_DIR"
 
-cat > "$CONFIG_STUB_SRC" <<'JAVA'
-package com.neodamul.socketsample;
-
-public final class SampleConfig {
-    public int clientId = 1;
-    public String host = "127.0.0.1";
-    public int port = 10000;
-    public boolean useControlServer = true;
-    public int receiveTimeoutSeconds = 10;
-    public boolean allowUntrustedLocalCertificate = true;
-    public String transportMode = "Tls";
-    public String messageEncryptionSecret = "";
-
-    public boolean useMessageEncryption() {
-        return "MessageEncryption".equalsIgnoreCase(transportMode) ||
-            "Encrypted".equalsIgnoreCase(transportMode) ||
-            "PlainEncrypted".equalsIgnoreCase(transportMode);
-    }
-}
-JAVA
-
-javac -d "$CLASS_DIR" "$CONFIG_STUB_SRC" "$SRC_DIR/SocketFrame.java" "$SRC_DIR/ProtoCodec.java" "$SRC_DIR/SocketMessageProtector.java" "$SRC_DIR/NativeSocketClient.java"
+javac -d "$CLASS_DIR" "$SRC_DIR/SocketFrame.java" "$SRC_DIR/ProtoCodec.java" "$SRC_DIR/SocketMessageProtector.java"
 
 cat > "$TEST_SRC" <<'JAVA'
 import com.neodamul.socketsample.ProtoCodec;
 import com.neodamul.socketsample.SocketFrame;
 import com.neodamul.socketsample.SocketMessageProtector;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.nio.charset.StandardCharsets;
 
@@ -58,19 +37,11 @@ public final class AndroidProtocolValidation {
             throw new IllegalStateException("Client message protobuf payload did not round-trip.");
         }
 
-        byte[] routeRequest = ProtoCodec.routeRequest(101);
-        if (routeRequest.length == 0) {
-            throw new IllegalStateException("Route request payload was not encoded.");
-        }
-
-        byte[] routeResponse = new byte[] {
-            0x08, 0x01,
-            0x2a, 0x09, 0x31, 0x32, 0x37, 0x2e, 0x30, 0x2e, 0x30, 0x2e, 0x31,
-            0x30, (byte)0xF1, 0x4E
-        };
-        ProtoCodec.RouteTarget route = ProtoCodec.decodeRouteResponse(routeResponse);
-        if (!route.success || !"127.0.0.1".equals(route.host) || route.port != 10097) {
-            throw new IllegalStateException("Route response protobuf payload did not decode.");
+        byte[] routeResponsePayload = routeResponse("127.0.0.1", 10001);
+        ProtoCodec.RouteTarget route = ProtoCodec.decodeRouteResponse(routeResponsePayload);
+        String resolvedHost = ProtoCodec.resolveRouteHost(route.host, "10.0.2.2");
+        if (!route.success || route.port != 10001 || !"10.0.2.2".equals(resolvedHost)) {
+            throw new IllegalStateException("Android route response loopback host was not resolved through the ControlServer host.");
         }
 
         SocketFrame frame = new SocketFrame(101, 2002, "payload".getBytes(StandardCharsets.UTF_8));
@@ -85,6 +56,36 @@ public final class AndroidProtocolValidation {
         if (decrypted.clientId != 101 || decrypted.messageId != 2002 || !"payload".equals(new String(decrypted.payload, StandardCharsets.UTF_8))) {
             throw new IllegalStateException("Protected socket frame did not round-trip.");
         }
+    }
+
+    private static byte[] routeResponse(String host, long port) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        writeVarintField(output, 1, 1);
+        writeStringField(output, 5, host);
+        writeVarintField(output, 6, port);
+        return output.toByteArray();
+    }
+
+    private static void writeVarintField(ByteArrayOutputStream output, int field, long value) {
+        writeVarint(output, field << 3);
+        writeVarint(output, value);
+    }
+
+    private static void writeStringField(ByteArrayOutputStream output, int field, String value) {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        writeVarint(output, (field << 3) | 2);
+        writeVarint(output, bytes.length);
+        output.write(bytes, 0, bytes.length);
+    }
+
+    private static void writeVarint(ByteArrayOutputStream output, long value) {
+        long remaining = value;
+        while (remaining >= 0x80) {
+            output.write((int)((remaining & 0x7f) | 0x80));
+            remaining >>= 7;
+        }
+
+        output.write((int)remaining);
     }
 }
 JAVA

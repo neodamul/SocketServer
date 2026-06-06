@@ -3,6 +3,7 @@ package com.neodamul.socketsample;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -10,17 +11,30 @@ public final class ProtoCodec {
     private ProtoCodec() {
     }
 
-    public static byte[] clientRegister(long clientId) {
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        writeVarintField(output, 1, clientId);
-        writeVarintField(output, 2, System.currentTimeMillis());
-        return output.toByteArray();
-    }
-
     public static byte[] routeRequest(long clientId) {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         writeVarintField(output, 1, clientId);
         writeStringField(output, 3, "MostAvailableConnections");
+        return output.toByteArray();
+    }
+
+    public static RouteTarget decodeRouteResponse(byte[] payload) {
+        Parsed parsed = parse(payload);
+        return new RouteTarget(
+            parsed.bools.getOrDefault(1, false),
+            parsed.strings.getOrDefault(5, ""),
+            (int)(long)parsed.varints.getOrDefault(6, 0L),
+            parsed.strings.getOrDefault(8, "Route failed."));
+    }
+
+    public static String resolveRouteHost(String routeHost, String controlHost) {
+        return isLoopbackHost(routeHost) ? controlHost : routeHost;
+    }
+
+    public static byte[] clientRegister(long clientId) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        writeVarintField(output, 1, clientId);
+        writeVarintField(output, 2, System.currentTimeMillis());
         return output.toByteArray();
     }
 
@@ -43,21 +57,15 @@ public final class ProtoCodec {
         return parse(payload).bools.getOrDefault(4, false);
     }
 
-    public static long decodeAckTargetClientId(byte[] payload) {
-        return parse(payload).varints.getOrDefault(3, 0L);
+    public static ClientAck decodeAck(byte[] payload) {
+        Parsed parsed = parse(payload);
+        return new ClientAck(
+            parsed.varints.getOrDefault(3, 0L),
+            parsed.bools.getOrDefault(4, false));
     }
 
     public static String decodeErrorMessage(byte[] payload) {
         return parse(payload).strings.getOrDefault(5, "Message failed.");
-    }
-
-    public static RouteTarget decodeRouteResponse(byte[] payload) {
-        Parsed parsed = parse(payload);
-        return new RouteTarget(
-            parsed.bools.getOrDefault(1, false),
-            parsed.strings.getOrDefault(5, ""),
-            parsed.varints.getOrDefault(6, 0L),
-            parsed.strings.getOrDefault(8, "Route failed."));
     }
 
     public static ClientDelivery decodeDelivery(byte[] payload) {
@@ -117,6 +125,19 @@ public final class ProtoCodec {
         output.write((int)remaining);
     }
 
+    private static boolean isLoopbackHost(String host) {
+        if (host == null) {
+            return false;
+        }
+
+        String value = host.trim().toLowerCase(Locale.ROOT);
+        return "localhost".equals(value) ||
+            "::1".equals(value) ||
+            "[::1]".equals(value) ||
+            "127.0.0.1".equals(value) ||
+            value.startsWith("127.");
+    }
+
     private static long readVarint(byte[] data, int[] offset) {
         int shift = 0;
         long result = 0;
@@ -139,6 +160,30 @@ public final class ProtoCodec {
         final Map<Integer, String> strings = new HashMap<>();
     }
 
+    public static final class RouteTarget {
+        public final boolean success;
+        public final String host;
+        public final int port;
+        public final String errorMessage;
+
+        RouteTarget(boolean success, String host, int port, String errorMessage) {
+            this.success = success;
+            this.host = host;
+            this.port = port;
+            this.errorMessage = errorMessage;
+        }
+    }
+
+    public static final class ClientAck {
+        public final long targetClientId;
+        public final boolean delivered;
+
+        ClientAck(long targetClientId, boolean delivered) {
+            this.targetClientId = targetClientId;
+            this.delivered = delivered;
+        }
+    }
+
     public static final class ClientDelivery {
         public final long sourceClientId;
         public final long targetClientId;
@@ -148,20 +193,6 @@ public final class ProtoCodec {
             this.sourceClientId = sourceClientId;
             this.targetClientId = targetClientId;
             this.content = content;
-        }
-    }
-
-    public static final class RouteTarget {
-        public final boolean success;
-        public final String host;
-        public final long port;
-        public final String errorMessage;
-
-        RouteTarget(boolean success, String host, long port, String errorMessage) {
-            this.success = success;
-            this.host = host;
-            this.port = port;
-            this.errorMessage = errorMessage;
         }
     }
 }
