@@ -295,7 +295,7 @@ public class DashboardServerServiceTests
             TransportMode = "Tls",
             TlsProtocol = "Auto",
             RequireTls13 = false,
-            AuthenticationTimeoutMilliseconds = 5000
+            AuthenticationTimeoutMilliseconds = 30000
         };
         SecureSocketConnection.Configure(security);
 
@@ -368,15 +368,15 @@ public class DashboardServerServiceTests
         Assert.AreEqual(8, clientStatus.Cluster.TotalAvailableConnections);
         Assert.AreEqual("server-dashboard-e2e", clientStatus.Cluster.Servers.First().InstanceId);
 
-        Task<ClientMessageDelivery?> receiveTask = targetClient.ReceiveMessageAsync();
         bool sent = await sourceClient.SendMessageAsync(702, "dashboard-e2e-message");
-        ClientMessageDelivery? delivery = await receiveTask;
 
         Assert.IsTrue(sent);
-        Assert.IsNotNull(delivery);
-        Assert.AreEqual((uint)701, delivery!.SourceClientId);
-        Assert.AreEqual((uint)702, delivery.TargetClientId);
-        Assert.AreEqual("dashboard-e2e-message", delivery.Content);
+        await WaitForSampleStateAsync(
+            targetClient,
+            state => state.LastReceivedMessage == "701: dashboard-e2e-message");
+        await WaitForSampleStateAsync(
+            sourceClient,
+            state => state.Status == "Message delivered to 702");
         Assert.AreEqual("Message delivered to 702", sourceClient.GetState().Status);
         Assert.AreEqual("Message received", targetClient.GetState().Status);
         Assert.AreEqual("701: dashboard-e2e-message", targetClient.GetState().LastReceivedMessage);
@@ -445,6 +445,31 @@ public class DashboardServerServiceTests
 
         Assert.Fail("Timed out waiting for dashboard status.");
         return status;
+    }
+
+    private static async Task WaitForSampleStateAsync(
+        SampleSocketClientSession client,
+        Func<SampleClientState, bool> predicate)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        SampleClientState state;
+        do
+        {
+            state = client.GetState();
+            if (predicate(state))
+            {
+                return;
+            }
+
+            await Task.Delay(25);
+        }
+        while (DateTimeOffset.UtcNow < deadline);
+
+        state = client.GetState();
+        Assert.Fail(
+            $"Timed out waiting for sample client state. " +
+            $"clientId={state.ClientId}, status={state.Status}, " +
+            $"lastReceived={state.LastReceivedMessage}, error={state.LastError}");
     }
 
     private static string FindSolutionRoot()

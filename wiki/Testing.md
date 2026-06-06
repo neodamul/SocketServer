@@ -47,6 +47,8 @@ dotnet test SocketTests/SocketTests.csproj
 - native Android sample protocol validation script
 - project log4net configuration and separate relay log appender
 
+통합 테스트는 실제 TCP/TLS 서버와 클라이언트를 실행하므로 테스트 클래스가 전역 socket/security 설정을 바꾸면 클래스 초기화에서 기본값을 복원해야 합니다. 샘플 클라이언트 테스트는 `Connect` 이후 자동 register와 background receive loop가 동작한다는 전제를 사용하며, 수신 검증은 manual receive 반환값이 아니라 sample state의 `LastReceivedMessage`/`Status` 갱신을 기다립니다.
+
 ## Load Test
 
 대량 접속 검증은 `SocketLoadTest`에서 수행합니다.

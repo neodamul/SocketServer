@@ -646,27 +646,22 @@ public class ControlServerIntegrationTests
         await WaitForClientLocationCountAsync(controlA, 4, timeoutSeconds: 45);
         await WaitForClientLocationCountAsync(controlB, 4, timeoutSeconds: 45);
 
-        Task<ClientMessageDelivery?> iosReceiveTask = iosClient.ReceiveMessageAsync();
-        Task<ClientMessageDelivery?> macosReceiveTask = macosClient.ReceiveMessageAsync();
         Task<bool> dotnetSendTask = dotnetClient.SendMessageAsync(902, "dotnet-to-ios", ttlSeconds: 30);
         Task<bool> androidSendTask = androidClient.SendMessageAsync(903, "android-to-macos", ttlSeconds: 30);
 
         Assert.IsTrue(await WithTimeoutAsync(dotnetSendTask, timeoutSeconds: 30));
         Assert.IsTrue(await WithTimeoutAsync(androidSendTask, timeoutSeconds: 30));
 
-        ClientMessageDelivery? iosDelivery = await WithTimeoutAsync(iosReceiveTask, timeoutSeconds: 30);
-        ClientMessageDelivery? macosDelivery = await WithTimeoutAsync(macosReceiveTask, timeoutSeconds: 30);
-
-        Assert.IsNotNull(iosDelivery);
-        Assert.AreEqual((uint)901, iosDelivery!.SourceClientId);
-        Assert.AreEqual((uint)902, iosDelivery.TargetClientId);
-        Assert.AreEqual("dotnet-to-ios", iosDelivery.Content);
+        await WaitForSampleStateAsync(
+            iosClient,
+            state => state.LastReceivedMessage == "901: dotnet-to-ios",
+            timeoutSeconds: 30);
         Assert.AreEqual("901: dotnet-to-ios", iosClient.GetState().LastReceivedMessage);
 
-        Assert.IsNotNull(macosDelivery);
-        Assert.AreEqual((uint)904, macosDelivery!.SourceClientId);
-        Assert.AreEqual((uint)903, macosDelivery.TargetClientId);
-        Assert.AreEqual("android-to-macos", macosDelivery.Content);
+        await WaitForSampleStateAsync(
+            macosClient,
+            state => state.LastReceivedMessage == "904: android-to-macos",
+            timeoutSeconds: 30);
         Assert.AreEqual("904: android-to-macos", macosClient.GetState().LastReceivedMessage);
 
         ClusterStatusSnapshot finalStatus = await WaitForClusterAsync(
@@ -1010,6 +1005,32 @@ public class ControlServerIntegrationTests
         while (DateTimeOffset.UtcNow < deadline);
 
         Assert.Fail("Timed out waiting for condition.");
+    }
+
+    private static async Task WaitForSampleStateAsync(
+        SampleSocketClientSession client,
+        Func<SampleClientState, bool> predicate,
+        int timeoutSeconds = 5)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
+        SampleClientState state;
+        do
+        {
+            state = client.GetState();
+            if (predicate(state))
+            {
+                return;
+            }
+
+            await Task.Delay(25);
+        }
+        while (DateTimeOffset.UtcNow < deadline);
+
+        state = client.GetState();
+        Assert.Fail(
+            $"Timed out waiting for sample client state. " +
+            $"clientId={state.ClientId}, status={state.Status}, " +
+            $"lastReceived={state.LastReceivedMessage}, error={state.LastError}");
     }
 
     private static async Task<T> WithTimeoutAsync<T>(Task<T> task, int timeoutSeconds = 5)

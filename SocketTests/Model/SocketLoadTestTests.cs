@@ -3,6 +3,8 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
+using SocketCommon.Configuration;
+using SocketCommon.Model;
 using SocketLoadTest;
 
 namespace SocketTests.Model;
@@ -10,6 +12,25 @@ namespace SocketTests.Model;
 [TestClass]
 public class SocketLoadTestTests
 {
+    [TestInitialize]
+    public void Initialize()
+    {
+        SocketFactory.Configure(new SocketOperationConfig
+        {
+            ConnectTimeoutSeconds = 30,
+            ReadTimeoutSeconds = 30,
+            WriteTimeoutSeconds = 30
+        });
+        SecureSocketConnection.Configure(new SocketSecurityConfig
+        {
+            TransportMode = "Tls",
+            TlsProtocol = "Auto",
+            RequireTls13 = false,
+            RequireClientCertificate = false,
+            AuthenticationTimeoutMilliseconds = 30000
+        });
+    }
+
     [TestMethod]
     public void ParseMessageTestOptionsTest()
     {
