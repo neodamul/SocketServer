@@ -46,7 +46,15 @@ builder.Services.AddSingleton(_ => new DashboardServerService(0, controlEndpoint
 WebApplication app = builder.Build();
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = context =>
+    {
+        context.Context.Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+        context.Context.Response.Headers.Pragma = "no-cache";
+        context.Context.Response.Headers.Expires = "0";
+    }
+});
 
 app.MapGet("/api/server/status", async (DashboardServerService serverService) => await serverService.GetStatusAsync());
 app.MapGet("/health/live", (DashboardServerService serverService) => serverService.GetLiveness());

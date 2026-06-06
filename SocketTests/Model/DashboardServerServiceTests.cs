@@ -76,6 +76,7 @@ public class DashboardServerServiceTests
         string solutionRoot = FindSolutionRoot();
         string indexHtml = File.ReadAllText(Path.Combine(solutionRoot, "SocketDashboard/wwwroot/index.html"));
         string appJs = File.ReadAllText(Path.Combine(solutionRoot, "SocketDashboard/wwwroot/app.js"));
+        string program = File.ReadAllText(Path.Combine(solutionRoot, "SocketDashboard/Program.cs"));
 
         Assert.IsTrue(indexHtml.Contains("id=\"refreshIntervalSeconds\"", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("class=\"metrics summary-capacity\"", StringComparison.Ordinal));
@@ -130,6 +131,10 @@ public class DashboardServerServiceTests
         Assert.IsTrue(appJs.Contains("getRefreshIntervalMilliseconds()", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("scheduleRefresh()", StringComparison.Ordinal));
         Assert.IsFalse(appJs.Contains("setInterval(refresh, 1000)", StringComparison.Ordinal));
+        Assert.IsTrue(program.Contains("UseStaticFiles(new StaticFileOptions", StringComparison.Ordinal));
+        Assert.IsTrue(program.Contains("CacheControl = \"no-store, no-cache, must-revalidate\"", StringComparison.Ordinal));
+        Assert.IsTrue(program.Contains("Pragma = \"no-cache\"", StringComparison.Ordinal));
+        Assert.IsTrue(program.Contains("Expires = \"0\"", StringComparison.Ordinal));
     }
 
     [TestMethod]
