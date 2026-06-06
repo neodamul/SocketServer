@@ -440,7 +440,7 @@ public sealed class SecureSocketConnection : IDisposable
 
         byte[] protectedPayload = protectedPayloadLength == 0
             ? Array.Empty<byte>()
-            : await this.ReceiveExactFromNetworkAsync((int)protectedPayloadLength, SocketFactory.ReadTimeoutMilliseconds);
+            : await this.ReceiveExactFromNetworkAsync((int)protectedPayloadLength, timeoutMilliseconds);
         if (protectedPayload == null)
         {
             return false;

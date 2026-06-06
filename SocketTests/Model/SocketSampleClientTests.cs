@@ -140,6 +140,16 @@ public class SocketSampleClientTests
     }
 
     [TestMethod]
+    public void DotNetSampleWebUiUsesDynamicPortByDefaultTest()
+    {
+        string root = FindRepositoryRoot();
+        string program = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Net/Program.cs"));
+
+        Assert.IsTrue(program.Contains("http://127.0.0.1:0", StringComparison.Ordinal));
+        Assert.IsFalse(program.Contains("http://127.0.0.1:5090", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public async Task AndroidNativeProtocolValidationScriptPassesTest()
     {
         string root = FindRepositoryRoot();
