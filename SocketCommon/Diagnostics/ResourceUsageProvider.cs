@@ -256,7 +256,7 @@ public class ResourceUsageProvider
     private const uint CpuStateCount = 4;
     private const int VmFreeCount = 0;
     private const int VmInactiveCount = 2;
-    private const int VmSpeculativeCount = 13;
+    private const int VmSpeculativeCount = 23;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct FileTime

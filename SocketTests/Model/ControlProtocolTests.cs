@@ -4,8 +4,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 using SocketCommon.Configuration;
 using SocketCommon.Diagnostics;
 using SocketCommon.Model;
@@ -502,6 +504,16 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void ResourceUsageProviderMacVmInfoIndexesMatchNaturalTSlotsTest()
+    {
+        Type type = typeof(ResourceUsageProvider);
+
+        Assert.AreEqual(0, ReadPrivateConstInt(type, "VmFreeCount"));
+        Assert.AreEqual(2, ReadPrivateConstInt(type, "VmInactiveCount"));
+        Assert.AreEqual(23, ReadPrivateConstInt(type, "VmSpeculativeCount"));
+    }
+
+    [TestMethod]
     public void ResourceUsageProviderReturnsNonZeroMachineMemoryAndStorageTest()
     {
         ResourceUsageSnapshot snapshot = new ResourceUsageProvider().Capture();
@@ -517,15 +529,24 @@ public class ControlProtocolTests
         _ = provider.Capture();
 
         Stopwatch stopwatch = Stopwatch.StartNew();
-        double value = 0;
-        while (stopwatch.ElapsedMilliseconds < 300)
-        {
-            value += Math.Sqrt(stopwatch.ElapsedTicks + value + 1);
-        }
+        Task[] workers = Enumerable
+            .Range(0, Math.Max(1, Environment.ProcessorCount))
+            .Select(_ => Task.Run(() =>
+            {
+                double value = 0;
+                while (stopwatch.ElapsedMilliseconds < 750)
+                {
+                    value += Math.Sqrt(stopwatch.ElapsedTicks + value + 1);
+                }
+
+                return value;
+            }))
+            .ToArray();
+        Task.WaitAll(workers);
 
         ResourceUsageSnapshot snapshot = provider.Capture();
 
-        Assert.IsTrue(value > 0);
+        Assert.IsTrue(workers.Length > 0);
         Assert.IsTrue(snapshot.CpuUsagePercent > 0 && snapshot.CpuUsagePercent <= 100);
     }
 
@@ -641,6 +662,13 @@ public class ControlProtocolTests
         }
 
         throw new DirectoryNotFoundException("Repository root was not found.");
+    }
+
+    private static int ReadPrivateConstInt(Type type, string fieldName)
+    {
+        FieldInfo? field = type.GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.IsNotNull(field);
+        return (int)field.GetRawConstantValue()!;
     }
 
     private static void DeleteRegistryPath(string path)
