@@ -140,6 +140,24 @@ public class SocketSampleClientTests
     }
 
     [TestMethod]
+    public void AppleNativeSampleAcceptsLaunchArgumentsTest()
+    {
+        string root = FindRepositoryRoot();
+        string config = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.AppleShared/SampleConfig.swift"));
+        string view = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.AppleShared/SampleContentView.swift"));
+        string readme = File.ReadAllText(Path.Combine(root, "Samples/README.md"));
+
+        Assert.IsTrue(config.Contains("fromProcessArguments", StringComparison.Ordinal));
+        Assert.IsTrue(config.Contains("targetClientIdFromProcessArguments", StringComparison.Ordinal));
+        Assert.IsTrue(config.Contains("client-id", StringComparison.Ordinal));
+        Assert.IsTrue(config.Contains("target-client-id", StringComparison.Ordinal));
+        Assert.IsTrue(view.Contains("SampleConfig.fromProcessArguments()", StringComparison.Ordinal));
+        Assert.IsTrue(readme.Contains("-derivedDataPath Samples/SocketSample.macOS/build", StringComparison.Ordinal));
+        Assert.IsTrue(readme.Contains("open -n Samples/SocketSample.macOS/build/Build/Products/Debug/SocketSampleMac.app --args --client-id 101", StringComparison.Ordinal));
+        Assert.IsTrue(readme.Contains("--target-client-id 101", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void DotNetSampleWebUiUsesDynamicPortByDefaultTest()
     {
         string root = FindRepositoryRoot();

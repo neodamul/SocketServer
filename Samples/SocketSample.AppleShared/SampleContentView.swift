@@ -1,11 +1,20 @@
 import SwiftUI
 
 struct SampleContentView: View {
-    @State private var config = SampleConfig()
-    @State private var targetClientId = "2"
+    @State private var config: SampleConfig
+    @State private var targetClientId: String
     @State private var message = "hello"
     @State private var state = ClientState()
-    @State private var client = NativeSocketClient(config: SampleConfig())
+    @State private var client: NativeSocketClient
+
+    init(
+        config initialConfig: SampleConfig = SampleConfig.fromProcessArguments(),
+        targetClientId initialTargetClientId: String = SampleConfig.targetClientIdFromProcessArguments())
+    {
+        _config = State(initialValue: initialConfig)
+        _targetClientId = State(initialValue: initialTargetClientId)
+        _client = State(initialValue: NativeSocketClient(config: initialConfig))
+    }
 
     var body: some View {
         ScrollView {

@@ -1,6 +1,6 @@
 # SocketServer Samples
 
-샘플 클라이언트는 `SocketClient` 라이브러리를 사용해 연결, 등록, 클라이언트 간 메시지 송수신을 실행합니다.
+샘플 클라이언트는 연결, 등록, 클라이언트 간 메시지 송수신을 실행합니다. .NET 샘플은 `SocketClient` 라이브러리를 사용하고, iOS/macOS/Android 샘플은 각 플랫폼 네이티브 네트워크 API로 동일한 프로토콜을 구현합니다.
 
 ## .NET Web UI
 
@@ -29,7 +29,14 @@ SwiftUI + Network.framework 기반 네이티브 앱입니다.
 
 ```bash
 xcodegen generate --spec Samples/SocketSample.macOS/project.yml
-xcodebuild -project Samples/SocketSample.macOS/SocketSampleMac.xcodeproj -scheme SocketSampleMac -configuration Debug CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project Samples/SocketSample.macOS/SocketSampleMac.xcodeproj -scheme SocketSampleMac -configuration Debug -derivedDataPath Samples/SocketSample.macOS/build CODE_SIGNING_ALLOWED=NO build
+```
+
+두 개의 네이티브 샘플 클라이언트를 동시에 띄워 메시지를 테스트할 수 있습니다.
+
+```bash
+open -n Samples/SocketSample.macOS/build/Build/Products/Debug/SocketSampleMac.app --args --client-id 101 --client-name native-client-101 --host 127.0.0.1 --port 10000 --target-client-id 102
+open -n Samples/SocketSample.macOS/build/Build/Products/Debug/SocketSampleMac.app --args --client-id 102 --client-name native-client-102 --host 127.0.0.1 --port 10000 --target-client-id 101
 ```
 
 UI의 `Transport`를 `MessageEncryption`으로 바꾸면 TLS 없이 AES-GCM/HMAC 메시지 보호 모드로 접속합니다. 이때 `Message Secret`은 서버의 `SOCKET_MESSAGE_SECRET` 값과 같아야 합니다.
