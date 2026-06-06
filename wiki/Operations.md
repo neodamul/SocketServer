@@ -124,3 +124,17 @@ message-1k  1,000 clients, client message delivery/ack
 - ControlServer 이중화 구성
 
 현재 기본 권장값은 SocketServer 인스턴스당 10,000 연결입니다.
+
+`EndToEndTls` profile은 앱 프로세스까지 TLS를 유지하고 mTLS를 강제합니다. 이 구성에서 대규모 동접을 처리할 때는 L4 TCP pass-through 또는 TCP stream proxy로 연결을 여러 SocketServer 노드에 분산하고, 노드당 SslStream 메모리 사용량을 실측해 shard 수를 산정합니다.
+
+Sizing 절차:
+
+```text
+1. 1k, 10k, 50k 단계로 장수명 연결을 유지한다.
+2. 각 단계에서 RSS/managed heap/GC count/socket count/p95-p99 latency를 기록한다.
+3. 연결당 추가 메모리 = (단계 RSS - baseline RSS) / 연결 수로 계산한다.
+4. 노드 가용 메모리의 60-70%만 연결 예산으로 사용한다.
+5. 목표 동접 / 노드당 안전 연결 수로 SocketServer 노드 수를 결정한다.
+```
+
+예를 들어 노드당 안전 연결 수를 10,000으로 검증했다면 300,000 동접에는 최소 30개 SocketServer 인스턴스가 필요합니다. TLS handshake CPU는 장수명 연결에서는 순간 부하이므로 재시작/재접속 storm 시나리오를 별도로 측정해야 합니다.

@@ -113,6 +113,12 @@ ControlServer 장애가 발생해도 이미 연결된 Client-SocketServer 세션
 
 ControlServer가 재시작되면 저장된 registry를 로드하되, heartbeat timeout이 지난 서버는 `Unhealthy`로 정규화하고 route 후보에서 제외합니다. 만료된 reservation은 제거하며, 서버가 다시 register/heartbeat를 보내면 최신 상태로 복구됩니다. 같은 SocketServer instance가 더 새로운 `StartedAt`으로 재등록되면 이전 실행에서 남은 session summary, client location, reservation을 제거해 대시보드 접속 수 중복 집계를 방지합니다.
 
+## Security Profiles
+
+`EndToEndTls`는 앱 프로세스까지 TLS를 유지하는 기본 profile입니다. 이 profile은 mTLS를 강제하고, 서버 인증서 SAN/name, serverAuth/clientAuth EKU, SocketClient 인증서 SAN의 `socket-client-{clientId}`와 frame clientId 바인딩을 확인합니다. 30만 동접 같은 대규모 배포에서는 L4 pass-through 또는 TCP stream proxy 뒤에 SocketServer 노드를 여러 개 두고, 노드당 SslStream 메모리 실측값으로 shard 수를 산정합니다.
+
+`EdgeTerminated`는 L7 edge가 TLS/client 인증을 처리한 뒤 내부 신뢰망에서 앱 비-TLS 전송을 사용하는 profile입니다. 오설정 방지를 위해 `trustedNetwork=true`와 loopback/private `bindHost`가 필요하며, 신원 전파(PROXY protocol/edge token)는 별도 구현 항목입니다.
+
 ## Dashboard
 
 Dashboard는 설정된 ControlServer 목록을 조회하고 Server Inventory에 `ControlServer` type으로 표시합니다. 여러 ControlServer가 응답하면 SocketServer `instanceId`별 최신 heartbeat snapshot을 병합해 전체 SocketServer 정보를 표시합니다. Dashboard 내부 서버 상태는 ControlServer 연결 여부와 무관하게 `Dashboard` type으로 항상 함께 표시됩니다. ControlServer가 없으면 로컬 Dashboard server 상태를 fallback cluster로 사용합니다. 일시적인 ControlServer timeout이나 unavailable 응답이 발생하면 마지막 정상 cluster snapshot과 endpoint별 counters를 유지해 서버 목록이 갑자기 사라지지 않도록 합니다. Server Inventory에서 서버 row를 선택하면 하단의 Server, Traffic, Socket Runtime, Details 패널이 선택된 서버 기준으로 갱신됩니다.
