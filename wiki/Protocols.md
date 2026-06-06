@@ -111,6 +111,8 @@ Server-Control:
 
 `SERVER_HEARTBEAT` payload에는 SocketServer의 connection counters, resource usage, traffic counters가 포함됩니다. `total_received_message_bytes`와 `total_sent_message_bytes`는 healthcheck를 제외한 message frame wire bytes(`12 byte header + payload`) 누적값입니다. 이때 payload는 **평문 기준**이며(수신은 unprotect 후, 송신은 Protect 전 frame 측정), `MessageEncryption` 모드의 envelope(version·nonce·tag·HMAC) 및 TLS record overhead는 포함하지 않습니다 — 즉 transport mode와 무관하게 동일한 논리 메시지 크기를 집계합니다. ControlServer는 이 값을 `BackendServerSnapshot`에 저장하고 peer snapshot 및 Dashboard status API로 전파합니다.
 
+`REGISTRY_SNAPSHOT_RESPONSE` payload에는 ControlServer registry aggregate와 함께 응답한 ControlServer 자신의 `control_server_resource_usage`가 포함됩니다. Dashboard는 이 값을 ControlServer inventory row의 CPU, memory, storage 사용률로 표시합니다.
+
 Client-Control:
 
 ```text

@@ -55,6 +55,52 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void ClusterStatusSnapshotEncodeDecodePreservesControlServerResourceUsageTest()
+    {
+        ClusterStatusSnapshot status = new()
+        {
+            ServerCount = 1,
+            HealthyServerCount = 1,
+            TotalCurrentConnections = 2,
+            ControlServerResourceUsage = new ResourceUsageSnapshot
+            {
+                CpuUsagePercent = 12.5,
+                MemoryUsagePercent = 45.5,
+                StorageUsagePercent = 67.5,
+                CapturedAt = DateTimeOffset.UtcNow.AddSeconds(-1)
+            },
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        SocketMessageFrame frame = ControlProtocol.CreateFrame(0, ControlMessageIds.RegistrySnapshotResponse, status);
+        bool decoded = ControlProtocol.TryDecode(frame, ControlMessageIds.RegistrySnapshotResponse, out ClusterStatusSnapshot decodedStatus);
+
+        Assert.IsTrue(decoded);
+        Assert.IsNotNull(decodedStatus.ControlServerResourceUsage);
+        Assert.AreEqual(12.5, decodedStatus.ControlServerResourceUsage!.CpuUsagePercent, 0.0001);
+        Assert.AreEqual(45.5, decodedStatus.ControlServerResourceUsage!.MemoryUsagePercent, 0.0001);
+        Assert.AreEqual(67.5, decodedStatus.ControlServerResourceUsage!.StorageUsagePercent, 0.0001);
+        Assert.IsTrue(decodedStatus.ControlServerResourceUsage!.CapturedAt > DateTimeOffset.MinValue);
+    }
+
+    [TestMethod]
+    public void ClusterStatusSnapshotEncodeDecodeKeepsMissingControlServerResourceUsageUnknownTest()
+    {
+        ClusterStatusSnapshot status = new()
+        {
+            ServerCount = 1,
+            HealthyServerCount = 1,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        SocketMessageFrame frame = ControlProtocol.CreateFrame(0, ControlMessageIds.RegistrySnapshotResponse, status);
+        bool decoded = ControlProtocol.TryDecode(frame, ControlMessageIds.RegistrySnapshotResponse, out ClusterStatusSnapshot decodedStatus);
+
+        Assert.IsTrue(decoded);
+        Assert.IsNull(decodedStatus.ControlServerResourceUsage);
+    }
+
+    [TestMethod]
     public void SocketFactoryResolveAddressSupportsDnsHostTest()
     {
         Assert.AreEqual(

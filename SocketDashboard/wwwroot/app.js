@@ -214,7 +214,7 @@ function buildControlServerRow(server) {
     maxConnections: "-",
     currentConnections: server.totalCurrentConnections ?? "-",
     availableConnections: server.totalAvailableConnections ?? "-",
-    resourceUsage: null,
+    resourceUsage: server.resourceUsage || null,
     isListening: server.isHealthy,
     isAcceptLoopRunning: server.isHealthy,
     totalAcceptedClients: "-",

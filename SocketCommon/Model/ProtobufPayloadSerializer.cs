@@ -735,6 +735,11 @@ internal static class ProtobufPayloadSerializer
             AverageStorageUsagePercent = value.AverageStorageUsagePercent,
             UpdatedAtUnixMs = ToUnixMs(value.UpdatedAt)
         };
+        if (value.ControlServerResourceUsage != null)
+        {
+            snapshot.ControlServerResourceUsage = ToProto(value.ControlServerResourceUsage);
+        }
+
         foreach (BackendServerSnapshot server in value.Servers ?? Array.Empty<BackendServerSnapshot>())
         {
             snapshot.Servers.Add(ToProto(server));
@@ -763,6 +768,7 @@ internal static class ProtobufPayloadSerializer
             AverageCpuUsagePercent = value.AverageCpuUsagePercent,
             AverageMemoryUsagePercent = value.AverageMemoryUsagePercent,
             AverageStorageUsagePercent = value.AverageStorageUsagePercent,
+            ControlServerResourceUsage = value.ControlServerResourceUsage == null ? null : FromProto(value.ControlServerResourceUsage),
             Servers = servers,
             UpdatedAt = FromUnixMs(value.UpdatedAtUnixMs)
         };

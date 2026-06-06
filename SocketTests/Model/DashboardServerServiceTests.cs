@@ -112,6 +112,7 @@ public class DashboardServerServiceTests
         Assert.IsTrue(appJs.Contains("const DEFAULT_REFRESH_SECONDS = 30;", StringComparison.Ordinal));
         Assert.IsFalse(appJs.Contains("renderControlServers(status.controlServers)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("function buildControlServerRow(server)", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("resourceUsage: server.resourceUsage || null", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("renderServers(status.cluster.servers, server, status.controlServers)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("function renderSelectedServer(server)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("totalReceivedMessageBytes: server.totalReceivedMessageBytes", StringComparison.Ordinal));
@@ -187,6 +188,9 @@ public class DashboardServerServiceTests
         Assert.IsTrue(status.ControlServers.First().IsHealthy);
         Assert.AreEqual("Healthy", status.ControlServers.First().Status);
         Assert.AreEqual(1, status.ControlServers.First().ServerCount);
+        Assert.IsNotNull(status.ControlServers.First().ResourceUsage);
+        Assert.IsTrue(status.ControlServers.First().ResourceUsage!.MemoryUsagePercent >= 0);
+        Assert.IsTrue(status.ControlServers.First().ResourceUsage!.StorageUsagePercent >= 0);
     }
 
     [TestMethod]
@@ -294,6 +298,7 @@ public class DashboardServerServiceTests
         Assert.IsFalse(cachedStatus.ControlServers.First().IsHealthy);
         Assert.AreEqual(1, cachedStatus.ControlServers.First().ServerCount);
         Assert.AreEqual(2, cachedStatus.ControlServers.First().TotalCurrentConnections);
+        Assert.IsNotNull(cachedStatus.ControlServers.First().ResourceUsage);
     }
 
     [TestMethod]

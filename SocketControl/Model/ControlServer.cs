@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using SocketCommon.Configuration;
+using SocketCommon.Diagnostics;
 using SocketCommon.Logging;
 using SocketCommon.Model;
 
@@ -26,6 +27,7 @@ public class ControlServer : IDisposable
     private readonly IReadOnlyCollection<EndpointConfig> peers;
     private readonly BackendServerRegistry registry;
     private readonly ControlHealthThreshold healthThreshold;
+    private readonly ResourceUsageProvider resourceUsageProvider = new();
     private readonly ConcurrentDictionary<long, ActiveControlConnection> activeConnections = new();
     private readonly ConcurrentDictionary<SecureSocketConnection, ActiveControlConnection> activeConnectionsBySecureConnection = new();
     private readonly ConcurrentDictionary<string, PersistentSecureChannel> peerChannels = new(StringComparer.Ordinal);
@@ -195,7 +197,7 @@ public class ControlServer : IDisposable
 
     public ClusterStatusSnapshot GetClusterStatus()
     {
-        return this.registry.GetStatus();
+        return this.CreateClusterStatusSnapshot();
     }
 
     private Task RunAcceptLoopAsync(CancellationToken cancellationToken)
@@ -736,13 +738,34 @@ public class ControlServer : IDisposable
 
     private async Task HandleRegistrySnapshotRequestAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
-        ClusterStatusSnapshot status = this.registry.GetStatus();
+        ClusterStatusSnapshot status = this.CreateClusterStatusSnapshot();
         RelayLogger.Info($"Registry snapshot response started. controlNodeId={this.config.NodeId}, servers={status.ServerCount}, sessions={status.TotalSessionCount}, current={status.TotalCurrentConnections}, available={status.TotalAvailableConnections}");
         await SendControlResponseAsync(
             connection,
             frame.ClientId,
             ControlMessageIds.RegistrySnapshotResponse,
             status);
+    }
+
+    private ClusterStatusSnapshot CreateClusterStatusSnapshot()
+    {
+        ClusterStatusSnapshot status = this.registry.GetStatus();
+        return new ClusterStatusSnapshot
+        {
+            ServerCount = status.ServerCount,
+            HealthyServerCount = status.HealthyServerCount,
+            TotalMaxConnections = status.TotalMaxConnections,
+            TotalCurrentConnections = status.TotalCurrentConnections,
+            TotalReservedConnections = status.TotalReservedConnections,
+            TotalAvailableConnections = status.TotalAvailableConnections,
+            TotalSessionCount = status.TotalSessionCount,
+            AverageCpuUsagePercent = status.AverageCpuUsagePercent,
+            AverageMemoryUsagePercent = status.AverageMemoryUsagePercent,
+            AverageStorageUsagePercent = status.AverageStorageUsagePercent,
+            ControlServerResourceUsage = this.resourceUsageProvider.Capture(),
+            Servers = status.Servers,
+            UpdatedAt = status.UpdatedAt
+        };
     }
 
     private async Task PublishServerSnapshotAsync(BackendServerSnapshot snapshot)

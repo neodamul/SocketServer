@@ -389,6 +389,8 @@ public class ClusterStatusSnapshot
 
     public double AverageStorageUsagePercent { get; init; }
 
+    public ResourceUsageSnapshot ControlServerResourceUsage { get; init; }
+
     public IReadOnlyCollection<BackendServerSnapshot> Servers { get; init; } = Array.Empty<BackendServerSnapshot>();
 
     public DateTimeOffset UpdatedAt { get; init; }
