@@ -202,6 +202,7 @@ public class DashboardServerService : IDisposable
                         TotalCurrentConnections = cached.TotalCurrentConnections,
                         TotalAvailableConnections = cached.TotalAvailableConnections,
                         TotalSessionCount = cached.TotalSessionCount,
+                        ResourceUsage = cached.ResourceUsage,
                         CheckedAt = status.CheckedAt,
                         ErrorMessage = string.IsNullOrWhiteSpace(status.ErrorMessage)
                             ? "Using last known counters because the current query did not return a snapshot."
@@ -364,6 +365,7 @@ public class DashboardServerService : IDisposable
             TotalCurrentConnections = snapshot?.TotalCurrentConnections ?? 0,
             TotalAvailableConnections = snapshot?.TotalAvailableConnections ?? 0,
             TotalSessionCount = snapshot?.TotalSessionCount ?? 0,
+            ResourceUsage = snapshot?.ControlServerResourceUsage,
             CheckedAt = checkedAt,
             ErrorMessage = errorMessage
         };
@@ -475,6 +477,8 @@ public class DashboardControlServerStatus
     public int TotalAvailableConnections { get; init; }
 
     public int TotalSessionCount { get; init; }
+
+    public ResourceUsageSnapshot? ResourceUsage { get; init; }
 
     public DateTimeOffset CheckedAt { get; init; }
 
