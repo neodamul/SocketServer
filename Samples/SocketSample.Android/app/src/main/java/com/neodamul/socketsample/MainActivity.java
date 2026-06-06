@@ -16,6 +16,7 @@ import java.util.concurrent.Executors;
 
 public final class MainActivity extends Activity {
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final ExecutorService receiveExecutor = Executors.newSingleThreadExecutor();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private SampleConfig config;
     private NativeSocketClient client;
@@ -26,9 +27,13 @@ public final class MainActivity extends Activity {
     private EditText messageSecret;
     private EditText targetClientId;
     private EditText message;
+    private CheckBox useControlServer;
     private CheckBox allowUntrusted;
     private TextView status;
     private boolean registered;
+    private int receiveLoopGeneration;
+    private String lastReceived = "";
+    private String lastError = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -53,6 +58,9 @@ public final class MainActivity extends Activity {
         messageSecret = input(config.messageEncryptionSecret);
         targetClientId = input("2");
         message = input("hello");
+        useControlServer = new CheckBox(this);
+        useControlServer.setText("Use ControlServer route");
+        useControlServer.setChecked(config.useControlServer);
         allowUntrusted = new CheckBox(this);
         allowUntrusted.setText("Allow local self-signed certificate");
         allowUntrusted.setChecked(config.allowUntrustedLocalCertificate);
@@ -64,6 +72,7 @@ public final class MainActivity extends Activity {
         root.addView(host);
         root.addView(label("Port"));
         root.addView(port);
+        root.addView(useControlServer);
         root.addView(allowUntrusted);
         root.addView(label("Transport"));
         root.addView(transportMode);
@@ -74,10 +83,12 @@ public final class MainActivity extends Activity {
             client.update(config);
             showStatus("Configured");
         }));
-        root.addView(button("Connect", () -> run("Connected", () -> client.connect())));
-        root.addView(button("Register", () -> run("Registered", () -> {
+        root.addView(button("Connect", () -> run("Connected and registered", () -> {
+            stopReceiveLoop();
+            client.connect();
             client.register();
             registered = true;
+            startReceiveLoop();
         })));
         root.addView(label("Target Client ID"));
         root.addView(targetClientId);
@@ -85,13 +96,11 @@ public final class MainActivity extends Activity {
         root.addView(message);
         root.addView(button("Send", () -> run("Message sent", () ->
             client.sendMessage(Long.parseLong(targetClientId.getText().toString()), message.getText().toString()))));
-        root.addView(button("Receive", () -> run("Message received", () -> {
-            ProtoCodec.ClientDelivery delivery = client.receiveMessage();
-            showStatus("Received from " + delivery.sourceClientId + ": " + delivery.content);
-        })));
         root.addView(button("Disconnect", () -> {
+            stopReceiveLoop();
             client.close();
             registered = false;
+            lastError = "";
             showStatus("Disconnected");
         }));
         root.addView(status);
@@ -126,6 +135,7 @@ public final class MainActivity extends Activity {
         config.clientId = Integer.parseInt(clientId.getText().toString());
         config.host = host.getText().toString();
         config.port = Integer.parseInt(port.getText().toString());
+        config.useControlServer = useControlServer.isChecked();
         config.allowUntrustedLocalCertificate = allowUntrusted.isChecked();
         config.transportMode = transportMode.getText().toString();
         config.messageEncryptionSecret = messageSecret.getText().toString();
@@ -137,11 +147,86 @@ public final class MainActivity extends Activity {
         executor.execute(() -> {
             try {
                 action.run();
-                mainHandler.post(() -> showStatus(successStatus));
+                mainHandler.post(() -> {
+                    lastError = "";
+                    showStatus(successStatus);
+                });
             } catch (Exception exception) {
-                mainHandler.post(() -> showStatus("Failed: " + exception.getMessage()));
+                mainHandler.post(() -> {
+                    lastError = exception.getMessage();
+                    showStatus("Failed");
+                });
             }
         });
+    }
+
+    private void startReceiveLoop() {
+        int generation;
+        synchronized (this) {
+            receiveLoopGeneration++;
+            generation = receiveLoopGeneration;
+        }
+
+        receiveExecutor.execute(() -> runReceiveLoop(generation));
+    }
+
+    private void stopReceiveLoop() {
+        synchronized (this) {
+            receiveLoopGeneration++;
+        }
+    }
+
+    private boolean isActiveReceiveLoop(int generation) {
+        synchronized (this) {
+            return generation == receiveLoopGeneration;
+        }
+    }
+
+    private void runReceiveLoop(int generation) {
+        while (isActiveReceiveLoop(generation)) {
+            try {
+                NativeSocketClient.ClientEvent event = client.receiveEvent();
+                if (!isActiveReceiveLoop(generation)) {
+                    return;
+                }
+
+                mainHandler.post(() -> handleClientEvent(generation, event));
+            } catch (Exception exception) {
+                if (isActiveReceiveLoop(generation)) {
+                    mainHandler.post(() -> {
+                        if (!isActiveReceiveLoop(generation)) {
+                            return;
+                        }
+
+                        registered = false;
+                        lastError = exception.getMessage();
+                        showStatus("Receive loop stopped");
+                    });
+                }
+
+                return;
+            }
+        }
+    }
+
+    private void handleClientEvent(int generation, NativeSocketClient.ClientEvent event) {
+        if (!isActiveReceiveLoop(generation)) {
+            return;
+        }
+
+        if (event.type == NativeSocketClient.ClientEvent.TYPE_DELIVERY) {
+            lastReceived = event.delivery.sourceClientId + ": " + event.delivery.content;
+            lastError = "";
+            showStatus("Message received");
+        } else if (event.type == NativeSocketClient.ClientEvent.TYPE_ACK) {
+            lastError = event.ack.delivered ? "" : "Message was not delivered.";
+            showStatus(event.ack.delivered
+                ? "Message delivered to " + event.ack.targetClientId
+                : "Message not delivered to " + event.ack.targetClientId);
+        } else if (event.type == NativeSocketClient.ClientEvent.TYPE_ERROR) {
+            lastError = event.errorMessage;
+            showStatus("Message failed");
+        }
     }
 
     private void showStatus(String line) {
@@ -149,14 +234,19 @@ public final class MainActivity extends Activity {
             "Status: " + line + "\n" +
             "Connected: " + client.isConnected() + "\n" +
             "Registered: " + registered + "\n" +
+            "Last Received: " + lastReceived + "\n" +
+            "Last Error: " + lastError + "\n" +
             "Client ID: " + config.clientId + "\n" +
             "Endpoint: " + config.host + ":" + config.port + "\n" +
+            "Use ControlServer: " + config.useControlServer + "\n" +
             "Transport: " + config.transportMode);
     }
 
     @Override
     protected void onDestroy() {
+        stopReceiveLoop();
         client.close();
+        receiveExecutor.shutdownNow();
         executor.shutdownNow();
         super.onDestroy();
     }

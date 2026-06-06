@@ -25,6 +25,7 @@ import com.neodamul.socketsample.ProtoCodec;
 import com.neodamul.socketsample.SocketFrame;
 import com.neodamul.socketsample.SocketMessageProtector;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.nio.charset.StandardCharsets;
 
@@ -34,6 +35,13 @@ public final class AndroidProtocolValidation {
         ProtoCodec.ClientDelivery delivery = ProtoCodec.decodeDelivery(payload);
         if (delivery.sourceClientId != 101 || delivery.targetClientId != 202 || !"hello-android".equals(delivery.content)) {
             throw new IllegalStateException("Client message protobuf payload did not round-trip.");
+        }
+
+        byte[] routeResponsePayload = routeResponse("127.0.0.1", 10001);
+        ProtoCodec.RouteTarget route = ProtoCodec.decodeRouteResponse(routeResponsePayload);
+        String resolvedHost = ProtoCodec.resolveRouteHost(route.host, "10.0.2.2");
+        if (!route.success || route.port != 10001 || !"10.0.2.2".equals(resolvedHost)) {
+            throw new IllegalStateException("Android route response loopback host was not resolved through the ControlServer host.");
         }
 
         SocketFrame frame = new SocketFrame(101, 2002, "payload".getBytes(StandardCharsets.UTF_8));
@@ -48,6 +56,36 @@ public final class AndroidProtocolValidation {
         if (decrypted.clientId != 101 || decrypted.messageId != 2002 || !"payload".equals(new String(decrypted.payload, StandardCharsets.UTF_8))) {
             throw new IllegalStateException("Protected socket frame did not round-trip.");
         }
+    }
+
+    private static byte[] routeResponse(String host, long port) {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        writeVarintField(output, 1, 1);
+        writeStringField(output, 5, host);
+        writeVarintField(output, 6, port);
+        return output.toByteArray();
+    }
+
+    private static void writeVarintField(ByteArrayOutputStream output, int field, long value) {
+        writeVarint(output, field << 3);
+        writeVarint(output, value);
+    }
+
+    private static void writeStringField(ByteArrayOutputStream output, int field, String value) {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        writeVarint(output, (field << 3) | 2);
+        writeVarint(output, bytes.length);
+        output.write(bytes, 0, bytes.length);
+    }
+
+    private static void writeVarint(ByteArrayOutputStream output, long value) {
+        long remaining = value;
+        while (remaining >= 0x80) {
+            output.write((int)((remaining & 0x7f) | 0x80));
+            remaining >>= 7;
+        }
+
+        output.write((int)remaining);
     }
 }
 JAVA
