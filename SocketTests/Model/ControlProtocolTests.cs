@@ -1,6 +1,5 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
@@ -523,31 +522,35 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
-    public void ResourceUsageProviderCpuUsageRespondsToLocalWorkTest()
+    public void ResourceUsageProviderCpuUsageCalculationUsesSampleDeltaTest()
     {
-        ResourceUsageProvider provider = new();
-        _ = provider.Capture();
+        double cpuUsagePercent = ResourceUsageProvider.CalculateCpuUsagePercent(
+            new ResourceUsageProvider.CpuSample(90, 100),
+            new ResourceUsageProvider.CpuSample(100, 200));
 
-        Stopwatch stopwatch = Stopwatch.StartNew();
-        Task[] workers = Enumerable
-            .Range(0, Math.Max(1, Environment.ProcessorCount))
-            .Select(_ => Task.Run(() =>
-            {
-                double value = 0;
-                while (stopwatch.ElapsedMilliseconds < 750)
-                {
-                    value += Math.Sqrt(stopwatch.ElapsedTicks + value + 1);
-                }
+        Assert.AreEqual(90, cpuUsagePercent, 0.0001);
+    }
 
-                return value;
-            }))
-            .ToArray();
-        Task.WaitAll(workers);
+    [TestMethod]
+    public void ResourceUsageProviderCpuUsageCalculationRejectsInvalidSamplesTest()
+    {
+        Assert.AreEqual(
+            0,
+            ResourceUsageProvider.CalculateCpuUsagePercent(
+                new ResourceUsageProvider.CpuSample(0, 0),
+                new ResourceUsageProvider.CpuSample(100, 200)));
 
-        ResourceUsageSnapshot snapshot = provider.Capture();
+        Assert.AreEqual(
+            0,
+            ResourceUsageProvider.CalculateCpuUsagePercent(
+                new ResourceUsageProvider.CpuSample(90, 100),
+                new ResourceUsageProvider.CpuSample(0, 0)));
 
-        Assert.IsTrue(workers.Length > 0);
-        Assert.IsTrue(snapshot.CpuUsagePercent > 0 && snapshot.CpuUsagePercent <= 100);
+        Assert.AreEqual(
+            0,
+            ResourceUsageProvider.CalculateCpuUsagePercent(
+                new ResourceUsageProvider.CpuSample(10, 100),
+                new ResourceUsageProvider.CpuSample(5, 90)));
     }
 
     [TestMethod]

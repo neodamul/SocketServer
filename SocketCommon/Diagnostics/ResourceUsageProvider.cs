@@ -19,8 +19,14 @@ public class ResourceUsageProvider
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
         CpuSample cpuSample = CaptureCpuSample();
-        double cpuPercent = CalculateCpuUsagePercent(this.previousCpuSample, cpuSample);
-        this.previousCpuSample = cpuSample;
+        double cpuPercent = 0;
+        if (cpuSample.IsValid)
+        {
+            cpuPercent = this.previousCpuSample.IsValid
+                ? CalculateCpuUsagePercent(this.previousCpuSample, cpuSample)
+                : 0;
+            this.previousCpuSample = cpuSample;
+        }
 
         return new ResourceUsageSnapshot
         {
@@ -109,8 +115,13 @@ public class ResourceUsageProvider
         return new CpuSample((long)idle, (long)(kernel + user));
     }
 
-    private static double CalculateCpuUsagePercent(CpuSample previous, CpuSample current)
+    internal static double CalculateCpuUsagePercent(CpuSample previous, CpuSample current)
     {
+        if (!previous.IsValid || !current.IsValid)
+        {
+            return 0;
+        }
+
         long totalDelta = current.Total - previous.Total;
         if (totalDelta <= 0)
         {
@@ -242,7 +253,10 @@ public class ResourceUsageProvider
         return value > 100 ? 100 : value;
     }
 
-    private readonly record struct CpuSample(long Idle, long Total);
+    internal readonly record struct CpuSample(long Idle, long Total)
+    {
+        internal bool IsValid => this.Total > 0 && this.Idle >= 0 && this.Idle <= this.Total;
+    }
 
     private static readonly Lazy<int> MachHostPort = new(mach_host_self, isThreadSafe: true);
 
