@@ -15,7 +15,7 @@
 
 `SocketClient`, `SocketServer`, `SocketControl`, `SocketDashboard` 간 연결은 `SecureSocketConnection`을 통해 보호된 뒤 common frame을 송수신합니다. 기본 `Tls` 모드는 `SslStream`을 사용합니다. `EndToEndTls` profile은 mTLS를 강제합니다. 로컬 Root CA가 모듈별 leaf 인증서를 서명하고, 양쪽은 상대 인증서를 같은 Root CA 기준으로 검증합니다. `SOCKET_REQUIRE_TLS13=true` 환경 변수를 설정하면 TLS 1.3이 아닌 협상 결과를 연결 실패로 처리합니다.
 
-`security.profile=EndToEndTls`는 앱까지 TLS를 유지하는 기본 profile입니다. `security.profile=EdgeTerminated`는 edge TLS 종단 이후 내부 신뢰망에서 앱 비-TLS 전송을 사용하는 profile이며 `trustedNetwork=true`와 명시적인 loopback/private SocketServer `bindHost`가 필요합니다.
+`security.profile=EndToEndTls`는 앱까지 TLS를 유지하는 기본 profile입니다. `security.profile=EdgeTerminated`는 edge TLS 종단 이후 내부 신뢰망에서 앱 비-TLS 전송을 사용하는 profile이며 `trustedNetwork=true`와 명시적인 loopback/private SocketServer `bindHost`가 필요합니다. `EdgeTerminated`의 비-TLS 데이터 플레인은 SAEA transport를 사용하지만, edge identity 전파(PROXY protocol/edge token)는 아직 구현되지 않았습니다. `security.profile=AppTokenSession`은 per-session key 기반 보안 채널 설계가 완료될 때까지 fail-fast로 거부됩니다.
 
 `EndToEndTls` TLS 인증서 검증은 로컬 Root CA 서명 여부, 서버 인증서 SAN/name 일치, serverAuth/clientAuth EKU를 확인합니다. SocketClient 인증서 SAN의 `socket-client-{clientId}` 값은 client-facing frame header clientId와 바인딩됩니다.
 
