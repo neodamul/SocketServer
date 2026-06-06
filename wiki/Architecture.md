@@ -117,7 +117,9 @@ ControlServer가 재시작되면 저장된 registry를 로드하되, heartbeat t
 
 `EndToEndTls`는 앱 프로세스까지 TLS를 유지하는 기본 profile입니다. 이 profile은 mTLS를 강제하고, 서버 인증서 SAN/name, serverAuth/clientAuth EKU, SocketClient 인증서 SAN의 `socket-client-{clientId}`와 frame clientId 바인딩을 확인합니다. 30만 동접 같은 대규모 배포에서는 L4 pass-through 또는 TCP stream proxy 뒤에 SocketServer 노드를 여러 개 두고, 노드당 SslStream 메모리 실측값으로 shard 수를 산정합니다.
 
-`EdgeTerminated`는 L7 edge가 TLS/client 인증을 처리한 뒤 내부 신뢰망에서 앱 비-TLS 전송을 사용하는 profile입니다. 오설정 방지를 위해 `trustedNetwork=true`와 loopback/private `bindHost`가 필요하며, 신원 전파(PROXY protocol/edge token)는 별도 구현 항목입니다.
+`EdgeTerminated`는 L7 edge가 TLS/client 인증을 처리한 뒤 내부 신뢰망에서 앱 비-TLS 전송을 사용하는 profile입니다. 오설정 방지를 위해 `trustedNetwork=true`와 loopback/private `bindHost`가 필요하며, 비-TLS 데이터 플레인은 SAEA send/receive 경로를 사용합니다. 신원 전파(PROXY protocol/edge token)는 별도 구현 항목이므로, 현재 이 profile은 edge가 인증한 client identity를 SocketServer 세션에 바인딩하지 않습니다.
+
+`AppTokenSession`은 per-session key, replay 방지, key rotation, downgrade 방지, frame binding을 포함하는 별도 보안 채널 설계가 필요합니다. 해당 profile은 예약값이며 구현 전까지 기동 시 fail-fast로 거부됩니다.
 
 ## Dashboard
 

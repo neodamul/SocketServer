@@ -288,8 +288,7 @@ public sealed class SecureSocketConnection : IDisposable
 
                 SocketMessageFrame protectedFrame = this.messageProtector.Protect(frame);
                 byte[] protectedBytes = protectedFrame.Encode();
-                await this.WriteWithTimeoutAsync(this.networkStream, protectedBytes);
-                return true;
+                return await SocketAsyncEventArgsTransport.SendAsync(this.Socket, protectedBytes);
             }
 
             await this.WriteWithTimeoutAsync(this.sslStream, bytes);
@@ -405,26 +404,18 @@ public sealed class SecureSocketConnection : IDisposable
 
     private async Task<byte[]> ReceiveExactFromNetworkAsync(int length, int timeoutMilliseconds)
     {
-        byte[] buffer = new byte[length];
-        int offset = 0;
         try
         {
-            using CancellationTokenSource cancellation = new(timeoutMilliseconds);
-            while (offset < length)
+            byte[] buffer = await SocketAsyncEventArgsTransport.ReceiveExactAsync(
+                this.Socket,
+                length,
+                timeoutMilliseconds);
+            if (buffer == null)
             {
-                int read = await this.networkStream.ReadAsync(buffer.AsMemory(offset, length - offset), cancellation.Token);
-                if (read <= 0)
-                {
-                    return null;
-                }
-
-                offset += read;
+                this.Close();
             }
-        }
-        catch (OperationCanceledException)
-        {
-            this.Close();
-            return null;
+
+            return buffer;
         }
         catch (IOException)
         {
@@ -435,7 +426,6 @@ public sealed class SecureSocketConnection : IDisposable
             return null;
         }
 
-        return buffer;
     }
 
     private async Task<byte[]> ReceiveExactProtectedAsync(int length, int timeoutMilliseconds)

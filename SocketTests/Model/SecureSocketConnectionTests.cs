@@ -259,6 +259,9 @@ public class SecureSocketConnectionTests
             Assert.AreEqual(SslProtocols.None, server.NegotiatedProtocol);
             Assert.AreEqual(SslProtocols.None, client.NegotiatedProtocol);
 
+            int rentedBeforeDataPlane = SocketAsyncEventArgsFactory.RentedCount;
+            int inUseBeforeDataPlane = SocketAsyncEventArgsFactory.InUseCount;
+
             Assert.IsTrue(await HelloWorldProtocol.SendAsync(client, HelloWorldProtocol.CreateRequest(77)));
             (bool requestReceived, HelloWorldRequest request) = await HelloWorldProtocol.TryReceiveRequestAsync(server);
             Assert.IsTrue(requestReceived);
@@ -269,6 +272,8 @@ public class SecureSocketConnectionTests
             Assert.IsTrue(responseReceived);
             Assert.AreEqual((uint)77, response.ClientId);
             Assert.AreEqual(HelloWorldProtocol.DefaultMessage, response.Message);
+            Assert.IsTrue(SocketAsyncEventArgsFactory.RentedCount >= rentedBeforeDataPlane + 4);
+            Assert.AreEqual(inUseBeforeDataPlane, SocketAsyncEventArgsFactory.InUseCount);
         }
         finally
         {
@@ -321,6 +326,23 @@ public class SecureSocketConnectionTests
             TrustedNetwork = true
         }));
 
+        SecureSocketConnection.Configure(CreateSecurityConfig());
+    }
+
+    [TestMethod]
+    public void AppTokenSessionProfileFailsFastUntilSessionKeyHandshakeIsImplementedTest()
+    {
+        NotSupportedException exception = Assert.ThrowsException<NotSupportedException>(() =>
+            SecureSocketConnection.Configure(new SocketSecurityConfig
+            {
+                Profile = "AppTokenSession",
+                TransportMode = "MessageEncryption",
+                TlsProtocol = "None",
+                RequireTls13 = false,
+                TrustedNetwork = true
+            }));
+
+        StringAssert.Contains(exception.Message, "planned but not implemented");
         SecureSocketConnection.Configure(CreateSecurityConfig());
     }
 
