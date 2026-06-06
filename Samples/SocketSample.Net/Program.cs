@@ -7,7 +7,7 @@ WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 if (String.IsNullOrEmpty(builder.Configuration["urls"]) &&
     String.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
 {
-    builder.WebHost.UseUrls("http://127.0.0.1:5090");
+    builder.WebHost.UseUrls("http://127.0.0.1:0");
 }
 
 SampleClientSettings settings = builder.Configuration

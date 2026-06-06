@@ -2,6 +2,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using SocketCommon.Configuration;
@@ -49,6 +50,14 @@ public class ControlProtocolTests
         Assert.AreEqual((uint)11, decodedRequest.SourceClientId);
         Assert.AreEqual((uint)12, decodedRequest.TargetClientId);
         Assert.AreEqual("hello", decodedRequest.Content);
+    }
+
+    [TestMethod]
+    public void SocketFactoryResolveAddressSupportsDnsHostTest()
+    {
+        Assert.AreEqual(
+            AddressFamily.InterNetwork,
+            SocketFactory.ResolveAddress("localhost", AddressFamily.InterNetwork).AddressFamily);
     }
 
     [TestMethod]

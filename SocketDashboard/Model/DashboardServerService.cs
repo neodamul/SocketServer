@@ -183,7 +183,8 @@ public class DashboardServerService : IDisposable
                         return status;
                     }
 
-                    if (!this.lastHealthyControlStatusByEndpoint.TryGetValue(key, out DashboardControlServerStatus cached))
+                    DashboardControlServerStatus? cached = null;
+                    if (!this.lastHealthyControlStatusByEndpoint.TryGetValue(key, out cached))
                     {
                         return status;
                     }
@@ -320,7 +321,7 @@ public class DashboardServerService : IDisposable
 
     private static async Task<ClusterStatusSnapshot?> QueryControlClusterStatusAsync(EndpointConfig endpoint, Socket socket)
     {
-        await SocketFactory.ConnectAsync(socket, IPAddress.Parse(endpoint.Host), endpoint.Port);
+        await SocketFactory.ConnectAsync(socket, endpoint.Host, endpoint.Port);
         using SecureSocketConnection connection = await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketDashboard");
         (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
             connection,

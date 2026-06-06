@@ -10,6 +10,8 @@ SocketClient/config.json
 
 각 프로젝트는 자체 `log4net.config`를 관리합니다. 실행 프로젝트와 테스트 프로젝트는 빌드 출력으로 자신의 `log4net.config`를 복사하고, 라이브러리 프로젝트는 프로젝트별 설정 파일만 보관해 참조 프로젝트 간 설정 파일 충돌을 피합니다.
 
+`host`, `bindHost`, `controlEndpoints[].host`, `controlServers[].host`, `peers[].host`는 `127.0.0.1` 같은 IP literal과 `localhost` 같은 DNS host name을 모두 사용할 수 있습니다. 연결 경로는 비동기 DNS 조회를 사용하고 socket address family에 맞는 주소만 선택합니다.
+
 ```text
 SocketCommon/log4net.config
 SocketClient/log4net.config
@@ -112,6 +114,7 @@ Certificates/SocketDashboard.pfx
 기본 저장 위치는 솔루션 루트의 `Certificates/`입니다. `security.certificateDirectory` 또는 `SOCKET_CERTIFICATE_DIR` 환경 변수를 설정하면 다른 로컬 경로를 사용할 수 있습니다. PFX 비밀번호는 `security.certificatePasswordEnvironmentVariable`에 지정한 환경 변수에서 읽으며, 기본 변수명은 `SOCKET_CERTIFICATE_PASSWORD`입니다. 인증서는 로컬 개발/테스트용이며 leaf subject는 `CN=SocketServerLocal`, SAN은 `SocketServerLocal`, `localhost`입니다. TLS 1.3을 필수로 검증해야 하는 환경은 `security.requireTls13=true` 또는 `SOCKET_REQUIRE_TLS13=true`를 설정합니다. 플랫폼이 TLS 1.3을 협상하지 못하면 연결은 실패합니다.
 
 Root CA와 모듈 인증서는 `certificateRenewBeforeDays` 이내로 만료가 가까워지거나, 현재 설정된 PFX 비밀번호로 읽을 수 없으면 삭제 후 재생성됩니다.
+TLS handshake 경로는 Root CA와 모듈 인증서를 프로세스 캐시에 보관해 반복 파일 로드와 chain 검증 비용을 줄입니다. `security` 설정이 다시 적용되거나 인증서 파일/비밀번호/수정 시간이 바뀌면 캐시는 새 항목으로 교체됩니다. 진행 중인 handshake가 참조 중일 수 있는 공유 인증서 인스턴스는 즉시 dispose하지 않습니다.
 
 ## ControlServer
 
@@ -188,6 +191,7 @@ Root CA와 모듈 인증서는 `certificateRenewBeforeDays` 이내로 만료가 
 `portRangeStart=0`, `portRangeEnd=0`이면 OS 동적 포트 바인딩을 사용합니다. 운영 설정은 명시적인 port range 사용을 권장합니다.
 
 `socketAsyncEventArgsPool`은 accept/send/receive에 사용하는 `SocketAsyncEventArgs` pool을 설정합니다. 운영에서는 목표 동접과 메시지 빈도에 맞춰 `initialSize`, `growthSize`, `maxRetained`를 조정합니다. 각 SAEA는 8KB 고정 receive buffer segment를 유지하며, segment는 슬랩 단위로 선할당됩니다.
+`maxRetained`를 초과해 반환되는 SAEA는 폐기되고 pool counter에서도 제거되어 `/metrics`와 대시보드의 pool 지표가 실제 retained/in-use 상태를 기준으로 표시됩니다.
 
 ## SocketClient
 

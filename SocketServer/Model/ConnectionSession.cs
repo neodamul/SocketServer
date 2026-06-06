@@ -9,7 +9,8 @@ namespace SocketServer.Model;
 public class ConnectionSession
 {
     private int closed;
-    private readonly SemaphoreSlim sendLock = new(1, 1);
+    private readonly object sendQueueLock = new();
+    private Task sendQueueTail = Task.CompletedTask;
 
     public ConnectionSession(long id, SecureSocketConnection connection)
     {
@@ -48,19 +49,43 @@ public class ConnectionSession
 
     public async Task<bool> SendAsync(byte[] bytes)
     {
-        await this.sendLock.WaitAsync();
+        if (bytes == null)
+        {
+            throw new ArgumentNullException(nameof(bytes));
+        }
+
+        Task<bool> sendTask;
+        lock (this.sendQueueLock)
+        {
+            sendTask = this.SendAfterAsync(this.sendQueueTail, bytes);
+            this.sendQueueTail = sendTask;
+        }
+
+        return await sendTask.ConfigureAwait(false);
+    }
+
+    private async Task<bool> SendAfterAsync(Task previousSendTask, byte[] bytes)
+    {
         try
         {
-            if (this.IsClosed)
-            {
-                return false;
-            }
-
-            return await this.Connection.SendAsync(bytes);
+            await previousSendTask.ConfigureAwait(false);
         }
-        finally
+        catch
         {
-            this.sendLock.Release();
+        }
+
+        if (this.IsClosed)
+        {
+            return false;
+        }
+
+        try
+        {
+            return await this.Connection.SendAsync(bytes).ConfigureAwait(false);
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
         }
     }
 

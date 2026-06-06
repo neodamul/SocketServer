@@ -1,5 +1,6 @@
 using System;
 using System.Buffers.Binary;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -153,6 +154,8 @@ public sealed class SecureSocketConnection : IDisposable
                 ? DefaultMessageEncryptionSecretEnvironmentVariable
                 : config.MessageEncryptionSecretEnvironmentVariable.Trim();
         }
+
+        LocalCertificateStore.ClearCertificateCaches();
     }
 
     public static async Task<SecureSocketConnection> AuthenticateClientAsync(Socket socket, string moduleName)
@@ -198,19 +201,23 @@ public sealed class SecureSocketConnection : IDisposable
                 moduleName);
         }
 
-        X509Certificate2 certificate = LocalCertificateStore.GetOrCreate(moduleName);
+        X509Certificate2 certificate = LocalCertificateStore.GetOrCreateCached(moduleName);
         SslStream sslStream = new(networkStream, leaveInnerStreamOpen: false);
 
-        await WaitForAuthenticationAsync(sslStream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+        SslServerAuthenticationOptions options = new()
         {
             ServerCertificate = certificate,
             EnabledSslProtocols = ConfiguredProtocols,
             ClientCertificateRequired = RequireClientCertificate,
-            RemoteCertificateValidationCallback = RequireClientCertificate
-                ? (_, clientCertificate, _, _) => IsTrustedLocalCertificate(clientCertificate)
-                : null,
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck
-        }));
+        };
+        if (RequireClientCertificate)
+        {
+            options.RemoteCertificateValidationCallback =
+                (_, clientCertificate, _, _) => clientCertificate != null && IsTrustedLocalCertificate(clientCertificate);
+        }
+
+        await WaitForAuthenticationAsync(sslStream.AuthenticateAsServerAsync(options));
         EnsureTls13IfRequired(sslStream);
 
         return new SecureSocketConnection(socket, networkStream, sslStream, null, moduleName);
@@ -433,7 +440,7 @@ public sealed class SecureSocketConnection : IDisposable
 
         byte[] protectedPayload = protectedPayloadLength == 0
             ? Array.Empty<byte>()
-            : await this.ReceiveExactFromNetworkAsync((int)protectedPayloadLength, SocketFactory.ReadTimeoutMilliseconds);
+            : await this.ReceiveExactFromNetworkAsync((int)protectedPayloadLength, timeoutMilliseconds);
         if (protectedPayload == null)
         {
             return false;
@@ -480,7 +487,7 @@ public sealed class SecureSocketConnection : IDisposable
             return false;
         }
 
-        using X509Certificate2 rootCertificate = LocalCertificateStore.GetOrCreateRootAuthority();
+        X509Certificate2 rootCertificate = LocalCertificateStore.GetCachedRootAuthority();
         return LocalCertificateStore.IsSignedByRoot(certificate2, rootCertificate);
     }
 
@@ -493,7 +500,7 @@ public sealed class SecureSocketConnection : IDisposable
 
         X509CertificateCollection certificates = new()
         {
-            LocalCertificateStore.GetOrCreate(moduleName)
+            LocalCertificateStore.GetOrCreateCached(moduleName)
         };
         return certificates;
     }
@@ -641,6 +648,13 @@ public sealed class SecureSocketConnection : IDisposable
 public static class LocalCertificateStore
 {
     private const string RootCertificateFileName = "SocketServerLocalRootCA.pfx";
+    private static readonly object RootAuthorityCacheLock = new();
+    private static readonly object ModuleCertificateCacheLock = new();
+    private static readonly Dictionary<string, CachedModuleCertificate> CachedModuleCertificates = new(StringComparer.Ordinal);
+    private static X509Certificate2 cachedRootAuthority;
+    private static string cachedRootAuthorityPath = "";
+    private static string cachedRootAuthorityPassword = "";
+    private static DateTime cachedRootAuthorityWriteTimeUtc;
 
     public static X509Certificate2 GetOrCreate(string moduleName)
     {
@@ -697,6 +711,127 @@ public static class LocalCertificateStore
         using X509Certificate2 certificate = CreateRootAuthorityCertificate();
         File.WriteAllBytes(path, certificate.Export(X509ContentType.Pfx, GetCertificatePassword()));
         return Load(path);
+    }
+
+    public static X509Certificate2 GetOrCreateCached(string moduleName)
+    {
+        string key = NormalizeModuleName(moduleName);
+        string path = GetCertificatePath(key);
+        string password = GetCertificatePassword();
+
+        lock (ModuleCertificateCacheLock)
+        {
+            X509Certificate2 rootCertificate = GetCachedRootAuthority();
+            DateTime writeTimeUtc = File.Exists(path)
+                ? File.GetLastWriteTimeUtc(path)
+                : DateTime.MinValue;
+
+            if (CachedModuleCertificates.TryGetValue(key, out CachedModuleCertificate cached) &&
+                string.Equals(cached.Path, path, StringComparison.Ordinal) &&
+                string.Equals(cached.Password, password, StringComparison.Ordinal) &&
+                cached.WriteTimeUtc == writeTimeUtc &&
+                IsModuleCertificateValid(cached.Certificate, rootCertificate))
+            {
+                return cached.Certificate;
+            }
+
+            if (cached != null)
+            {
+                CachedModuleCertificates.Remove(key);
+            }
+
+            X509Certificate2 certificate = GetOrCreate(key);
+            CachedModuleCertificates[key] = new CachedModuleCertificate(
+                certificate,
+                path,
+                password,
+                File.GetLastWriteTimeUtc(path));
+            return certificate;
+        }
+    }
+
+    internal static X509Certificate2 GetCachedRootAuthority()
+    {
+        lock (RootAuthorityCacheLock)
+        {
+            string path = GetRootCertificatePath();
+            string password = GetCertificatePassword();
+            DateTime writeTimeUtc = File.Exists(path)
+                ? File.GetLastWriteTimeUtc(path)
+                : DateTime.MinValue;
+
+            if (cachedRootAuthority != null &&
+                string.Equals(cachedRootAuthorityPath, path, StringComparison.Ordinal) &&
+                string.Equals(cachedRootAuthorityPassword, password, StringComparison.Ordinal) &&
+                cachedRootAuthorityWriteTimeUtc == writeTimeUtc &&
+                IsRootCertificateValid(cachedRootAuthority))
+            {
+                return cachedRootAuthority;
+            }
+
+            ClearRootAuthorityCacheCore();
+            cachedRootAuthority = GetOrCreateRootAuthority();
+            cachedRootAuthorityPath = path;
+            cachedRootAuthorityPassword = password;
+            cachedRootAuthorityWriteTimeUtc = File.GetLastWriteTimeUtc(path);
+            return cachedRootAuthority;
+        }
+    }
+
+    internal static void ClearCertificateCaches()
+    {
+        lock (ModuleCertificateCacheLock)
+        {
+            CachedModuleCertificates.Clear();
+        }
+
+        ClearRootAuthorityCache();
+    }
+
+    internal static void ClearRootAuthorityCache()
+    {
+        lock (RootAuthorityCacheLock)
+        {
+            ClearRootAuthorityCacheCore();
+        }
+    }
+
+    private static void ClearRootAuthorityCacheCore()
+    {
+        cachedRootAuthority = null;
+        cachedRootAuthorityPath = "";
+        cachedRootAuthorityPassword = "";
+        cachedRootAuthorityWriteTimeUtc = DateTime.MinValue;
+    }
+
+    private static string NormalizeModuleName(string moduleName)
+    {
+        return string.IsNullOrWhiteSpace(moduleName)
+            ? "SocketCommon"
+            : moduleName.Trim();
+    }
+
+    private sealed class CachedModuleCertificate
+    {
+        public CachedModuleCertificate(
+            X509Certificate2 certificate,
+            string path,
+            string password,
+            DateTime writeTimeUtc)
+        {
+            this.Certificate = certificate;
+            this.Path = path;
+            this.Password = password;
+            this.WriteTimeUtc = writeTimeUtc;
+        }
+
+        public X509Certificate2 Certificate { get; }
+
+        public string Path { get; }
+
+        public string Password { get; }
+
+        public DateTime WriteTimeUtc { get; }
     }
 
     private static X509Certificate2 Load(string path)
@@ -820,7 +955,7 @@ public static class LocalCertificateStore
             rootCertificate,
             DateTimeOffset.UtcNow.AddDays(-1),
             DateTimeOffset.UtcNow.AddYears(SecureSocketConnection.ModuleCertificateLifetimeYears),
-            CreateSerialNumber(moduleName));
+            CreateSerialNumber());
         return certificate.CopyWithPrivateKey(ecdsa);
     }
 
@@ -884,7 +1019,7 @@ public static class LocalCertificateStore
         return false;
     }
 
-    private static byte[] CreateSerialNumber(string moduleName)
+    private static byte[] CreateSerialNumber()
     {
         byte[] serialNumber = new byte[16];
         RandomNumberGenerator.Fill(serialNumber);

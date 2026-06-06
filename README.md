@@ -85,7 +85,7 @@ Sample Client:
 dotnet run --project Samples/SocketSample.Net/SocketSample.Net.csproj
 ```
 
-기본 샘플 클라이언트 주소는 `http://127.0.0.1:5090`입니다. iOS, macOS, Android 네이티브 샘플은 [Samples](Samples/README.md)를 참고합니다.
+.NET 샘플 클라이언트 UI는 기본적으로 동적 포트에 바인딩됩니다. 실행 로그의 `Now listening on` 주소를 확인합니다. iOS, macOS, Android 네이티브 샘플은 [Samples](Samples/README.md)를 참고합니다.
 
 ## 부하 테스트
 

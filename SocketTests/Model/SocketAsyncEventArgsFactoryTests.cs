@@ -124,4 +124,21 @@ public class SocketAsyncEventArgsFactoryTests
 
         SocketAsyncEventArgsFactory.Configure(SocketAsyncEventArgsFactory.InitialPoolSize, SocketAsyncEventArgsFactory.GrowthSize, 20000);
     }
+
+    [TestMethod]
+    public void ReturnBeyondMaxRetainedDecrementsTotalCreatedCountTest()
+    {
+        int targetSize = Math.Max(
+            SocketAsyncEventArgsFactory.TotalCreatedCount,
+            SocketAsyncEventArgsFactory.InitialPoolSize) + 5;
+        SocketAsyncEventArgsFactory.Configure(targetSize, 1, SocketAsyncEventArgsFactory.InitialPoolSize);
+
+        SocketAsyncEventArgs args = SocketAsyncEventArgsFactory.Rent();
+        int totalCreatedBeforeReturn = SocketAsyncEventArgsFactory.TotalCreatedCount;
+        SocketAsyncEventArgsFactory.Return(args);
+
+        Assert.AreEqual(totalCreatedBeforeReturn - 1, SocketAsyncEventArgsFactory.TotalCreatedCount);
+
+        SocketAsyncEventArgsFactory.Configure(SocketAsyncEventArgsFactory.InitialPoolSize, SocketAsyncEventArgsFactory.GrowthSize, 20000);
+    }
 }

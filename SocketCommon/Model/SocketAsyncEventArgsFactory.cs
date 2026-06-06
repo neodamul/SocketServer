@@ -104,6 +104,7 @@ public static class SocketAsyncEventArgsFactory
         {
             ReturnMappedBufferLease(args);
             args.Dispose();
+            Interlocked.Decrement(ref totalCreatedCount);
             return;
         }
 

@@ -20,12 +20,14 @@ public class ControlServer : IDisposable
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<ControlServer>();
     private static readonly SocketLogger RelayLogger = SocketLogManager.GetRelayLogger<ControlServer>();
     private const int CommandWorkerCount = 4;
+    private const int CommandResponseWorkerCount = 4;
 
     private readonly ControlServerNodeConfig config;
     private readonly IReadOnlyCollection<EndpointConfig> peers;
     private readonly BackendServerRegistry registry;
     private readonly ControlHealthThreshold healthThreshold;
     private readonly ConcurrentDictionary<long, ActiveControlConnection> activeConnections = new();
+    private readonly ConcurrentDictionary<SecureSocketConnection, ActiveControlConnection> activeConnectionsBySecureConnection = new();
     private readonly ConcurrentDictionary<string, PersistentSecureChannel> peerChannels = new(StringComparer.Ordinal);
     private readonly Channel<ControlCommandRequest> commandRequestChannel = Channel.CreateUnbounded<ControlCommandRequest>(
         new UnboundedChannelOptions
@@ -36,7 +38,7 @@ public class ControlServer : IDisposable
     private readonly Channel<ControlResponseCommand> commandResponseChannel = Channel.CreateUnbounded<ControlResponseCommand>(
         new UnboundedChannelOptions
         {
-            SingleReader = true,
+            SingleReader = false,
             SingleWriter = false
         });
     private readonly Channel<PeerRelayCommand> peerRelayRequestChannel = Channel.CreateUnbounded<PeerRelayCommand>(
@@ -58,10 +60,10 @@ public class ControlServer : IDisposable
     private Task? peerAcceptTask;
     private Task? connectionCleanupTask;
     private Task? peerSnapshotSyncTask;
-    private Task? commandResponseTask;
     private Task? peerRelayRequestTask;
     private Task? peerRelayResponseTask;
     private Task[] commandWorkerTasks = Array.Empty<Task>();
+    private Task[] commandResponseWorkerTasks = Array.Empty<Task>();
     private long nextActiveSocketId;
     private bool disposedValue;
 
@@ -96,7 +98,7 @@ public class ControlServer : IDisposable
         try
         {
             this.listener = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-            this.listener.Bind(new IPEndPoint(IPAddress.Parse(this.config.Host), this.config.Port));
+            this.listener.Bind(new IPEndPoint(SocketFactory.ResolveAddress(this.config.Host), this.config.Port));
             this.listener.Listen(SocketFactory.ListenBacklog);
             LocalCertificateStore.GetOrCreate("SocketControl");
             this.cancellation = new CancellationTokenSource();
@@ -107,7 +109,8 @@ public class ControlServer : IDisposable
                 CommandWorkerCount,
                 this.RunCommandRequestLoopAsync,
                 this.cancellation.Token);
-            this.commandResponseTask = DedicatedWorker.Start(
+            this.commandResponseWorkerTasks = DedicatedWorker.StartMany(
+                CommandResponseWorkerCount,
                 this.RunCommandResponseLoopAsync,
                 this.cancellation.Token);
             this.peerRelayRequestTask = DedicatedWorker.Start(
@@ -119,7 +122,7 @@ public class ControlServer : IDisposable
             if (this.config.PeerSyncPort > 0 && this.config.PeerSyncPort != this.config.Port)
             {
                 this.peerListener = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-                this.peerListener.Bind(new IPEndPoint(IPAddress.Parse(this.config.Host), this.config.PeerSyncPort));
+                this.peerListener.Bind(new IPEndPoint(SocketFactory.ResolveAddress(this.config.Host), this.config.PeerSyncPort));
                 this.peerListener.Listen(SocketFactory.ListenBacklog);
                 this.peerAcceptTask = DedicatedWorker.Start(
                     token => this.RunAcceptLoopAsync(token, this.peerListener),
@@ -167,7 +170,11 @@ public class ControlServer : IDisposable
             await WaitForTaskAsync(commandWorkerTask, timeout);
         }
 
-        await WaitForTaskAsync(this.commandResponseTask, timeout);
+        foreach (Task commandResponseWorkerTask in this.commandResponseWorkerTasks)
+        {
+            await WaitForTaskAsync(commandResponseWorkerTask, timeout);
+        }
+
         await WaitForTaskAsync(this.peerRelayRequestTask, timeout);
         await WaitForTaskAsync(this.peerRelayResponseTask, timeout);
 
@@ -178,7 +185,7 @@ public class ControlServer : IDisposable
         this.connectionCleanupTask = null;
         this.peerSnapshotSyncTask = null;
         this.commandWorkerTasks = Array.Empty<Task>();
-        this.commandResponseTask = null;
+        this.commandResponseWorkerTasks = Array.Empty<Task>();
         this.peerRelayRequestTask = null;
         this.peerRelayResponseTask = null;
         this.cancellation?.Dispose();
@@ -242,6 +249,7 @@ public class ControlServer : IDisposable
         try
         {
             acceptedConnection = await SecureSocketConnection.AuthenticateServerAsync(socket, "SocketControl");
+            this.activeConnectionsBySecureConnection[acceptedConnection] = activeConnection;
             while (true)
             {
                 (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(acceptedConnection);
@@ -287,6 +295,11 @@ public class ControlServer : IDisposable
         {
             acceptedConnection?.Dispose();
             this.activeConnections.TryRemove(activeSocketId, out _);
+            if (acceptedConnection != null)
+            {
+                this.activeConnectionsBySecureConnection.TryRemove(acceptedConnection, out _);
+            }
+
             string disconnectedInstanceId = string.IsNullOrWhiteSpace(serverInstanceId)
                 ? activeConnection.ServerInstanceId
                 : serverInstanceId;
@@ -444,7 +457,9 @@ public class ControlServer : IDisposable
         uint messageId,
         T payload)
     {
+        this.activeConnectionsBySecureConnection.TryGetValue(connection, out ActiveControlConnection? activeConnection);
         ControlResponseCommand command = new(
+            activeConnection,
             connection,
             clientId,
             messageId,
@@ -453,7 +468,9 @@ public class ControlServer : IDisposable
         if (!this.commandResponseChannel.Writer.TryWrite(command))
         {
             Logger.Warn($"ControlServer response queue rejected item. controlNodeId={this.config.NodeId}, messageId={messageId}, payloadType={command.PayloadType}");
-            return await ControlProtocol.SendAsync(connection, clientId, messageId, payload);
+            return activeConnection == null
+                ? await ControlProtocol.SendAsync(connection, clientId, messageId, payload)
+                : await activeConnection.SendAsync(connection, clientId, messageId, payload!);
         }
 
         return await command.Completion.Task;
@@ -467,11 +484,17 @@ public class ControlServer : IDisposable
             {
                 try
                 {
-                    bool success = await ControlProtocol.SendAsync(
-                        command.Connection,
-                        command.ClientId,
-                        command.MessageId,
-                        command.Payload);
+                    bool success = command.ActiveConnection == null
+                        ? await ControlProtocol.SendAsync(
+                            command.Connection,
+                            command.ClientId,
+                            command.MessageId,
+                            command.Payload)
+                        : await command.ActiveConnection.SendAsync(
+                            command.Connection,
+                            command.ClientId,
+                            command.MessageId,
+                            command.Payload);
                     command.Completion.TrySetResult(success);
                 }
                 catch (Exception exception)
@@ -1061,7 +1084,9 @@ public class ControlServer : IDisposable
 
     private sealed class ActiveControlConnection
     {
+        private readonly object sendQueueLock = new();
         private long lastReceivedAtTicks;
+        private Task sendQueueTail = Task.CompletedTask;
 
         public ActiveControlConnection(Socket socket)
         {
@@ -1078,6 +1103,45 @@ public class ControlServer : IDisposable
         public void MarkReceived()
         {
             Interlocked.Exchange(ref this.lastReceivedAtTicks, DateTimeOffset.UtcNow.Ticks);
+        }
+
+        public Task<bool> SendAsync(
+            SecureSocketConnection connection,
+            uint clientId,
+            uint messageId,
+            object payload)
+        {
+            lock (this.sendQueueLock)
+            {
+                Task<bool> sendTask = SendAfterAsync(this.sendQueueTail, connection, clientId, messageId, payload);
+                this.sendQueueTail = sendTask;
+                return sendTask;
+            }
+        }
+
+        private static async Task<bool> SendAfterAsync(
+            Task previousSendTask,
+            SecureSocketConnection connection,
+            uint clientId,
+            uint messageId,
+            object payload)
+        {
+            try
+            {
+                await previousSendTask.ConfigureAwait(false);
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                return await ControlProtocol.SendAsync(connection, clientId, messageId, payload).ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+                return false;
+            }
         }
     }
 
@@ -1112,18 +1176,22 @@ public class ControlServer : IDisposable
     private sealed class ControlResponseCommand
     {
         public ControlResponseCommand(
+            ActiveControlConnection? activeConnection,
             SecureSocketConnection connection,
             uint clientId,
             uint messageId,
             object payload,
             string payloadType)
         {
+            this.ActiveConnection = activeConnection;
             this.Connection = connection;
             this.ClientId = clientId;
             this.MessageId = messageId;
             this.Payload = payload;
             this.PayloadType = payloadType;
         }
+
+        public ActiveControlConnection? ActiveConnection { get; }
 
         public SecureSocketConnection Connection { get; }
 

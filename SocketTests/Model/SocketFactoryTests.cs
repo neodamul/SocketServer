@@ -81,4 +81,24 @@ public class SocketFactoryTests
         Assert.AreEqual(30000, SocketFactory.ReadTimeoutMilliseconds);
         Assert.AreEqual(30000, SocketFactory.WriteTimeoutMilliseconds);
     }
+
+    [TestMethod]
+    public async Task ResolveAddressAsyncSupportsDnsHostTest()
+    {
+        IPAddress address = await SocketFactory.ResolveAddressAsync("localhost", AddressFamily.InterNetwork);
+
+        Assert.AreEqual(AddressFamily.InterNetwork, address.AddressFamily);
+    }
+
+    [TestMethod]
+    public void SelectAddressRejectsAddressFamilyMismatchTest()
+    {
+        SocketException exception = Assert.ThrowsException<SocketException>(() =>
+            SocketFactory.SelectAddress(
+                "ipv6-only.example",
+                new[] { IPAddress.IPv6Loopback },
+                AddressFamily.InterNetwork));
+
+        Assert.AreEqual(SocketError.AddressFamilyNotSupported, exception.SocketErrorCode);
+    }
 }

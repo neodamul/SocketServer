@@ -40,6 +40,7 @@ public class ControlServerReporter : IDisposable
             SingleWriter = false
         });
     private readonly CancellationTokenSource reportCancellation = new();
+    private readonly CancellationTokenSource relayRefreshCancellation = new();
     private readonly Task reportWorkerTask;
     private CancellationTokenSource cancellation;
     private Task heartbeatTask;
@@ -94,55 +95,11 @@ public class ControlServerReporter : IDisposable
         {
             this.lastRegisterSentAt = DateTimeOffset.UtcNow;
             Logger.Info($"SocketServer metadata report completed. instanceId={request.InstanceId}, endpoint={request.Host}:{request.Port}, successEndpoints={successCount}, controlEndpoints={this.connections.Count}");
-            await this.WarmSessionConnectionsAsync();
-            if (successCount == this.connections.Count)
-            {
-                await this.RefreshRelayServersAsync(force: true);
-            }
-            else
-            {
-                this.QueueRelayRefresh(force: true);
-            }
-
+            this.QueueRelayRefresh(force: true, delay: TimeSpan.FromSeconds(1));
             return;
         }
 
         Logger.Warn($"SocketServer metadata report completed without successful ControlServer endpoint. instanceId={request.InstanceId}, endpoint={request.Host}:{request.Port}, controlEndpoints={this.connections.Count}");
-    }
-
-    private async Task WarmSessionConnectionsAsync()
-    {
-        if (this.sessionConnections.Count == 0)
-        {
-            return;
-        }
-
-        bool[] results = await Task.WhenAll(this.sessionConnections.Select(WarmSessionConnectionAsync));
-        int successCount = results.Count(success => success);
-        Logger.Debug($"ControlServer session report connections warmed. instanceId={this.server.InstanceId}, successEndpoints={successCount}, endpointCount={this.sessionConnections.Count}");
-    }
-
-    private static async Task<bool> WarmSessionConnectionAsync(ControlEndpointConnection connection)
-    {
-        try
-        {
-            await connection.ConnectAsync();
-            return true;
-        }
-        catch (SocketException exception)
-        {
-            Logger.Warn($"ControlServer session report connection warm-up failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}", exception);
-        }
-        catch (IOException exception)
-        {
-            Logger.Warn($"ControlServer session report connection warm-up I/O failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}", exception);
-        }
-        catch (AuthenticationException exception)
-        {
-            Logger.Warn($"ControlServer session report connection warm-up authentication failed. endpoint={connection.Endpoint.Host}:{connection.Endpoint.Port}", exception);
-        }
-
-        return false;
     }
 
     public void StartHeartbeatLoop(TimeSpan interval)
@@ -176,6 +133,8 @@ public class ControlServerReporter : IDisposable
         {
             connection.Close();
         }
+
+        this.relayRefreshCancellation.Cancel();
     }
 
     private async Task RunHeartbeatLoopAsync(TimeSpan interval, CancellationToken cancellationToken)
@@ -256,7 +215,7 @@ public class ControlServerReporter : IDisposable
         }
     }
 
-    private void QueueRelayRefresh(bool force)
+    private void QueueRelayRefresh(bool force, TimeSpan? delay = null)
     {
         DateTimeOffset now = DateTimeOffset.UtcNow;
         lock (this.relayRefreshLock)
@@ -269,23 +228,31 @@ public class ControlServerReporter : IDisposable
             this.lastRelayRefreshStartedAt = now;
         }
 
-        _ = this.server.RefreshRelayServersFromControlServersAsync();
+        _ = this.RefreshRelayServersInBackgroundAsync(delay ?? TimeSpan.Zero, this.relayRefreshCancellation.Token);
     }
 
-    private async Task RefreshRelayServersAsync(bool force)
+    private async Task RefreshRelayServersInBackgroundAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        lock (this.relayRefreshLock)
+        try
         {
-            if (!force && now - this.lastRelayRefreshStartedAt < RelayRefreshInterval)
+            if (delay > TimeSpan.Zero)
             {
-                return;
+                await Task.Delay(delay, cancellationToken);
             }
 
-            this.lastRelayRefreshStartedAt = now;
+            cancellationToken.ThrowIfCancellationRequested();
+            await this.server.RefreshRelayServersFromControlServersAsync();
         }
-
-        await this.server.RefreshRelayServersFromControlServersAsync();
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Logger.Warn($"SocketServer relay server refresh failed. instanceId={this.server.InstanceId}", exception);
+        }
     }
 
     private Task SendSessionOpenedAsync(ConnectionSession session)
@@ -564,6 +531,7 @@ public class ControlServerReporter : IDisposable
             }
 
             this.reportCancellation.Dispose();
+            this.relayRefreshCancellation.Dispose();
             foreach (ControlEndpointConnection connection in this.connections)
             {
                 connection.Dispose();
@@ -713,7 +681,7 @@ public class ControlServerReporter : IDisposable
 
             this.Close();
             this.socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
-            await SocketFactory.ConnectAsync(this.socket, IPAddress.Parse(this.Endpoint.Host), this.Endpoint.Port);
+            await SocketFactory.ConnectAsync(this.socket, this.Endpoint.Host, this.Endpoint.Port);
             this.connection = await SecureSocketConnection.AuthenticateClientAsync(this.socket, "SocketServer");
         }
     }

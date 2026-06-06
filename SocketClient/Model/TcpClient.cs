@@ -70,7 +70,7 @@ public class TcpClient : IClient, IDisposable
         }
         else
         {
-            this.SetIpAddress(IPAddress.Parse(ipAddress));
+            this.SetIpAddress(SocketFactory.ResolveAddress(ipAddress, this.Family));
         }
     }
 
@@ -132,51 +132,62 @@ public class TcpClient : IClient, IDisposable
 
     public async Task<bool> ConnectViaControlServerAsync(string controlHost, int controlPort)
     {
-        return await this.ConnectViaControlServersAsync(new[] { new IPEndPoint(IPAddress.Parse(controlHost), controlPort) });
+        return await this.ConnectViaControlEndpointAsync(controlHost, controlPort);
     }
 
     public async Task<bool> ConnectViaControlServersAsync(IEnumerable<IPEndPoint> controlEndpoints)
     {
         foreach (IPEndPoint endpoint in controlEndpoints)
         {
-            try
+            if (await this.ConnectViaControlEndpointAsync(endpoint.Address.ToString(), endpoint.Port))
             {
-                Logger.Info($"ControlServer route request started. clientId={this.ClientId}, endpoint={endpoint}");
-                Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family);
-                await SocketFactory.ConnectAsync(controlSocket, endpoint.Address, endpoint.Port);
-                using SecureSocketConnection controlConnection =
-                    await SecureSocketConnection.AuthenticateClientAsync(controlSocket, "SocketClient");
-                (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
-                    controlConnection,
-                    this.ClientId,
-                    ControlMessageIds.RouteRequest,
-                    new RouteRequest
-                    {
-                        ClientId = this.ClientId,
-                        RoutingPolicy = "MostAvailableConnections"
-                    });
+                return true;
+            }
+        }
 
-                if (!success ||
-                    !ControlProtocol.TryDecode(frame, ControlMessageIds.RouteResponse, out RouteResponse response) ||
-                    !response.Success)
+        return false;
+    }
+
+    private async Task<bool> ConnectViaControlEndpointAsync(string controlHost, int controlPort)
+    {
+        string endpoint = $"{controlHost}:{controlPort}";
+        try
+        {
+            Logger.Info($"ControlServer route request started. clientId={this.ClientId}, endpoint={endpoint}");
+            Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family);
+            await SocketFactory.ConnectAsync(controlSocket, controlHost, controlPort);
+            using SecureSocketConnection controlConnection =
+                await SecureSocketConnection.AuthenticateClientAsync(controlSocket, "SocketClient");
+            (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
+                controlConnection,
+                this.ClientId,
+                ControlMessageIds.RouteRequest,
+                new RouteRequest
                 {
-                    Logger.Warn($"ControlServer route request did not return usable server. clientId={this.ClientId}, endpoint={endpoint}, success={success}");
-                    continue;
-                }
+                    ClientId = this.ClientId,
+                    RoutingPolicy = "MostAvailableConnections"
+                });
 
-                Logger.Info($"ControlServer route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={response.InstanceId}, serverEndpoint={response.Host}:{response.Port}, reservationId={response.ReservationId}");
-                this.SetIpAddress(response.Host);
-                this.SetPort(response.Port);
-                return this.Connect();
-            }
-            catch (SocketException exception)
+            if (!success ||
+                !ControlProtocol.TryDecode(frame, ControlMessageIds.RouteResponse, out RouteResponse response) ||
+                !response.Success)
             {
-                Logger.Warn($"ControlServer route request failed. clientId={this.ClientId}, endpoint={endpoint}", exception);
+                Logger.Warn($"ControlServer route request did not return usable server. clientId={this.ClientId}, endpoint={endpoint}, success={success}");
+                return false;
             }
-            catch (TimeoutException exception)
-            {
-                Logger.Warn($"ControlServer route request timed out. clientId={this.ClientId}, endpoint={endpoint}", exception);
-            }
+
+            Logger.Info($"ControlServer route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={response.InstanceId}, serverEndpoint={response.Host}:{response.Port}, reservationId={response.ReservationId}");
+            this.SetIpAddress(response.Host);
+            this.SetPort(response.Port);
+            return this.Connect();
+        }
+        catch (SocketException exception)
+        {
+            Logger.Warn($"ControlServer route request failed. clientId={this.ClientId}, endpoint={endpoint}", exception);
+        }
+        catch (TimeoutException exception)
+        {
+            Logger.Warn($"ControlServer route request timed out. clientId={this.ClientId}, endpoint={endpoint}", exception);
         }
 
         return false;

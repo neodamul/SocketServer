@@ -3,6 +3,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Authentication;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System;
 using System.Threading.Tasks;
@@ -240,6 +241,32 @@ public class SecureSocketConnectionTests
         }
         finally
         {
+            Environment.SetEnvironmentVariable(TestPasswordVariable, null);
+            DeleteTemporaryCertificateDirectory(directory);
+            SecureSocketConnection.Configure(CreateSecurityConfig());
+        }
+    }
+
+    [TestMethod]
+    public void CachedCertificateRemainsUsableAfterCacheInvalidationTest()
+    {
+        string directory = CreateTemporaryCertificateDirectory();
+        Environment.SetEnvironmentVariable(TestPasswordVariable, $"password-{Guid.NewGuid():N}");
+        X509Certificate2? cachedCertificate = null;
+        try
+        {
+            SecureSocketConnection.Configure(CreateSecurityConfig(directory));
+            cachedCertificate = LocalCertificateStore.GetOrCreateCached("SocketTestsCachedLifetime");
+
+            SecureSocketConnection.Configure(CreateSecurityConfig(directory, certificateRenewBeforeDays: 800));
+
+            using ECDsa? privateKey = cachedCertificate.GetECDsaPrivateKey();
+            Assert.IsNotNull(privateKey);
+            Assert.IsTrue(cachedCertificate.HasPrivateKey);
+        }
+        finally
+        {
+            cachedCertificate?.Dispose();
             Environment.SetEnvironmentVariable(TestPasswordVariable, null);
             DeleteTemporaryCertificateDirectory(directory);
             SecureSocketConnection.Configure(CreateSecurityConfig());

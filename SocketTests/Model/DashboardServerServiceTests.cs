@@ -293,7 +293,10 @@ public class DashboardServerServiceTests
                 Host = "127.0.0.1",
                 Port = 0,
                 PeerSyncPort = 0,
-                RouteReservationSeconds = 5
+                RouteReservationSeconds = 5,
+                DegradedCpuPercent = 101,
+                DegradedMemoryPercent = 101,
+                DegradedStoragePercent = 101
             }
         });
         Assert.IsTrue(controlServer.Start());

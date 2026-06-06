@@ -26,6 +26,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<TcpServer>();
     private static readonly SocketLogger RelayLogger = SocketLogManager.GetRelayLogger<TcpServer>();
     private const int ClientCommandWorkerCount = 4;
+    private const int ClientResponseWorkerCount = 4;
     private const int ServerRelayWorkerCount = 8;
 
     private readonly ConcurrentDictionary<long, ConnectionSession> connectedClients = new();
@@ -42,7 +43,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     private readonly Channel<ClientResponseCommand> clientResponseChannel = Channel.CreateUnbounded<ClientResponseCommand>(
         new UnboundedChannelOptions
         {
-            SingleReader = true,
+            SingleReader = false,
             SingleWriter = false
         });
     private readonly Channel<ServerRelayCommand> serverRelayRequestChannel = Channel.CreateUnbounded<ServerRelayCommand>(
@@ -67,9 +68,9 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     private string clusterId = "socket-cluster-1";
     private CancellationTokenSource acceptLoopCancellation;
     private Task acceptLoopTask;
-    private Task clientResponseTask;
     private Task serverRelayResponseTask;
     private Task[] clientCommandWorkerTasks = Array.Empty<Task>();
+    private Task[] clientResponseWorkerTasks = Array.Empty<Task>();
     private Task[] serverRelayWorkerTasks = Array.Empty<Task>();
     private bool isListening;
     private DateTimeOffset? startedAt;
@@ -392,14 +393,18 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             await WaitForTaskAsync(task, timeout);
         }
 
-        await WaitForTaskAsync(this.clientResponseTask, timeout);
+        foreach (Task task in this.clientResponseWorkerTasks)
+        {
+            await WaitForTaskAsync(task, timeout);
+        }
+
         await WaitForTaskAsync(this.serverRelayResponseTask, timeout);
         this.acceptLoopCancellation?.Dispose();
         this.acceptLoopCancellation = null;
         this.acceptLoopTask = null;
-        this.clientResponseTask = null;
         this.serverRelayResponseTask = null;
         this.clientCommandWorkerTasks = Array.Empty<Task>();
+        this.clientResponseWorkerTasks = Array.Empty<Task>();
         this.serverRelayWorkerTasks = Array.Empty<Task>();
         Logger.Info($"Server ended. endpoint={this.GetIpAddress()}:{this.GetPort()}");
         return true;
@@ -424,7 +429,8 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             ClientCommandWorkerCount,
             this.RunClientCommandRequestLoopAsync,
             this.acceptLoopCancellation.Token);
-        this.clientResponseTask = DedicatedWorker.Start(
+        this.clientResponseWorkerTasks = DedicatedWorker.StartMany(
+            ClientResponseWorkerCount,
             this.RunClientResponseLoopAsync,
             this.acceptLoopCancellation.Token);
         this.serverRelayWorkerTasks = DedicatedWorker.StartMany(
@@ -435,7 +441,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             this.RunServerRelayResponseLoopAsync,
             this.acceptLoopCancellation.Token);
         this.acceptLoopTask = DedicatedWorker.Start(this.RunClientAcceptLoopAsync, this.acceptLoopCancellation.Token);
-        Logger.Info($"Accept loop started. endpoint={this.GetIpAddress()}:{this.GetPort()}, commandWorkers={ClientCommandWorkerCount}, relayWorkers={ServerRelayWorkerCount}");
+        Logger.Info($"Accept loop started. endpoint={this.GetIpAddress()}:{this.GetPort()}, commandWorkers={ClientCommandWorkerCount}, responseWorkers={ClientResponseWorkerCount}, relayWorkers={ServerRelayWorkerCount}");
         return true;
     }
 

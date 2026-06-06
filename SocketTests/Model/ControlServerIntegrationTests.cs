@@ -130,7 +130,7 @@ public class ControlServerIntegrationTests
                 PeerSyncPort = 0,
                 PeerSnapshotSyncIntervalSeconds = 1
             },
-            Peers = { new EndpointConfig { Host = "127.0.0.1", Port = primaryPort } }
+            Peers = { new EndpointConfig { Host = "localhost", Port = primaryPort } }
         });
         Assert.IsTrue(peerControl.Start());
 
@@ -497,7 +497,10 @@ public class ControlServerIntegrationTests
                 Host = "127.0.0.1",
                 Port = 0,
                 PeerSyncPort = 0,
-                RouteReservationSeconds = 5
+                RouteReservationSeconds = 5,
+                DegradedCpuPercent = 101,
+                DegradedMemoryPercent = 101,
+                DegradedStoragePercent = 101
             }
         });
         Assert.IsTrue(healthyControl.Start());
@@ -756,7 +759,10 @@ public class ControlServerIntegrationTests
                 Port = 0,
                 PeerSyncPort = 0,
                 RouteReservationSeconds = 5,
-                HeartbeatTimeoutSeconds = heartbeatTimeoutSeconds
+                HeartbeatTimeoutSeconds = heartbeatTimeoutSeconds,
+                DegradedCpuPercent = 101,
+                DegradedMemoryPercent = 101,
+                DegradedStoragePercent = 101
             }
         });
         Assert.IsTrue(controlA.Start());
@@ -772,7 +778,10 @@ public class ControlServerIntegrationTests
                 Port = 0,
                 PeerSyncPort = 0,
                 RouteReservationSeconds = 5,
-                HeartbeatTimeoutSeconds = heartbeatTimeoutSeconds
+                HeartbeatTimeoutSeconds = heartbeatTimeoutSeconds,
+                DegradedCpuPercent = 101,
+                DegradedMemoryPercent = 101,
+                DegradedStoragePercent = 101
             },
             Peers = { new EndpointConfig { Host = "127.0.0.1", Port = controlA.Port } }
         });
