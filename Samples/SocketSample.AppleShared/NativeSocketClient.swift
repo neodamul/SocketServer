@@ -9,6 +9,13 @@ enum NativeSocketError: Error {
     case messageFailed(String)
 }
 
+enum NativeSocketClientEvent {
+    case delivery(ClientMessageDelivery)
+    case ack(ClientMessageAckResult)
+    case error(String)
+    case ignored
+}
+
 final class NativeSocketClient {
     private let queue = DispatchQueue(label: "socket-sample.native-client")
     private var connection: NWConnection?
@@ -136,17 +143,6 @@ final class NativeSocketClient {
             clientId: config.clientId,
             messageId: SocketMessageId.clientMessageSend,
             payload: payload))
-        let frame = try await receiveFrame()
-        if frame.messageId == SocketMessageId.clientMessageAck,
-           ProtoCodec.decodeAckDelivered(frame.payload) {
-            return
-        }
-
-        if frame.messageId == SocketMessageId.clientMessageError {
-            throw NativeSocketError.messageFailed(ProtoCodec.decodeErrorMessage(frame.payload))
-        }
-
-        throw NativeSocketError.messageFailed("Invalid message response.")
     }
 
     func receiveMessage() async throws -> ClientMessageDelivery {
@@ -157,6 +153,24 @@ final class NativeSocketClient {
         }
 
         return delivery
+    }
+
+    func receiveEvent() async throws -> NativeSocketClientEvent {
+        let frame = try await receiveFrame()
+        if frame.messageId == SocketMessageId.clientMessageDeliver,
+           let delivery = ProtoCodec.decodeDelivery(frame.payload) {
+            return .delivery(delivery)
+        }
+
+        if frame.messageId == SocketMessageId.clientMessageAck {
+            return .ack(ProtoCodec.decodeAck(frame.payload))
+        }
+
+        if frame.messageId == SocketMessageId.clientMessageError {
+            return .error(ProtoCodec.decodeErrorMessage(frame.payload))
+        }
+
+        return .ignored
     }
 
     func disconnect() {

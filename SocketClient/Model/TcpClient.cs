@@ -489,6 +489,55 @@ public class TcpClient : IClient, IDisposable
         });
     }
 
+    public async Task<(bool Success, ClientMessageSendRequest Request, ClientMessageError Error)> SendClientMessageRequestAsync(
+        uint targetClientId,
+        string content,
+        int ttlSeconds = 10)
+    {
+        if (this.Connection == null)
+        {
+            Logger.Warn($"Client message send skipped because socket is not initialized. clientId={this.ClientId}");
+            return (false, null, new ClientMessageError
+            {
+                SourceClientId = this.ClientId,
+                TargetClientId = targetClientId,
+                ErrorCode = "SocketNotInitialized",
+                ErrorMessage = "Client socket is not initialized."
+            });
+        }
+
+        ClientMessageSendRequest request = ClientMessageProtocol.CreateSendRequest(
+            this.ClientId,
+            targetClientId,
+            content,
+            ttlSeconds: ttlSeconds);
+        Logger.Info($"Client message request sent. clientId={this.ClientId}, targetClientId={targetClientId}, messageToken={request.MessageToken}, ttlSeconds={ttlSeconds}");
+        if (!await ClientMessageProtocol.SendClientMessageAsync(this.Connection, request))
+        {
+            Logger.Warn($"Client message request send failed. clientId={this.ClientId}, targetClientId={targetClientId}, messageToken={request.MessageToken}");
+            return (false, request, new ClientMessageError
+            {
+                MessageToken = request.MessageToken,
+                SourceClientId = request.SourceClientId,
+                TargetClientId = request.TargetClientId,
+                ErrorCode = "SendFailed",
+                ErrorMessage = "Client message send failed."
+            });
+        }
+
+        return (true, request, null);
+    }
+
+    public async Task<(bool Success, SocketMessageFrame Frame)> TryReceiveFrameAsync()
+    {
+        if (this.Connection == null)
+        {
+            return (false, null);
+        }
+
+        return await SocketMessageFrame.TryReceiveAsync(this.Connection);
+    }
+
     public async Task<(bool Success, ClientMessageDelivery Delivery)> TryReceiveClientMessageAsync()
     {
         if (this.Connection == null)

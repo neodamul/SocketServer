@@ -75,16 +75,12 @@ public class SocketSampleClientTests
 
         Assert.IsTrue(await source.ConnectAsync());
         Assert.IsTrue(await target.ConnectAsync());
-        Assert.IsTrue(await source.RegisterAsync());
-        Assert.IsTrue(await target.RegisterAsync());
+        Assert.IsTrue(source.GetState().IsRegistered);
+        Assert.IsTrue(target.GetState().IsRegistered);
 
         Assert.IsTrue(await source.SendMessageAsync(302, "sample-message"));
-        SocketCommon.Model.ClientMessageDelivery? delivery = await target.ReceiveMessageAsync();
+        await WaitUntilAsync(() => target.GetState().LastReceivedMessage == "301: sample-message");
 
-        Assert.IsNotNull(delivery);
-        Assert.AreEqual((uint)301, delivery.SourceClientId);
-        Assert.AreEqual((uint)302, delivery.TargetClientId);
-        Assert.AreEqual("sample-message", delivery.Content);
         Assert.AreEqual("302", target.GetState().ClientId.ToString());
         Assert.AreEqual("301: sample-message", target.GetState().LastReceivedMessage);
     }
@@ -111,7 +107,7 @@ public class SocketSampleClientTests
         client.Configure(settings);
 
         Assert.IsTrue(await client.ConnectAsync());
-        Assert.IsTrue(await client.RegisterAsync());
+        Assert.IsTrue(client.GetState().IsRegistered);
 
         await Task.Delay(TimeSpan.FromSeconds(4));
 
@@ -155,6 +151,9 @@ public class SocketSampleClientTests
         Assert.IsTrue(config.Contains("target-client-id", StringComparison.Ordinal));
         Assert.IsTrue(view.Contains("SampleConfig.fromProcessArguments()", StringComparison.Ordinal));
         Assert.IsTrue(view.Contains("config.autoConnect", StringComparison.Ordinal));
+        Assert.IsTrue(view.Contains("startReceiveLoop()", StringComparison.Ordinal));
+        Assert.IsFalse(view.Contains("Button(\"Register\")", StringComparison.Ordinal));
+        Assert.IsFalse(view.Contains("Button(\"Receive\")", StringComparison.Ordinal));
         Assert.IsTrue(readme.Contains("-derivedDataPath Samples/SocketSample.macOS/build", StringComparison.Ordinal));
         Assert.IsTrue(readme.Contains("open -n Samples/SocketSample.macOS/build/Build/Products/Debug/SocketSampleMac.app --args --client-id 101", StringComparison.Ordinal));
         Assert.IsTrue(readme.Contains("--use-control-server true --auto-connect true", StringComparison.Ordinal));
@@ -166,9 +165,17 @@ public class SocketSampleClientTests
     {
         string root = FindRepositoryRoot();
         string program = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Net/Program.cs"));
+        string clientSession = File.ReadAllText(Path.Combine(root, "SocketClient/Model/SocketClientSession.cs"));
+        string sampleSession = File.ReadAllText(Path.Combine(root, "Samples/SocketSample.Shared/SampleSocketClientSession.cs"));
 
         Assert.IsTrue(program.Contains("http://127.0.0.1:0", StringComparison.Ordinal));
         Assert.IsFalse(program.Contains("http://127.0.0.1:5090", StringComparison.Ordinal));
+        Assert.IsFalse(program.Contains("registerClient()", StringComparison.Ordinal));
+        Assert.IsFalse(program.Contains("receiveMessage()", StringComparison.Ordinal));
+        Assert.IsFalse(program.Contains("/api/receive", StringComparison.Ordinal));
+        Assert.IsTrue(clientSession.Contains("ConnectAndRegisterAsync", StringComparison.Ordinal));
+        Assert.IsTrue(clientSession.Contains("StartReceiveLoop()", StringComparison.Ordinal));
+        Assert.IsTrue(sampleSession.Contains("SocketClientSession", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -252,5 +259,21 @@ public class SocketSampleClientTests
         }
 
         return false;
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (condition())
+            {
+                return;
+            }
+
+            await Task.Delay(100);
+        }
+
+        Assert.Fail("Condition was not satisfied in time.");
     }
 }

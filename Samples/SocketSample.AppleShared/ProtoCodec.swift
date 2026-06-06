@@ -6,6 +6,11 @@ struct ClientMessageDelivery {
     let content: String
 }
 
+struct ClientMessageAckResult {
+    let targetClientId: UInt32
+    let delivered: Bool
+}
+
 struct RouteTarget {
     let success: Bool
     let host: String
@@ -66,8 +71,11 @@ enum ProtoCodec {
             content: content)
     }
 
-    static func decodeAckDelivered(_ data: Data) -> Bool {
-        fields(from: data).bools[4] ?? false
+    static func decodeAck(_ data: Data) -> ClientMessageAckResult {
+        let parsed = fields(from: data)
+        return ClientMessageAckResult(
+            targetClientId: UInt32(parsed.varints[3] ?? 0),
+            delivered: parsed.bools[4] ?? false)
     }
 
     static func decodeErrorMessage(_ data: Data) -> String {

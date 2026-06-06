@@ -6,12 +6,8 @@ namespace SocketSample.Shared;
 public sealed class SampleSocketClientSession : IDisposable
 {
     private readonly object syncRoot = new();
-    private readonly SemaphoreSlim operationGate = new(1, 1);
-    private TcpClient? client;
+    private SocketClientSession? session;
     private SampleClientSettings settings = new();
-    private CancellationTokenSource? healthCheckCancellation;
-    private Task? healthCheckTask;
-    private bool registered;
     private string status = "Disconnected";
     private string lastReceivedMessage = "";
     private string lastError = "";
@@ -33,8 +29,8 @@ public sealed class SampleSocketClientSession : IDisposable
         {
             return new SampleClientState
             {
-                IsConnected = this.client?.IsConnected() ?? false,
-                IsRegistered = this.registered,
+                IsConnected = this.session?.IsConnected ?? false,
+                IsRegistered = this.session?.IsRegistered ?? false,
                 ClientId = this.settings.ClientId,
                 Host = this.settings.Host,
                 Port = this.settings.Port,
@@ -67,23 +63,28 @@ public sealed class SampleSocketClientSession : IDisposable
     public async Task<bool> ConnectAsync()
     {
         SampleClientSettings current = this.Settings;
-        TcpClient nextClient = new(current.ClientId, current.ClientName, current.Host, current.Port);
-        bool connected = current.UseControlServer
-            ? await nextClient.ConnectViaControlServerAsync(current.Host, current.Port)
-            : await Task.Run(nextClient.Connect);
-        if (!connected)
+        SocketClientSession nextSession = new();
+        this.AttachSessionEvents(nextSession);
+
+        bool success = await nextSession.ConnectAndRegisterAsync(
+            current.ClientId,
+            current.ClientName,
+            current.Host,
+            current.Port,
+            current.UseControlServer,
+            current.HealthCheckIntervalSeconds);
+        if (!success)
         {
-            nextClient.Dispose();
-            this.SetError("Connect failed.");
+            nextSession.Dispose();
+            this.SetError("Connect/register failed.");
             return false;
         }
 
         lock (this.syncRoot)
         {
-            this.client?.Dispose();
-            this.client = nextClient;
-            this.registered = false;
-            this.status = "Connected";
+            this.session?.Dispose();
+            this.session = nextSession;
+            this.status = "Connected and registered";
             this.lastError = "";
         }
 
@@ -92,106 +93,51 @@ public sealed class SampleSocketClientSession : IDisposable
 
     public async Task<bool> RegisterAsync()
     {
-        TcpClient activeClient = this.GetRequiredClient();
-        bool success;
-        await this.operationGate.WaitAsync();
-        try
-        {
-            success = await activeClient.RegisterClientAsync();
-        }
-        finally
-        {
-            this.operationGate.Release();
-        }
-
         lock (this.syncRoot)
         {
-            this.registered = success;
-            this.status = success ? "Registered" : "Register failed";
-            this.lastError = success ? "" : "Client register failed.";
+            this.status = this.session?.IsRegistered == true
+                ? "Already registered"
+                : "Client is not connected.";
+            this.lastError = this.session?.IsRegistered == true ? "" : "Client is not connected.";
         }
 
-        if (success)
+        await Task.CompletedTask;
+        return this.session?.IsRegistered == true;
+    }
+
+    public async Task<bool> SendMessageAsync(uint targetClientId, string content, int ttlSeconds = 10)
+    {
+        SocketClientSession activeSession = this.GetRequiredSession();
+        bool success = await activeSession.SendMessageAsync(targetClientId, content, ttlSeconds);
+        lock (this.syncRoot)
         {
-            this.StartHealthCheckLoop();
+            this.status = success ? $"Message sent to {targetClientId}" : "Message send failed";
+            this.lastError = success ? "" : "Message send failed.";
         }
 
         return success;
     }
 
-    public async Task<bool> SendMessageAsync(uint targetClientId, string content, int ttlSeconds = 10)
-    {
-        TcpClient activeClient = this.GetRequiredClient();
-        bool success;
-        ClientMessageAck ack;
-        ClientMessageError error;
-        await this.operationGate.WaitAsync();
-        try
-        {
-            (success, ack, error) = await activeClient.SendClientMessageAsync(targetClientId, content ?? "", ttlSeconds);
-        }
-        finally
-        {
-            this.operationGate.Release();
-        }
-
-        lock (this.syncRoot)
-        {
-            this.status = success ? $"Message delivered to {targetClientId}" : "Message send failed";
-            this.lastError = success ? "" : error?.ErrorMessage ?? "Message send failed.";
-        }
-
-        return success && ack != null;
-    }
-
     public async Task<ClientMessageDelivery?> ReceiveMessageAsync()
     {
-        TcpClient activeClient = this.GetRequiredClient();
-        int timeoutSeconds = Math.Max(1, this.Settings.ReceiveTimeoutSeconds);
-        await this.operationGate.WaitAsync();
-        try
+        lock (this.syncRoot)
         {
-            Task<(bool Success, ClientMessageDelivery Delivery)> receiveTask =
-                activeClient.TryReceiveClientMessageAsync();
-            Task completedTask = await Task.WhenAny(
-                receiveTask,
-                Task.Delay(TimeSpan.FromSeconds(timeoutSeconds)));
-            if (completedTask != receiveTask)
-            {
-                this.SetError("Receive timed out.");
-                return null;
-            }
-
-            (bool success, ClientMessageDelivery delivery) = await receiveTask;
-            if (!success || delivery == null)
-            {
-                this.SetError("Message receive failed.");
-                return null;
-            }
-
-            lock (this.syncRoot)
-            {
-                this.lastReceivedMessage = $"{delivery.SourceClientId}: {delivery.Content}";
-                this.status = "Message received";
-                this.lastError = "";
-            }
-
-            return delivery;
+            this.status = this.session?.IsRegistered == true
+                ? "Receive loop is running"
+                : "Receive loop is not running";
+            this.lastError = "";
         }
-        finally
-        {
-            this.operationGate.Release();
-        }
+
+        await Task.CompletedTask;
+        return null;
     }
 
     public void Disconnect()
     {
-        this.StopHealthCheckLoop();
         lock (this.syncRoot)
         {
-            this.client?.Dispose();
-            this.client = null;
-            this.registered = false;
+            this.session?.Dispose();
+            this.session = null;
             this.status = "Disconnected";
         }
     }
@@ -199,20 +145,59 @@ public sealed class SampleSocketClientSession : IDisposable
     public void Dispose()
     {
         this.Disconnect();
-        this.operationGate.Dispose();
     }
 
-    private TcpClient GetRequiredClient()
+    private SocketClientSession GetRequiredSession()
     {
         lock (this.syncRoot)
         {
-            if (this.client == null || !this.client.IsConnected())
+            if (this.session == null || !this.session.IsRegistered)
             {
-                throw new InvalidOperationException("Client is not connected.");
+                throw new InvalidOperationException("Client is not connected and registered.");
             }
 
-            return this.client;
+            return this.session;
         }
+    }
+
+    private void AttachSessionEvents(SocketClientSession targetSession)
+    {
+        targetSession.MessageReceived += delivery =>
+        {
+            lock (this.syncRoot)
+            {
+                this.lastReceivedMessage = $"{delivery.SourceClientId}: {delivery.Content}";
+                this.status = "Message received";
+                this.lastError = "";
+            }
+        };
+        targetSession.MessageAcknowledged += ack =>
+        {
+            lock (this.syncRoot)
+            {
+                this.status = ack.Delivered
+                    ? $"Message delivered to {ack.TargetClientId}"
+                    : $"Message not delivered to {ack.TargetClientId}";
+                this.lastError = ack.Delivered ? "" : "Message was not delivered.";
+            }
+        };
+        targetSession.MessageFailed += error =>
+        {
+            this.SetError(error.ErrorMessage);
+        };
+        targetSession.HealthCheckReceived += healthCheck =>
+        {
+            if (healthCheck.Type != HealthCheckMessageType.Pong)
+            {
+                return;
+            }
+
+            lock (this.syncRoot)
+            {
+                this.status = "Healthcheck pong received";
+                this.lastError = "";
+            }
+        };
     }
 
     private void SetError(string error)
@@ -221,98 +206,6 @@ public sealed class SampleSocketClientSession : IDisposable
         {
             this.status = error;
             this.lastError = error;
-        }
-    }
-
-    private void StartHealthCheckLoop()
-    {
-        SampleClientSettings current = this.Settings;
-        int intervalSeconds = Math.Max(1, current.HealthCheckIntervalSeconds);
-        lock (this.syncRoot)
-        {
-            if (this.healthCheckTask != null && !this.healthCheckTask.IsCompleted)
-            {
-                return;
-            }
-
-            this.healthCheckCancellation?.Dispose();
-            this.healthCheckCancellation = new CancellationTokenSource();
-            this.healthCheckTask = this.RunHealthCheckLoopAsync(
-                TimeSpan.FromSeconds(intervalSeconds),
-                this.healthCheckCancellation.Token);
-        }
-    }
-
-    private void StopHealthCheckLoop()
-    {
-        lock (this.syncRoot)
-        {
-            this.healthCheckCancellation?.Cancel();
-            this.healthCheckCancellation?.Dispose();
-            this.healthCheckCancellation = null;
-            this.healthCheckTask = null;
-        }
-    }
-
-    private async Task RunHealthCheckLoopAsync(TimeSpan interval, CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                await Task.Delay(interval, cancellationToken);
-                TcpClient? activeClient;
-                lock (this.syncRoot)
-                {
-                    activeClient = this.client;
-                }
-
-                if (activeClient == null || !activeClient.IsConnected())
-                {
-                    break;
-                }
-
-                await this.operationGate.WaitAsync(cancellationToken);
-                try
-                {
-                    if (!await activeClient.SendHealthCheckAsync())
-                    {
-                        break;
-                    }
-
-                    Task<(bool Success, HealthCheckMessage Message)> receiveTask =
-                        activeClient.TryReceiveHealthCheckAsync();
-                    Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(interval, cancellationToken));
-                    if (completedTask != receiveTask)
-                    {
-                        break;
-                    }
-
-                    (bool success, HealthCheckMessage message) = await receiveTask;
-                    if (!success || message.Type != HealthCheckMessageType.Pong)
-                    {
-                        break;
-                    }
-                }
-                finally
-                {
-                    this.operationGate.Release();
-                }
-            }
-            catch (TaskCanceledException)
-            {
-                return;
-            }
-            catch (ObjectDisposedException)
-            {
-                return;
-            }
-        }
-
-        if (!cancellationToken.IsCancellationRequested)
-        {
-            this.SetError("Healthcheck failed.");
-            this.Disconnect();
         }
     }
 }

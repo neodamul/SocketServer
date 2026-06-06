@@ -6,6 +6,7 @@ struct SampleContentView: View {
     @State private var message = "hello"
     @State private var state = ClientState()
     @State private var client: NativeSocketClient
+    @State private var receiveTask: Task<Void, Never>?
 
     init(
         config initialConfig: SampleConfig = SampleConfig.fromProcessArguments(),
@@ -45,7 +46,6 @@ struct SampleContentView: View {
                         }
                         HStack {
                             Button("Connect") { run { try await connect() } }
-                            Button("Register") { run { try await register() } }
                             Button("Disconnect") { disconnect() }
                         }
                     }
@@ -59,7 +59,6 @@ struct SampleContentView: View {
                         }
                         HStack {
                             Button("Send") { run { try await send() } }
-                            Button("Receive") { run { try await receive() } }
                         }
                     }
                 }
@@ -77,7 +76,6 @@ struct SampleContentView: View {
             if config.autoConnect && !state.isConnected {
                 run {
                     try await connect()
-                    try await register()
                 }
             }
         }
@@ -102,18 +100,15 @@ struct SampleContentView: View {
     }
 
     private func connect() async throws {
+        stopReceiveLoop()
         client.update(config: config)
         try await client.connect()
-        state.isConnected = true
-        state.status = "Connected"
-        state.lastError = ""
-    }
-
-    private func register() async throws {
         try await client.register()
+        state.isConnected = true
         state.isRegistered = true
-        state.status = "Registered"
+        state.status = "Connected and registered"
         state.lastError = ""
+        startReceiveLoop()
     }
 
     private func send() async throws {
@@ -122,18 +117,50 @@ struct SampleContentView: View {
         state.lastError = ""
     }
 
-    private func receive() async throws {
-        let delivery = try await client.receiveMessage()
-        state.lastReceived = "\(delivery.sourceClientId): \(delivery.content)"
-        state.status = "Message received"
-        state.lastError = ""
-    }
-
     private func disconnect() {
+        stopReceiveLoop()
         client.disconnect()
         state.isConnected = false
         state.isRegistered = false
         state.status = "Disconnected"
+    }
+
+    private func startReceiveLoop() {
+        stopReceiveLoop()
+        receiveTask = Task {
+            while !Task.isCancelled {
+                do {
+                    let event = try await client.receiveEvent()
+                    switch event {
+                    case .delivery(let delivery):
+                        state.lastReceived = "\(delivery.sourceClientId): \(delivery.content)"
+                        state.status = "Message received"
+                        state.lastError = ""
+                    case .ack(let ack):
+                        state.status = ack.delivered
+                            ? "Message delivered to \(ack.targetClientId)"
+                            : "Message not delivered to \(ack.targetClientId)"
+                        state.lastError = ack.delivered ? "" : "Message was not delivered."
+                    case .error(let message):
+                        state.status = "Message failed"
+                        state.lastError = message
+                    case .ignored:
+                        continue
+                    }
+                } catch {
+                    if !Task.isCancelled {
+                        state.status = "Receive loop stopped"
+                        state.lastError = String(describing: error)
+                    }
+                    return
+                }
+            }
+        }
+    }
+
+    private func stopReceiveLoop() {
+        receiveTask?.cancel()
+        receiveTask = nil
     }
 
     private func run(_ action: @escaping () async throws -> Void) {

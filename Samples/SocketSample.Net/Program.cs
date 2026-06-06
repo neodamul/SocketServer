@@ -35,19 +35,9 @@ app.MapPost("/api/connect", async (SampleSocketClientSession clientSession) =>
     await clientSession.ConnectAsync();
     return clientSession.GetState();
 });
-app.MapPost("/api/register", async (SampleSocketClientSession clientSession) =>
-{
-    await clientSession.RegisterAsync();
-    return clientSession.GetState();
-});
 app.MapPost("/api/send", async ([FromBody] SendMessageRequest request, SampleSocketClientSession clientSession) =>
 {
     await clientSession.SendMessageAsync(request.TargetClientId, request.Content);
-    return clientSession.GetState();
-});
-app.MapPost("/api/receive", async (SampleSocketClientSession clientSession) =>
-{
-    await clientSession.ReceiveMessageAsync();
     return clientSession.GetState();
 });
 app.MapPost("/api/disconnect", (SampleSocketClientSession clientSession) =>
@@ -80,8 +70,8 @@ static string RenderPage()
     html.AppendLine("<div><label>Port</label><input id=\"port\" type=\"number\" min=\"0\" max=\"65535\"></div>");
     html.AppendLine("<div><label>Receive Timeout Seconds</label><input id=\"receiveTimeoutSeconds\" type=\"number\" min=\"1\"></div>");
     html.AppendLine("<div><label><input id=\"useControlServer\" type=\"checkbox\" style=\"width:auto\"> Use ControlServer route</label></div>");
-    html.AppendLine("</div><div class=\"actions\" style=\"margin-top:14px\"><button onclick=\"saveSettings()\">Save Settings</button><button onclick=\"connect()\">Connect</button><button onclick=\"registerClient()\">Register</button><button class=\"secondary\" onclick=\"disconnect()\">Disconnect</button></div></section>");
-    html.AppendLine("<section class=\"panel\"><div class=\"grid\"><div><label>Target Client ID</label><input id=\"targetClientId\" type=\"number\" min=\"1\"></div><div><label>Message</label><textarea id=\"content\">hello</textarea></div></div><div class=\"actions\" style=\"margin-top:14px\"><button onclick=\"sendMessage()\">Send</button><button class=\"secondary\" onclick=\"receiveMessage()\">Receive</button></div></section>");
+    html.AppendLine("</div><div class=\"actions\" style=\"margin-top:14px\"><button onclick=\"saveSettings()\">Save Settings</button><button onclick=\"connect()\">Connect</button><button class=\"secondary\" onclick=\"disconnect()\">Disconnect</button></div></section>");
+    html.AppendLine("<section class=\"panel\"><div class=\"grid\"><div><label>Target Client ID</label><input id=\"targetClientId\" type=\"number\" min=\"1\"></div><div><label>Message</label><textarea id=\"content\">hello</textarea></div></div><div class=\"actions\" style=\"margin-top:14px\"><button onclick=\"sendMessage()\">Send</button></div></section>");
     html.AppendLine("<section class=\"panel\"><label>Status</label><div id=\"status\" class=\"status\"></div></section>");
     html.AppendLine("<script>");
     html.AppendLine("async function json(url,opt){const r=await fetch(url,Object.assign({headers:{'Content-Type':'application/json'}},opt||{}));return await r.json();}");
@@ -91,11 +81,10 @@ static string RenderPage()
     html.AppendLine("async function load(){const s=await json('/api/settings');el('clientId').value=s.clientId;el('clientName').value=s.clientName;el('host').value=s.host;el('port').value=s.port;el('useControlServer').checked=s.useControlServer;el('receiveTimeoutSeconds').value=s.receiveTimeoutSeconds;show(await json('/api/state'));}");
     html.AppendLine("async function saveSettings(){show(await json('/api/settings',{method:'POST',body:JSON.stringify(settings())}))}");
     html.AppendLine("async function connect(){show(await json('/api/connect',{method:'POST'}))}");
-    html.AppendLine("async function registerClient(){show(await json('/api/register',{method:'POST'}))}");
     html.AppendLine("async function disconnect(){show(await json('/api/disconnect',{method:'POST'}))}");
     html.AppendLine("async function sendMessage(){show(await json('/api/send',{method:'POST',body:JSON.stringify({targetClientId:+targetClientId.value,content:content.value})}))}");
-    html.AppendLine("async function receiveMessage(){show(await json('/api/receive',{method:'POST'}))}");
     html.AppendLine("load();");
+    html.AppendLine("setInterval(async()=>show(await json('/api/state')),1000);");
     html.AppendLine("</script></main></body></html>");
     return html.ToString();
 }

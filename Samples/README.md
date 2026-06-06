@@ -10,7 +10,7 @@ dotnet run --project Samples/SocketSample.Net/SocketSample.Net.csproj
 
 .NET Web UI는 기본적으로 `127.0.0.1`의 동적 포트에 바인딩됩니다. 실행 로그의 `Now listening on` 주소를 확인합니다.
 
-서버 정보는 `Samples/SocketSample.Net/appsettings.json`의 `sampleClient` 섹션에서 기본값을 관리하고, 화면에서도 `Host`, `Port`, `Use ControlServer`, `Client ID`를 수정할 수 있습니다. 등록 성공 후 `healthCheckIntervalSeconds` 간격으로 keepalive를 유지합니다. `security.transportMode`는 기본 `Tls`이며, `MessageEncryption`을 사용하려면 서버와 같은 `SOCKET_MESSAGE_SECRET` 값을 설정합니다.
+서버 정보는 `Samples/SocketSample.Net/appsettings.json`의 `sampleClient` 섹션에서 기본값을 관리하고, 화면에서도 `Host`, `Port`, `Use ControlServer`, `Client ID`를 수정할 수 있습니다. `Connect`는 연결과 client register를 한 번에 수행합니다. 등록 후 receive loop가 항상 실행되어 수신 메시지와 ACK를 상태창에 표시하고, `healthCheckIntervalSeconds` 간격으로 keepalive를 유지합니다. `security.transportMode`는 기본 `Tls`이며, `MessageEncryption`을 사용하려면 서버와 같은 `SOCKET_MESSAGE_SECRET` 값을 설정합니다.
 
 ## iOS
 
@@ -32,7 +32,7 @@ xcodegen generate --spec Samples/SocketSample.macOS/project.yml
 xcodebuild -project Samples/SocketSample.macOS/SocketSampleMac.xcodeproj -scheme SocketSampleMac -configuration Debug -derivedDataPath Samples/SocketSample.macOS/build CODE_SIGNING_ALLOWED=NO build
 ```
 
-두 개의 네이티브 샘플 클라이언트를 동시에 띄워 메시지를 테스트할 수 있습니다.
+두 개의 네이티브 샘플 클라이언트를 동시에 띄워 메시지를 테스트할 수 있습니다. `Connect`는 연결과 client register를 한 번에 수행하고, receive loop가 항상 실행되어 수신 메시지와 ACK를 상태창에 표시합니다.
 
 ```bash
 open -n Samples/SocketSample.macOS/build/Build/Products/Debug/SocketSampleMac.app --args --client-id 101 --client-name native-client-101 --host 127.0.0.1 --port 10000 --use-control-server true --auto-connect true --target-client-id 102
