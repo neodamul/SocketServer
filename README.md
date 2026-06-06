@@ -107,6 +107,14 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k 
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 1000 --batch-size 100 --hold-seconds 0 --port 5000 --message-test --message-rounds 1
 ```
 
+UI 모드:
+
+```bash
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 0 --clients 4 --batch-size 4 --host 127.0.0.1 --port 5000 --use-control-server
+```
+
+UI는 실행 로그의 listening 주소에서 접속 대수, 타겟 서버별 분포, 클라이언트별 접속 상태, counters/metrics를 표시합니다.
+
 ## 상세 문서
 
 - [Architecture](wiki/Architecture.md)

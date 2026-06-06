@@ -3,8 +3,10 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Net.Sockets;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Tasks;
 using SocketCommon.Configuration;
 using SocketCommon.Diagnostics;
 using SocketCommon.Model;
@@ -485,6 +487,73 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void ResourceUsageProviderUsesMachineMetricsInsteadOfProcessMetricsTest()
+    {
+        string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketCommon/Diagnostics/ResourceUsageProvider.cs"));
+
+        Assert.IsFalse(source.Contains("Process.GetCurrentProcess", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("TotalProcessorTime", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("WorkingSet64", StringComparison.Ordinal));
+        Assert.IsFalse(source.Contains("GC.GetGCMemoryInfo", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("/proc/stat", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("host_statistics64", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("GlobalMemoryStatusEx", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("MachHostPort", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("HostVmInfo64Count = 62", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void ResourceUsageProviderMacVmInfoIndexesMatchNaturalTSlotsTest()
+    {
+        Type type = typeof(ResourceUsageProvider);
+
+        Assert.AreEqual(0, ReadPrivateConstInt(type, "VmFreeCount"));
+        Assert.AreEqual(2, ReadPrivateConstInt(type, "VmInactiveCount"));
+        Assert.AreEqual(23, ReadPrivateConstInt(type, "VmSpeculativeCount"));
+    }
+
+    [TestMethod]
+    public void ResourceUsageProviderReturnsNonZeroMachineMemoryAndStorageTest()
+    {
+        ResourceUsageSnapshot snapshot = new ResourceUsageProvider().Capture();
+
+        Assert.IsTrue(snapshot.MemoryUsagePercent > 0 && snapshot.MemoryUsagePercent <= 100);
+        Assert.IsTrue(snapshot.StorageUsagePercent > 0 && snapshot.StorageUsagePercent <= 100);
+    }
+
+    [TestMethod]
+    public void ResourceUsageProviderCpuUsageCalculationUsesSampleDeltaTest()
+    {
+        double cpuUsagePercent = ResourceUsageProvider.CalculateCpuUsagePercent(
+            new ResourceUsageProvider.CpuSample(90, 100),
+            new ResourceUsageProvider.CpuSample(100, 200));
+
+        Assert.AreEqual(90, cpuUsagePercent, 0.0001);
+    }
+
+    [TestMethod]
+    public void ResourceUsageProviderCpuUsageCalculationRejectsInvalidSamplesTest()
+    {
+        Assert.AreEqual(
+            0,
+            ResourceUsageProvider.CalculateCpuUsagePercent(
+                new ResourceUsageProvider.CpuSample(0, 0),
+                new ResourceUsageProvider.CpuSample(100, 200)));
+
+        Assert.AreEqual(
+            0,
+            ResourceUsageProvider.CalculateCpuUsagePercent(
+                new ResourceUsageProvider.CpuSample(90, 100),
+                new ResourceUsageProvider.CpuSample(0, 0)));
+
+        Assert.AreEqual(
+            0,
+            ResourceUsageProvider.CalculateCpuUsagePercent(
+                new ResourceUsageProvider.CpuSample(10, 100),
+                new ResourceUsageProvider.CpuSample(5, 90)));
+    }
+
+    [TestMethod]
     public void PortRangeValidationTest()
     {
         Assert.IsTrue(SocketConfigLoader.IsValidPortRange(5100, 5199));
@@ -580,6 +649,29 @@ public class ControlProtocolTests
     private static string CreateRegistryPath()
     {
         return Path.Combine(Path.GetTempPath(), $"socket-registry-{Guid.NewGuid():N}.json");
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        DirectoryInfo? directory = new(AppContext.BaseDirectory);
+        while (directory != null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "SocketServer.sln")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Repository root was not found.");
+    }
+
+    private static int ReadPrivateConstInt(Type type, string fieldName)
+    {
+        FieldInfo? field = type.GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.IsNotNull(field);
+        return (int)field.GetRawConstantValue()!;
     }
 
     private static void DeleteRegistryPath(string path)

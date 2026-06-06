@@ -88,6 +88,53 @@ public class SocketLoadTestTests
     }
 
     [TestMethod]
+    public void ParseLoadTestUiOptionsTest()
+    {
+        Assert.IsTrue(LoadTestOptions.TryParse(
+            new[]
+            {
+                "--ui",
+                "--ui-port", "0",
+                "--clients", "4",
+                "--batch-size", "4",
+                "--host", "127.0.0.1",
+                "--port", "56200",
+                "--use-control-server"
+            },
+            out LoadTestOptions options,
+            out string error));
+
+        Assert.AreEqual(string.Empty, error);
+        Assert.IsTrue(options.UiMode);
+        Assert.AreEqual(0, options.UiPort);
+        Assert.AreEqual(4, options.Clients);
+        Assert.AreEqual(4, options.BatchSize);
+        Assert.AreEqual("127.0.0.1", options.Host);
+        Assert.AreEqual(56200, options.Port);
+        Assert.IsTrue(options.UseControlServer);
+    }
+
+    [TestMethod]
+    public void LoadTestUiInitialStateExposesMetricsAndTargetsTest()
+    {
+        Assert.IsTrue(LoadTestOptions.TryParse(
+            new[] { "--ui" },
+            out LoadTestOptions options,
+            out string error));
+        Assert.AreEqual(string.Empty, error);
+
+        LoadTestUiService service = new(options);
+        LoadTestUiState state = service.GetState();
+
+        Assert.IsFalse(state.IsRunning);
+        Assert.AreEqual("Idle", state.Status);
+        Assert.AreEqual(0, state.ConnectedNow);
+        Assert.AreEqual(0, state.TargetServers.Count);
+        Assert.AreEqual(0, state.Clients.Count);
+        Assert.AreEqual(0, state.Counters.Attempted);
+    }
+
+    [TestMethod]
     public async Task RunMessageLoadTestWithTwoClientsTest()
     {
         int exitCode = await Program.RunAsync(new[]
