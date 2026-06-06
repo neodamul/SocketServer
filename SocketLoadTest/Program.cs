@@ -26,6 +26,11 @@ internal static class Program
         }
 
         LogConfigurator.Configure(ResolveLogConfigFileName());
+        if (options.UiMode)
+        {
+            await LoadTestUiHost.RunAsync(options);
+            return 0;
+        }
 
         using TcpServer? server = options.ExternalServer || options.UseControlServer
             ? null
@@ -382,7 +387,7 @@ internal static class Program
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: dotnet run --project SocketLoadTest -- [--profile smoke|soak-1k|soak-10k|soak-50k|message-1k] [--clients N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--external-server] [--use-control-server] [--message-test] [--message-rounds N] [--ramp-delay-ms N] [--expected-connected N] [--healthcheck-timeout-seconds N] [--message-timeout-seconds N] [--report-file PATH]");
+            "Usage: dotnet run --project SocketLoadTest -- [--ui] [--ui-port N] [--profile smoke|soak-1k|soak-10k|soak-50k|message-1k] [--clients N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--external-server] [--use-control-server] [--message-test] [--message-rounds N] [--ramp-delay-ms N] [--expected-connected N] [--healthcheck-timeout-seconds N] [--message-timeout-seconds N] [--report-file PATH]");
     }
 }
 
@@ -421,7 +426,9 @@ internal sealed record LoadTestOptions(
     int HealthCheckTimeoutSeconds,
     int MessageTimeoutSeconds,
     string Profile,
-    string ReportFile)
+    string ReportFile,
+    bool UiMode,
+    int UiPort)
 {
     public static bool TryParse(string[] args, out LoadTestOptions options, out string error)
     {
@@ -440,7 +447,9 @@ internal sealed record LoadTestOptions(
             HealthCheckTimeoutSeconds: 10,
             MessageTimeoutSeconds: 10,
             Profile: "custom",
-            ReportFile: "");
+            ReportFile: "",
+            UiMode: false,
+            UiPort: 0);
         error = string.Empty;
 
         for (int index = 0; index < args.Length; index++)
@@ -596,6 +605,25 @@ internal sealed record LoadTestOptions(
                     }
 
                     options = options with { ReportFile = reportFile };
+                    break;
+
+                case "--ui":
+                    if (value != null)
+                    {
+                        error = "--ui does not accept a value.";
+                        return false;
+                    }
+
+                    options = options with { UiMode = true };
+                    break;
+
+                case "--ui-port":
+                    if (!TryReadInt(args, ref index, value, arg, 0, 65535, out int uiPort, out error))
+                    {
+                        return false;
+                    }
+
+                    options = options with { UiPort = uiPort };
                     break;
 
                 default:

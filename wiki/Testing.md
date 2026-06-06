@@ -61,6 +61,19 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k 
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 0 --use-control-server --message-test --message-rounds 1
 ```
 
+UI 모드는 브라우저에서 부하 클라이언트를 시작/중지하고 상태를 조회합니다.
+
+```bash
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 0 --clients 4 --batch-size 4 --host 127.0.0.1 --port 5000 --use-control-server
+```
+
+표시 항목:
+
+- 현재 실행 상태
+- 접속 대수와 healthcheck counters
+- 타겟 서버별 연결 수
+- 클라이언트별 타겟 서버와 연결 상태
+
 주요 옵션:
 
 - `--profile`: `smoke`, `soak-1k`, `soak-10k`, `soak-50k`, `message-1k`
