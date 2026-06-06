@@ -36,6 +36,8 @@ class Program
 
         foreach (SocketServerInstanceConfig serverConfig in serverConfigs)
         {
+            SocketSecurityConfigValidator.ValidateServerBinding(config.Security, serverConfig.BindHost);
+
             TcpServer server = new(
                 serverConfig.ServerId,
                 serverConfig.Name,

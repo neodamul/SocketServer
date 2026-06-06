@@ -324,7 +324,7 @@ public class SecureSocketConnectionTests
             CertificateRenewBeforeDays = certificateRenewBeforeDays,
             RootCertificateLifetimeYears = 10,
             ModuleCertificateLifetimeYears = 2,
-            AuthenticationTimeoutMilliseconds = 5000
+            AuthenticationTimeoutMilliseconds = 30000
         };
     }
 

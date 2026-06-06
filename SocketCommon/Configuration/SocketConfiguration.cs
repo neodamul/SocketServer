@@ -1,5 +1,7 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Text.Json;
 
 namespace SocketCommon.Configuration;
@@ -144,6 +146,81 @@ public class SocketSecurityConfig
     public string MessageEncryptionSecretEnvironmentVariable { get; set; } = "SOCKET_MESSAGE_SECRET";
 
     public bool TrustedNetwork { get; set; }
+}
+
+public static class SocketSecurityConfigValidator
+{
+    public static void ValidateServerBinding(SocketSecurityConfig security, string bindHost)
+    {
+        if (security == null || !IsEdgeTerminatedProfile(security.Profile))
+        {
+            return;
+        }
+
+        if (!security.TrustedNetwork)
+        {
+            throw new InvalidOperationException("EdgeTerminated security profile requires trustedNetwork=true.");
+        }
+
+        if (!IsInternalBindHost(bindHost))
+        {
+            throw new InvalidOperationException(
+                "EdgeTerminated security profile must bind to an explicit loopback or private network address.");
+        }
+    }
+
+    public static bool IsInternalBindHost(string bindHost)
+    {
+        if (string.IsNullOrWhiteSpace(bindHost))
+        {
+            return false;
+        }
+
+        string normalizedHost = bindHost.Trim();
+        if (string.Equals(normalizedHost, "localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!IPAddress.TryParse(normalizedHost, out IPAddress address))
+        {
+            return false;
+        }
+
+        if (IPAddress.IsLoopback(address))
+        {
+            return true;
+        }
+
+        if (address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any))
+        {
+            return false;
+        }
+
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            byte[] bytes = address.GetAddressBytes();
+            return bytes[0] == 10 ||
+                (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+                (bytes[0] == 192 && bytes[1] == 168);
+        }
+
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            byte[] bytes = address.GetAddressBytes();
+            return (bytes[0] & 0xFE) == 0xFC || address.IsIPv6LinkLocal;
+        }
+
+        return false;
+    }
+
+    private static bool IsEdgeTerminatedProfile(string profile)
+    {
+        string normalizedProfile = string.IsNullOrWhiteSpace(profile)
+            ? "EndToEndTls"
+            : profile.Trim();
+        return string.Equals(normalizedProfile, "EdgeTerminated", StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 public class SocketAsyncEventArgsPoolConfig

@@ -15,7 +15,7 @@
 
 `SocketClient`, `SocketServer`, `SocketControl`, `SocketDashboard` 간 연결은 `SecureSocketConnection`을 통해 보호된 뒤 common frame을 송수신합니다. 기본 `Tls` 모드는 `SslStream`을 사용합니다. 로컬 Root CA가 모듈별 leaf 인증서를 서명하고, 클라이언트는 해당 Root CA 체인을 검증합니다. `security.requireClientCertificate=true`이면 서버도 클라이언트 인증서를 같은 Root CA 기준으로 검증합니다. `SOCKET_REQUIRE_TLS13=true` 환경 변수를 설정하면 TLS 1.3이 아닌 협상 결과를 연결 실패로 처리합니다.
 
-`security.profile=EndToEndTls`는 앱까지 TLS를 유지하는 기본 profile입니다. `security.profile=EdgeTerminated`는 edge TLS 종단 이후 내부 신뢰망에서 앱 비-TLS 전송을 사용하는 profile이며 `trustedNetwork=true`가 필요합니다.
+`security.profile=EndToEndTls`는 앱까지 TLS를 유지하는 기본 profile입니다. `security.profile=EdgeTerminated`는 edge TLS 종단 이후 내부 신뢰망에서 앱 비-TLS 전송을 사용하는 profile이며 `trustedNetwork=true`와 명시적인 loopback/private SocketServer `bindHost`가 필요합니다.
 
 `MessageEncryption` 모드는 TLS handshake를 사용하지 않고 각 frame payload를 보호합니다. wire payload는 다음 envelope입니다.
 

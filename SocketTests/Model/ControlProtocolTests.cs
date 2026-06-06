@@ -595,6 +595,42 @@ public class ControlProtocolTests
         Assert.IsFalse(SocketConfigLoader.IsValidPortRange(-1, 5100));
     }
 
+    [TestMethod]
+    public void EdgeTerminatedProfileAllowsOnlyTrustedInternalBindHostsTest()
+    {
+        SocketSecurityConfig security = new()
+        {
+            Profile = "EdgeTerminated",
+            TrustedNetwork = true
+        };
+
+        SocketSecurityConfigValidator.ValidateServerBinding(security, "127.0.0.1");
+        SocketSecurityConfigValidator.ValidateServerBinding(security, "localhost");
+        SocketSecurityConfigValidator.ValidateServerBinding(security, "10.10.1.5");
+        SocketSecurityConfigValidator.ValidateServerBinding(security, "172.16.1.5");
+        SocketSecurityConfigValidator.ValidateServerBinding(security, "192.168.1.5");
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => SocketSecurityConfigValidator.ValidateServerBinding(security, "0.0.0.0"));
+        Assert.ThrowsException<InvalidOperationException>(
+            () => SocketSecurityConfigValidator.ValidateServerBinding(security, "8.8.8.8"));
+        Assert.ThrowsException<InvalidOperationException>(
+            () => SocketSecurityConfigValidator.ValidateServerBinding(security, "socket.example.com"));
+    }
+
+    [TestMethod]
+    public void EdgeTerminatedProfileServerBindingRequiresTrustedNetworkTest()
+    {
+        SocketSecurityConfig security = new()
+        {
+            Profile = "EdgeTerminated",
+            TrustedNetwork = false
+        };
+
+        Assert.ThrowsException<InvalidOperationException>(
+            () => SocketSecurityConfigValidator.ValidateServerBinding(security, "127.0.0.1"));
+    }
+
     private static ServerRegisterRequest CreateRegister(int serverId, string instanceId, int port, int maxConnections)
     {
         return new ServerRegisterRequest

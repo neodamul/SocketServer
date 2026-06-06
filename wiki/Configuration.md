@@ -55,7 +55,7 @@ SocketTests/log4net.config
 }
 ```
 
-`profile`은 보안 토폴로지 선택값입니다. 기본값은 `EndToEndTls`이며 앱 프로세스까지 TLS를 종단합니다. `EdgeTerminated`는 L7 proxy나 edge 장비가 TLS/client 인증을 이미 처리하고 내부 신뢰망에서 앱 TLS를 쓰지 않는 구성입니다. 이 profile은 오설정 방지를 위해 `trustedNetwork=true`가 필요하며, `transportMode=Tls`와 함께 쓰면 기동 시 거부됩니다. `AppTokenSession`은 향후 per-session key 기반 고속 데이터 플레인을 위한 예약값이며 현재는 기동 시 지원하지 않는 설정으로 거부됩니다.
+`profile`은 보안 토폴로지 선택값입니다. 기본값은 `EndToEndTls`이며 앱 프로세스까지 TLS를 종단합니다. `EdgeTerminated`는 L7 proxy나 edge 장비가 TLS/client 인증을 이미 처리하고 내부 신뢰망에서 앱 TLS를 쓰지 않는 구성입니다. 이 profile은 오설정 방지를 위해 `trustedNetwork=true`가 필요하며, SocketServer `bindHost`가 명시적인 loopback/private 주소가 아니면 기동 시 거부됩니다. `transportMode=Tls`와 함께 쓰는 조합도 거부됩니다. `AppTokenSession`은 향후 per-session key 기반 고속 데이터 플레인을 위한 예약값이며 현재는 기동 시 지원하지 않는 설정으로 거부됩니다.
 
 `transportMode`는 `Tls` 또는 `MessageEncryption`입니다. `Tls`는 `SslStream` 기반 TLS 연결을 사용하고, `MessageEncryption`은 TLS handshake 없이 각 frame payload를 AES-GCM-256으로 암호화하고 HMAC-SHA256으로 envelope를 검증합니다. `EdgeTerminated` profile은 현재 앱 비-TLS 전송으로 `MessageEncryption` 경로를 사용합니다.
 
