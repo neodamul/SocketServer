@@ -35,6 +35,7 @@ public sealed class SampleClientSettings
             HealthCheckIntervalSeconds = this.HealthCheckIntervalSeconds,
             Security = new SocketSecurityConfig
             {
+                Profile = this.Security.Profile,
                 TransportMode = this.Security.TransportMode,
                 TlsProtocol = this.Security.TlsProtocol,
                 RequireTls13 = this.Security.RequireTls13,
@@ -45,7 +46,8 @@ public sealed class SampleClientSettings
                 RootCertificateLifetimeYears = this.Security.RootCertificateLifetimeYears,
                 ModuleCertificateLifetimeYears = this.Security.ModuleCertificateLifetimeYears,
                 AuthenticationTimeoutMilliseconds = this.Security.AuthenticationTimeoutMilliseconds,
-                MessageEncryptionSecretEnvironmentVariable = this.Security.MessageEncryptionSecretEnvironmentVariable
+                MessageEncryptionSecretEnvironmentVariable = this.Security.MessageEncryptionSecretEnvironmentVariable,
+                TrustedNetwork = this.Security.TrustedNetwork
             },
             SocketOptions = new SocketOperationConfig
             {

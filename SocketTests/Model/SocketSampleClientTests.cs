@@ -26,6 +26,7 @@ public class SocketSampleClientTests
             HealthCheckIntervalSeconds = 5,
             Security = new SocketSecurityConfig
             {
+                Profile = "EdgeTerminated",
                 TransportMode = "MessageEncryption",
                 TlsProtocol = "Auto",
                 RequireTls13 = false,
@@ -36,7 +37,8 @@ public class SocketSampleClientTests
                 RootCertificateLifetimeYears = 9,
                 ModuleCertificateLifetimeYears = 4,
                 AuthenticationTimeoutMilliseconds = 1500,
-                MessageEncryptionSecretEnvironmentVariable = "SOCKET_SAMPLE_MESSAGE_SECRET"
+                MessageEncryptionSecretEnvironmentVariable = "SOCKET_SAMPLE_MESSAGE_SECRET",
+                TrustedNetwork = true
             }
         };
 
@@ -45,11 +47,13 @@ public class SocketSampleClientTests
 
         Assert.AreEqual(12, clone.ClientId);
         Assert.AreEqual(5, clone.HealthCheckIntervalSeconds);
+        Assert.AreEqual("EdgeTerminated", clone.Security.Profile);
         Assert.AreEqual("MessageEncryption", clone.Security.TransportMode);
         Assert.AreEqual("Auto", settings.Security.TlsProtocol);
         Assert.AreEqual("Tls13", clone.Security.TlsProtocol);
         Assert.IsTrue(clone.Security.RequireClientCertificate);
         Assert.AreEqual("SOCKET_SAMPLE_MESSAGE_SECRET", clone.Security.MessageEncryptionSecretEnvironmentVariable);
+        Assert.IsTrue(clone.Security.TrustedNetwork);
     }
 
     [TestMethod]

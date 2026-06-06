@@ -119,6 +119,8 @@ public class SocketOperationConfig
 
 public class SocketSecurityConfig
 {
+    public string Profile { get; set; } = "EndToEndTls";
+
     public string TransportMode { get; set; } = "";
 
     public string TlsProtocol { get; set; } = "Tls13";
@@ -140,6 +142,8 @@ public class SocketSecurityConfig
     public int AuthenticationTimeoutMilliseconds { get; set; } = 30000;
 
     public string MessageEncryptionSecretEnvironmentVariable { get; set; } = "SOCKET_MESSAGE_SECRET";
+
+    public bool TrustedNetwork { get; set; }
 }
 
 public class SocketAsyncEventArgsPoolConfig

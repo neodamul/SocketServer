@@ -80,6 +80,7 @@ public class SecureSocketConnectionTests
         });
 
         Assert.AreEqual(SslProtocols.Tls13, SecureSocketConnection.ConfiguredProtocols);
+        Assert.AreEqual(SocketSecurityProfile.EndToEndTls, SecureSocketConnection.SecurityProfile);
         Assert.AreEqual(SocketTransportSecurityMode.Tls, SecureSocketConnection.ConfiguredTransportMode);
         Assert.IsTrue(SecureSocketConnection.RequireTls13);
         Assert.IsTrue(SecureSocketConnection.RequireClientCertificate);
@@ -159,9 +160,11 @@ public class SecureSocketConnectionTests
         {
             SecureSocketConnection.Configure(new SocketSecurityConfig
             {
+                Profile = "EdgeTerminated",
                 TransportMode = "MessageEncryption",
                 TlsProtocol = "None",
                 RequireTls13 = false,
+                TrustedNetwork = true,
                 MessageEncryptionSecretEnvironmentVariable = TestMessageSecretVariable
             });
 
@@ -208,16 +211,48 @@ public class SecureSocketConnectionTests
     }
 
     [TestMethod]
-    public void TlsProtocolNoneSelectsMessageEncryptionTransportTest()
+    public void EdgeTerminatedProfileSelectsMessageEncryptionTransportTest()
     {
         SecureSocketConnection.Configure(new SocketSecurityConfig
         {
+            Profile = "EdgeTerminated",
             TlsProtocol = "None",
             RequireTls13 = false,
+            TrustedNetwork = true,
             MessageEncryptionSecretEnvironmentVariable = TestMessageSecretVariable
         });
 
+        Assert.AreEqual(SocketSecurityProfile.EdgeTerminated, SecureSocketConnection.SecurityProfile);
         Assert.AreEqual(SocketTransportSecurityMode.MessageEncryption, SecureSocketConnection.ConfiguredTransportMode);
+
+        SecureSocketConnection.Configure(CreateSecurityConfig());
+    }
+
+    [TestMethod]
+    public void EdgeTerminatedProfileRequiresTrustedNetworkTest()
+    {
+        Assert.ThrowsException<InvalidOperationException>(() => SecureSocketConnection.Configure(new SocketSecurityConfig
+        {
+            Profile = "EdgeTerminated",
+            TlsProtocol = "None",
+            RequireTls13 = false,
+            TrustedNetwork = false
+        }));
+
+        SecureSocketConnection.Configure(CreateSecurityConfig());
+    }
+
+    [TestMethod]
+    public void EndToEndTlsProfileRejectsMessageEncryptionTransportTest()
+    {
+        Assert.ThrowsException<InvalidOperationException>(() => SecureSocketConnection.Configure(new SocketSecurityConfig
+        {
+            Profile = "EndToEndTls",
+            TransportMode = "MessageEncryption",
+            TlsProtocol = "None",
+            RequireTls13 = false,
+            TrustedNetwork = true
+        }));
 
         SecureSocketConnection.Configure(CreateSecurityConfig());
     }

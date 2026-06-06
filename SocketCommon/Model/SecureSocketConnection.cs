@@ -19,6 +19,13 @@ public enum SocketTransportSecurityMode
     MessageEncryption
 }
 
+public enum SocketSecurityProfile
+{
+    EndToEndTls,
+    EdgeTerminated,
+    AppTokenSession
+}
+
 public sealed class SecureSocketConnection : IDisposable
 {
     public const string LocalCertificateSubject = "CN=SocketServerLocal";
@@ -29,6 +36,7 @@ public sealed class SecureSocketConnection : IDisposable
     public const string DefaultMessageEncryptionSecretEnvironmentVariable = "SOCKET_MESSAGE_SECRET";
 
     private static readonly object OptionsLock = new();
+    private static SocketSecurityProfile securityProfile = SocketSecurityProfile.EndToEndTls;
     private static SocketTransportSecurityMode transportMode = SocketTransportSecurityMode.Tls;
     private static SslProtocols configuredProtocols = SslProtocols.None;
     private static bool requireTls13;
@@ -96,6 +104,17 @@ public sealed class SecureSocketConnection : IDisposable
         }
     }
 
+    public static SocketSecurityProfile SecurityProfile
+    {
+        get
+        {
+            lock (OptionsLock)
+            {
+                return securityProfile;
+            }
+        }
+    }
+
     public static bool RequireTls13
     {
         get
@@ -138,8 +157,14 @@ public sealed class SecureSocketConnection : IDisposable
 
         lock (OptionsLock)
         {
+            SocketSecurityProfile nextSecurityProfile = ParseSecurityProfile(config.Profile);
+            ValidateSecurityProfile(config, nextSecurityProfile);
+            SocketTransportSecurityMode nextTransportMode =
+                ParseTransportMode(config.TransportMode, config.TlsProtocol, nextSecurityProfile);
+
+            securityProfile = nextSecurityProfile;
             configuredProtocols = ParseProtocols(config.TlsProtocol);
-            transportMode = ParseTransportMode(config.TransportMode, config.TlsProtocol);
+            transportMode = nextTransportMode;
             requireTls13 = config.RequireTls13;
             requireClientCertificate = config.RequireClientCertificate;
             authenticationTimeoutMilliseconds = Math.Max(1000, config.AuthenticationTimeoutMilliseconds);
@@ -548,8 +573,64 @@ public sealed class SecureSocketConnection : IDisposable
         return result == SslProtocols.None ? SslProtocols.Tls13 : result;
     }
 
-    private static SocketTransportSecurityMode ParseTransportMode(string transportModeValue, string tlsProtocol)
+    private static SocketSecurityProfile ParseSecurityProfile(string profile)
     {
+        if (string.IsNullOrWhiteSpace(profile) ||
+            string.Equals(profile, "EndToEndTls", StringComparison.OrdinalIgnoreCase))
+        {
+            return SocketSecurityProfile.EndToEndTls;
+        }
+
+        if (string.Equals(profile, "EdgeTerminated", StringComparison.OrdinalIgnoreCase))
+        {
+            return SocketSecurityProfile.EdgeTerminated;
+        }
+
+        if (string.Equals(profile, "AppTokenSession", StringComparison.OrdinalIgnoreCase))
+        {
+            return SocketSecurityProfile.AppTokenSession;
+        }
+
+        throw new InvalidOperationException($"Unknown security profile: {profile}");
+    }
+
+    private static void ValidateSecurityProfile(SocketSecurityConfig config, SocketSecurityProfile profile)
+    {
+        if (profile == SocketSecurityProfile.AppTokenSession)
+        {
+            throw new NotSupportedException("AppTokenSession security profile is planned but not implemented.");
+        }
+
+        if (profile == SocketSecurityProfile.EndToEndTls &&
+            IsMessageEncryptionTransport(config.TransportMode, config.TlsProtocol))
+        {
+            throw new InvalidOperationException("EndToEndTls security profile requires TLS transport.");
+        }
+
+        if (profile == SocketSecurityProfile.EdgeTerminated)
+        {
+            if (!config.TrustedNetwork)
+            {
+                throw new InvalidOperationException("EdgeTerminated security profile requires trustedNetwork=true.");
+            }
+
+            if (string.Equals(config.TransportMode, "Tls", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("EdgeTerminated security profile cannot use Tls transportMode.");
+            }
+        }
+    }
+
+    private static SocketTransportSecurityMode ParseTransportMode(
+        string transportModeValue,
+        string tlsProtocol,
+        SocketSecurityProfile profile)
+    {
+        if (profile == SocketSecurityProfile.EdgeTerminated)
+        {
+            return SocketTransportSecurityMode.MessageEncryption;
+        }
+
         if (!string.IsNullOrWhiteSpace(transportModeValue))
         {
             if (string.Equals(transportModeValue, "Tls", StringComparison.OrdinalIgnoreCase))
@@ -568,6 +649,18 @@ public sealed class SecureSocketConnection : IDisposable
         return string.Equals(tlsProtocol, "None", StringComparison.OrdinalIgnoreCase)
             ? SocketTransportSecurityMode.MessageEncryption
             : SocketTransportSecurityMode.Tls;
+    }
+
+    private static bool IsMessageEncryptionTransport(string transportModeValue, string tlsProtocol)
+    {
+        if (string.Equals(tlsProtocol, "None", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return string.Equals(transportModeValue, "MessageEncryption", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(transportModeValue, "Encrypted", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(transportModeValue, "PlainEncrypted", StringComparison.OrdinalIgnoreCase);
     }
 
     private static SocketMessageProtector CreateMessageProtector()
