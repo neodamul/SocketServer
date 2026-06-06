@@ -4,7 +4,7 @@
     "transportMode": "Tls",
     "tlsProtocol": "Tls13",
     "requireTls13": true,
-    "requireClientCertificate": false,
+    "requireClientCertificate": true,
     "certificateDirectory": "",
     "certificatePasswordEnvironmentVariable": "SOCKET_CERTIFICATE_PASSWORD",
     "certificateRenewBeforeDays": 30,

@@ -129,7 +129,7 @@ public class SocketSecurityConfig
 
     public bool RequireTls13 { get; set; } = true;
 
-    public bool RequireClientCertificate { get; set; }
+    public bool RequireClientCertificate { get; set; } = true;
 
     public string CertificateDirectory { get; set; } = "";
 

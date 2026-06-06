@@ -163,12 +163,13 @@ public sealed class SecureSocketConnection : IDisposable
             ValidateSecurityProfile(config, nextSecurityProfile);
             SocketTransportSecurityMode nextTransportMode =
                 ParseTransportMode(config.TransportMode, config.TlsProtocol, nextSecurityProfile);
+            bool nextRequireClientCertificate = nextSecurityProfile == SocketSecurityProfile.EndToEndTls;
 
             securityProfile = nextSecurityProfile;
             configuredProtocols = ParseProtocols(config.TlsProtocol);
             transportMode = nextTransportMode;
             requireTls13 = config.RequireTls13;
-            requireClientCertificate = config.RequireClientCertificate;
+            requireClientCertificate = nextRequireClientCertificate;
             authenticationTimeoutMilliseconds = Math.Max(1000, config.AuthenticationTimeoutMilliseconds);
             certificateDirectory = config.CertificateDirectory?.Trim() ?? "";
             certificatePasswordEnvironmentVariable = string.IsNullOrWhiteSpace(config.CertificatePasswordEnvironmentVariable)

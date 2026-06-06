@@ -128,6 +128,33 @@ public class SecureSocketConnectionTests
     }
 
     [TestMethod]
+    public void SecurityProfileNormalizesClientCertificateRequirementTest()
+    {
+        SecureSocketConnection.Configure(new SocketSecurityConfig
+        {
+            Profile = "EndToEndTls",
+            TransportMode = "Tls",
+            TlsProtocol = "Tls13",
+            RequireClientCertificate = false
+        });
+
+        Assert.IsTrue(SecureSocketConnection.RequireClientCertificate);
+
+        SecureSocketConnection.Configure(new SocketSecurityConfig
+        {
+            Profile = "EdgeTerminated",
+            TlsProtocol = "None",
+            RequireTls13 = false,
+            RequireClientCertificate = true,
+            TrustedNetwork = true
+        });
+
+        Assert.IsFalse(SecureSocketConnection.RequireClientCertificate);
+
+        SecureSocketConnection.Configure(CreateSecurityConfig());
+    }
+
+    [TestMethod]
     public void CertificatePasswordCanBeProvidedByEnvironmentVariableTest()
     {
         string directory = CreateTemporaryCertificateDirectory();

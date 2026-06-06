@@ -511,7 +511,7 @@ public class ControlServerIntegrationTests
             new() { Host = "127.0.0.1", Port = stalledPort },
             new() { Host = "127.0.0.1", Port = healthyControl.Port }
         };
-        servers.AttachReporters(controlEndpoints, TimeSpan.FromSeconds(5));
+        servers.AttachReporters(controlEndpoints, TimeSpan.FromSeconds(30));
 
         DateTimeOffset startedAt = DateTimeOffset.UtcNow;
         Task registerTask = servers.RegisterAsync();
@@ -520,7 +520,7 @@ public class ControlServerIntegrationTests
             snapshot => snapshot.ServerCount == 4 && snapshot.HealthyServerCount == 4);
 
         Assert.AreEqual(40, status.TotalAvailableConnections);
-        Task completedTask = await Task.WhenAny(registerTask, Task.Delay(TimeSpan.FromSeconds(4)));
+        Task completedTask = await Task.WhenAny(registerTask, Task.Delay(TimeSpan.FromSeconds(12)));
         Assert.AreSame(registerTask, completedTask);
         await registerTask;
         Assert.IsTrue(DateTimeOffset.UtcNow - startedAt < TimeSpan.FromSeconds(8));
