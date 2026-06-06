@@ -1,6 +1,7 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.IO;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
@@ -35,6 +36,43 @@ public class SecureSocketConnectionTests
         Assert.IsTrue(certificate.Subject.Contains(SecureSocketConnection.TargetHost));
         Assert.AreEqual(rootCertificate.Subject, certificate.Issuer);
         Assert.IsTrue(LocalCertificateStore.IsSignedByRoot(certificate, rootCertificate));
+    }
+
+    [TestMethod]
+    public void LocalCertificateContainsServerAndClientEnhancedKeyUsagesTest()
+    {
+        using var certificate = LocalCertificateStore.GetOrCreate("SocketTestsEku");
+
+        Assert.IsTrue(LocalCertificateStore.HasEnhancedKeyUsage(
+            certificate,
+            SecureSocketConnection.ServerAuthenticationEkuOid));
+        Assert.IsTrue(LocalCertificateStore.HasEnhancedKeyUsage(
+            certificate,
+            SecureSocketConnection.ClientAuthenticationEkuOid));
+        Assert.IsFalse(LocalCertificateStore.HasEnhancedKeyUsage(certificate, "1.2.3.4"));
+    }
+
+    [TestMethod]
+    public void TrustedCertificateValidationRejectsNameMismatchAndWrongEnhancedKeyUsageTest()
+    {
+        SecureSocketConnection.Configure(CreateSecurityConfig());
+        using var certificate = LocalCertificateStore.GetOrCreate("SocketTestsTrustedCertificate");
+
+        Assert.IsTrue(SecureSocketConnection.IsTrustedLocalCertificate(
+            certificate,
+            SecureSocketConnection.ServerAuthenticationEkuOid,
+            SslPolicyErrors.None,
+            rejectNameMismatch: true));
+        Assert.IsFalse(SecureSocketConnection.IsTrustedLocalCertificate(
+            certificate,
+            SecureSocketConnection.ServerAuthenticationEkuOid,
+            SslPolicyErrors.RemoteCertificateNameMismatch,
+            rejectNameMismatch: true));
+        Assert.IsFalse(SecureSocketConnection.IsTrustedLocalCertificate(
+            certificate,
+            "1.2.3.4",
+            SslPolicyErrors.None,
+            rejectNameMismatch: true));
     }
 
     [TestMethod]

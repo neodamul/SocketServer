@@ -34,6 +34,8 @@ public sealed class SecureSocketConnection : IDisposable
     public const string CertificateDirectoryEnvironmentVariable = "SOCKET_CERTIFICATE_DIR";
     public const string RequireTls13EnvironmentVariable = "SOCKET_REQUIRE_TLS13";
     public const string DefaultMessageEncryptionSecretEnvironmentVariable = "SOCKET_MESSAGE_SECRET";
+    internal const string ServerAuthenticationEkuOid = "1.3.6.1.5.5.7.3.1";
+    internal const string ClientAuthenticationEkuOid = "1.3.6.1.5.5.7.3.2";
 
     private static readonly object OptionsLock = new();
     private static SocketSecurityProfile securityProfile = SocketSecurityProfile.EndToEndTls;
@@ -199,7 +201,11 @@ public sealed class SecureSocketConnection : IDisposable
         SslStream sslStream = new(
             networkStream,
             leaveInnerStreamOpen: false,
-            (_, certificate, _, _) => IsTrustedLocalCertificate(certificate));
+            (_, certificate, _, sslPolicyErrors) => IsTrustedLocalCertificate(
+                certificate,
+                ServerAuthenticationEkuOid,
+                sslPolicyErrors,
+                rejectNameMismatch: true));
 
         await WaitForAuthenticationAsync(sslStream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
         {
@@ -239,7 +245,12 @@ public sealed class SecureSocketConnection : IDisposable
         if (RequireClientCertificate)
         {
             options.RemoteCertificateValidationCallback =
-                (_, clientCertificate, _, _) => clientCertificate != null && IsTrustedLocalCertificate(clientCertificate);
+                (_, clientCertificate, _, sslPolicyErrors) => clientCertificate != null &&
+                    IsTrustedLocalCertificate(
+                        clientCertificate,
+                        ClientAuthenticationEkuOid,
+                        sslPolicyErrors,
+                        rejectNameMismatch: false);
         }
 
         await WaitForAuthenticationAsync(sslStream.AuthenticateAsServerAsync(options));
@@ -498,9 +509,18 @@ public sealed class SecureSocketConnection : IDisposable
         return timeoutMilliseconds > 0 ? timeoutMilliseconds : SocketFactory.ReadTimeoutMilliseconds;
     }
 
-    private static bool IsTrustedLocalCertificate(X509Certificate certificate)
+    internal static bool IsTrustedLocalCertificate(
+        X509Certificate certificate,
+        string requiredEnhancedKeyUsageOid,
+        SslPolicyErrors sslPolicyErrors = SslPolicyErrors.None,
+        bool rejectNameMismatch = false)
     {
         if (certificate == null)
+        {
+            return false;
+        }
+
+        if (rejectNameMismatch && (sslPolicyErrors & SslPolicyErrors.RemoteCertificateNameMismatch) != 0)
         {
             return false;
         }
@@ -508,6 +528,11 @@ public sealed class SecureSocketConnection : IDisposable
         using X509Certificate2 certificate2 = new(certificate);
         if (!certificate2.Subject.Contains(LocalCertificateSubject, StringComparison.Ordinal) ||
             !LocalCertificateStore.HasSubjectAlternativeName(certificate2))
+        {
+            return false;
+        }
+
+        if (!LocalCertificateStore.HasEnhancedKeyUsage(certificate2, requiredEnhancedKeyUsageOid))
         {
             return false;
         }
@@ -1059,6 +1084,32 @@ public static class LocalCertificateStore
             if (extension.Oid?.Value == "2.5.29.17")
             {
                 return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static bool HasEnhancedKeyUsage(X509Certificate2 certificate, string oid)
+    {
+        if (certificate == null || string.IsNullOrWhiteSpace(oid))
+        {
+            return false;
+        }
+
+        foreach (X509Extension extension in certificate.Extensions)
+        {
+            if (extension is X509EnhancedKeyUsageExtension enhancedKeyUsageExtension)
+            {
+                foreach (Oid enhancedKeyUsage in enhancedKeyUsageExtension.EnhancedKeyUsages)
+                {
+                    if (string.Equals(enhancedKeyUsage.Value, oid, StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
             }
         }
 

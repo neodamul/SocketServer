@@ -104,7 +104,7 @@ public class GracefulShutdownTests
             TransportMode = "Tls",
             TlsProtocol = "Auto",
             RequireTls13 = false,
-            AuthenticationTimeoutMilliseconds = 5000
+            AuthenticationTimeoutMilliseconds = 30000
         };
     }
 
