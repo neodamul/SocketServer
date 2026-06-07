@@ -72,23 +72,19 @@ public sealed class SampleSocketClientSession : IDisposable
             current.Host,
             current.Port,
             current.UseControlServer,
-            current.HealthCheckIntervalSeconds);
-        if (!success)
-        {
-            nextSession.Dispose();
-            this.SetError("Connect/register failed.");
-            return false;
-        }
+            current.HealthCheckIntervalSeconds,
+            current.ReconnectRetrySeconds,
+            current.DuplicateRejectBackoffSeconds);
 
         lock (this.syncRoot)
         {
             this.session?.Dispose();
             this.session = nextSession;
-            this.status = "Connected and registered";
-            this.lastError = "";
+            this.status = success ? "Connected and registered" : "Reconnecting";
+            this.lastError = success ? "" : "Connect/register failed. Retrying.";
         }
 
-        return true;
+        return success;
     }
 
     public async Task<bool> RegisterAsync()

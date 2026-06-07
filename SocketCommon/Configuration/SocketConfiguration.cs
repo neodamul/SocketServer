@@ -244,6 +244,10 @@ public class SocketClientConnectionConfig
     };
 
     public int HealthCheckIntervalSeconds { get; set; } = 30;
+
+    public int ReconnectRetrySeconds { get; set; } = 30;
+
+    public int DuplicateRejectBackoffSeconds { get; set; } = 90;
 }
 
 public static class SocketConfigLoader

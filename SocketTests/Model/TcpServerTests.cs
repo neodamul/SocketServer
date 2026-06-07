@@ -297,6 +297,171 @@ public class TcpServerTests
     }
 
     [TestMethod()]
+    public async Task DuplicateClientIdRegisterRejectsNewConnectionAndKeepsExistingTest()
+    {
+        TcpServer server = new(
+            1,
+            "testServer",
+            "127.0.0.1",
+            TestPort,
+            maxConnections: 10,
+            pendingAcceptCount: 2,
+            idleTimeout: TimeSpan.FromSeconds(90));
+        TcpClient firstClient = new(77, "firstClient", "127.0.0.1", TestPort);
+        TcpClient secondClient = new(77, "secondClient", "127.0.0.1", TestPort);
+
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+            Assert.IsTrue(firstClient.Connect());
+            Assert.IsTrue(await firstClient.RegisterClientAsync());
+
+            Assert.IsTrue(secondClient.Connect());
+            (bool registerReceived, ClientRegisterAck duplicateAck) = await secondClient.RegisterClientWithAckAsync();
+
+            Assert.IsTrue(registerReceived);
+            Assert.IsNotNull(duplicateAck);
+            Assert.IsFalse(duplicateAck.Success);
+            Assert.AreEqual((uint)77, duplicateAck.ClientId);
+            Assert.AreEqual(90, duplicateAck.RetryAfterSeconds);
+            await WaitForStatusAsync(server, status => status.ConnectedClientCount == 1);
+            Assert.IsTrue(await firstClient.SendHealthCheckAsync());
+            (bool healthCheckReceived, HealthCheckMessage message) = await WithTimeoutAsync(firstClient.TryReceiveHealthCheckAsync());
+            Assert.IsTrue(healthCheckReceived);
+            Assert.AreEqual(HealthCheckMessageType.Pong, message.Type);
+        }
+        finally
+        {
+            firstClient.Disconnect();
+            secondClient.Disconnect();
+            server.End();
+        }
+    }
+
+    [TestMethod()]
+    public async Task DuplicateClientIdRegisterSucceedsAfterExistingConnectionTimesOutTest()
+    {
+        TcpServer server = new(
+            1,
+            "testServer",
+            "127.0.0.1",
+            TestPort,
+            maxConnections: 10,
+            pendingAcceptCount: 2,
+            idleTimeout: TimeSpan.FromMilliseconds(100),
+            idleScanInterval: TimeSpan.FromMilliseconds(50));
+        TcpClient firstClient = new(78, "firstClient", "127.0.0.1", TestPort);
+        TcpClient secondClient = new(78, "secondClient", "127.0.0.1", TestPort);
+
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+            Assert.IsTrue(firstClient.Connect());
+            Assert.IsTrue(await firstClient.RegisterClientAsync());
+            await WaitForStatusAsync(server, status => status.ConnectedClientCount == 1);
+            await WaitForStatusAsync(server, status => status.TotalIdleTimeoutClients >= 1);
+
+            Assert.IsTrue(secondClient.Connect());
+            (bool registerReceived, ClientRegisterAck ack) = await secondClient.RegisterClientWithAckAsync();
+
+            Assert.IsTrue(registerReceived);
+            Assert.IsTrue(ack.Success);
+            await WaitForStatusAsync(server, status => status.ConnectedClientCount == 1);
+        }
+        finally
+        {
+            firstClient.Disconnect();
+            secondClient.Disconnect();
+            server.End();
+        }
+    }
+
+    [TestMethod()]
+    public async Task SocketClientSessionRetriesAfterDuplicateRegisterBackoffTest()
+    {
+        TcpServer server = new(
+            1,
+            "testServer",
+            "127.0.0.1",
+            TestPort,
+            maxConnections: 10,
+            pendingAcceptCount: 2,
+            idleTimeout: TimeSpan.FromSeconds(3),
+            idleScanInterval: TimeSpan.FromMilliseconds(100));
+        TcpClient firstClient = new(79, "firstClient", "127.0.0.1", TestPort);
+        using SocketClientSession retryingSession = new();
+
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+            Assert.IsTrue(firstClient.Connect());
+            Assert.IsTrue(await firstClient.RegisterClientAsync());
+
+            bool initialSuccess = await retryingSession.ConnectAndRegisterAsync(
+                79,
+                "retryingClient",
+                "127.0.0.1",
+                TestPort,
+                useControlServer: false,
+                healthCheckIntervalSeconds: 60,
+                reconnectRetrySeconds: 1,
+                duplicateRejectBackoffSeconds: 1);
+
+            Assert.IsFalse(initialSuccess);
+            await WaitForStatusAsync(server, status => status.TotalIdleTimeoutClients >= 1, timeoutMilliseconds: 10000);
+            await WaitForConditionAsync(() => retryingSession.IsRegistered, timeoutMilliseconds: 10000);
+        }
+        finally
+        {
+            firstClient.Disconnect();
+            server.End();
+        }
+    }
+
+    [TestMethod()]
+    public async Task SocketClientSessionDisconnectStopsReconnectLoopTest()
+    {
+        TcpServer server = new(
+            1,
+            "testServer",
+            "127.0.0.1",
+            TestPort,
+            maxConnections: 10,
+            pendingAcceptCount: 2,
+            idleTimeout: TimeSpan.FromSeconds(10));
+        using SocketClientSession session = new();
+
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+            Assert.IsTrue(await session.ConnectAndRegisterAsync(
+                80,
+                "disconnectClient",
+                "127.0.0.1",
+                TestPort,
+                useControlServer: false,
+                healthCheckIntervalSeconds: 1,
+                reconnectRetrySeconds: 1,
+                duplicateRejectBackoffSeconds: 1));
+            TcpServerStatus connectedStatus = await WaitForStatusAsync(server, status => status.ConnectedClientCount == 1);
+
+            session.Disconnect();
+            await WaitForStatusAsync(server, status => status.ConnectedClientCount == 0);
+            await Task.Delay(1500);
+
+            Assert.AreEqual(connectedStatus.TotalAcceptedClients, server.GetStatus().TotalAcceptedClients);
+        }
+        finally
+        {
+            server.End();
+        }
+    }
+
+    [TestMethod()]
     public async Task CleanupSchedulerClosesInactiveClientAfterHealthCheckTimeoutTest()
     {
         TcpServer server = new(
@@ -494,6 +659,23 @@ public class TcpServerTests
         }
 
         await task;
+    }
+
+    private static async Task WaitForConditionAsync(Func<bool> predicate, int timeoutMilliseconds = 5000)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow.AddMilliseconds(timeoutMilliseconds);
+        do
+        {
+            if (predicate())
+            {
+                return;
+            }
+
+            await Task.Delay(25);
+        }
+        while (DateTimeOffset.UtcNow < deadline);
+
+        Assert.Fail("Timed out waiting for expected condition.");
     }
 
     private static (int First, int Second) GetAvailableConsecutivePorts()

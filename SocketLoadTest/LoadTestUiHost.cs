@@ -58,6 +58,7 @@ internal static class LoadTestUiHost
         html.AppendLine("<h1>SocketLoadTest</h1>");
         html.AppendLine("<section class=\"band\"><div class=\"grid\">");
         html.AppendLine("<div><label>Clients</label><input id=\"clients\" type=\"number\" min=\"1\" value=\"4\"></div>");
+        html.AppendLine("<div><label>Start Client ID</label><input id=\"startClientId\" type=\"number\" min=\"1\" value=\"1\"></div>");
         html.AppendLine("<div><label>Batch Size</label><input id=\"batchSize\" type=\"number\" min=\"1\" value=\"4\"></div>");
         html.AppendLine("<div><label>Host</label><input id=\"host\" value=\"127.0.0.1\"></div>");
         html.AppendLine("<div><label>Port</label><input id=\"port\" type=\"number\" min=\"0\" max=\"65535\" value=\"10000\"></div>");
@@ -74,7 +75,7 @@ internal static class LoadTestUiHost
         html.AppendLine("function metric(label,value){return `<div class='metric'>${label}<b>${value}</b></div>`}");
         html.AppendLine("function render(s){document.getElementById('state').textContent=JSON.stringify(s,null,2);const c=s.counters;document.getElementById('metrics').innerHTML=metric('Status',s.status)+metric('Connected Now',s.connectedNow)+metric('Attempted',c.attempted)+metric('Connected Total',c.connected)+metric('Healthcheck OK',c.healthCheckSuccess)+metric('Failures',c.connectFail+c.healthCheckFail+c.registerFail+c.messageFail);document.getElementById('targets').innerHTML=s.targetServers.map(t=>`<tr><td>${t.targetServer}</td><td>${t.connectedClients}</td></tr>`).join('');document.getElementById('clientsTable').innerHTML=s.clients.map(c=>`<tr><td>${c.clientId}</td><td>${c.isConnected}</td><td>${c.targetServer}</td></tr>`).join('')}");
         html.AppendLine("async function refresh(){render(await api('/api/state'))}");
-        html.AppendLine("async function start(){render(await api('/api/start',{method:'POST',body:JSON.stringify({clients:+val('clients'),batchSize:+val('batchSize'),host:val('host'),port:+val('port'),useControlServer:checked('useControlServer'),rampDelayMilliseconds:+val('rampDelayMilliseconds')} )}))}");
+        html.AppendLine("async function start(){render(await api('/api/start',{method:'POST',body:JSON.stringify({clients:+val('clients'),startClientId:+val('startClientId'),batchSize:+val('batchSize'),host:val('host'),port:+val('port'),useControlServer:checked('useControlServer'),rampDelayMilliseconds:+val('rampDelayMilliseconds')} )}))}");
         html.AppendLine("async function stop(){render(await api('/api/stop',{method:'POST'}))}");
         html.AppendLine("refresh();setInterval(refresh,5000);");
         html.AppendLine("</script></main></body></html>");
@@ -180,9 +181,10 @@ internal sealed class LoadTestUiService
     {
         try
         {
-            for (int firstClientId = 1; firstClientId <= options.Clients && !cancellationToken.IsCancellationRequested; firstClientId += options.BatchSize)
+            int lastClientId = options.StartClientId + options.Clients - 1;
+            for (int firstClientId = options.StartClientId; firstClientId <= lastClientId && !cancellationToken.IsCancellationRequested; firstClientId += options.BatchSize)
             {
-                int batchCount = Math.Min(options.BatchSize, options.Clients - firstClientId + 1);
+                int batchCount = Math.Min(options.BatchSize, lastClientId - firstClientId + 1);
                 ClientAttemptResult[] results = await this.ConnectBatchAsync(options, firstClientId, batchCount);
                 lock (this.syncRoot)
                 {
@@ -248,6 +250,14 @@ internal sealed class LoadTestUiService
             }
 
             Interlocked.Increment(ref this.counters.Connected);
+            (bool registerReceived, ClientRegisterAck registerAck) = await client.RegisterClientWithAckAsync();
+            if (!registerReceived || !registerAck.Success)
+            {
+                Interlocked.Increment(ref this.counters.RegisterFail);
+                client.Dispose();
+                return ClientAttemptResult.Failed;
+            }
+
             if (!await SendAndReceiveHealthCheckAsync(client, options.HealthCheckTimeoutSeconds))
             {
                 Interlocked.Increment(ref this.counters.HealthCheckFail);
@@ -272,6 +282,7 @@ internal sealed class LoadTestUiService
         return this.defaultOptions with
         {
             Clients = clients,
+            StartClientId = Math.Max(1, request.StartClientId ?? this.defaultOptions.StartClientId),
             BatchSize = Math.Max(1, request.BatchSize ?? Math.Min(clients, this.defaultOptions.BatchSize)),
             Host = string.IsNullOrWhiteSpace(request.Host) ? this.defaultOptions.Host : request.Host,
             Port = request.Port ?? this.defaultOptions.Port,
@@ -330,6 +341,8 @@ internal sealed class LoadTestUiService
 internal sealed class LoadTestUiStartRequest
 {
     public int? Clients { get; init; }
+
+    public int? StartClientId { get; init; }
 
     public int? BatchSize { get; init; }
 

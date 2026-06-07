@@ -37,6 +37,8 @@ public class ClientRegisterAck
     public string ErrorMessage { get; set; } = "";
 
     public DateTimeOffset RegisteredAt { get; set; } = DateTimeOffset.UtcNow;
+
+    public int RetryAfterSeconds { get; set; }
 }
 
 public class ClientMessageSendRequest

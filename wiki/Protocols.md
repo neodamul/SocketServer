@@ -35,6 +35,15 @@ Connections between `SocketClient`, `SocketServer`, `SocketControl`, `SocketDash
 ```
 `PING`/`PONG` use `ProtoHealthCheckMessage`; `PONG.status` is `OK`. The client runs a keepalive via `StartHealthCheckLoop()` (default 30s); it waits ≥250ms for a pong and, after 3 consecutive failures, closes the connection as unhealthy. The SocketServer refreshes session activity on any valid frame (including `PING`); if healthcheck stops and `idleTimeoutSeconds` is exceeded, the cleanup scheduler closes the client session and propagates session close to the ControlServer.
 
+## Client Register
+
+```text
+2000 CLIENT_REGISTER
+2001 CLIENT_REGISTER_ACK
+```
+
+SocketServer는 동일 `clientId`의 기존 연결이 살아 있으면 기존 연결을 우선 유지하고 신규 register를 거부합니다. 이때 `CLIENT_REGISTER_ACK.success=false`, `retryAfterSeconds=<server idle timeout>`을 내려보내며 신규 연결만 닫습니다. 기존 연결이 healthcheck 중단으로 idle cleanup 된 뒤에는 같은 `clientId` 신규 register가 정상 수락됩니다.
+
 ## HelloWorld
 ```text
 100 HelloWorldRequest

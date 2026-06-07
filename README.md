@@ -23,6 +23,7 @@ SocketServer.sln
 - TLS 기반 소켓 연결, optional mTLS, TLS 비활성 시 AES-GCM/HMAC 메시지 보호
 - healthcheck, HelloWorld, ControlServer route 프로토콜
 - 클라이언트 간 메시지 전송과 SocketServer 간 relay
+- 동일 ClientId 기존 연결 우선 정책과 클라이언트 자동 재연결
 - `SocketAsyncEventArgs` 기반 비동기 송수신, 객체 풀, 고정 슬랩 버퍼
 - SocketServer port range 바인딩과 서버별 최대/현재/접속가능 수 관리
 - ControlServer 브로커 기반 서버 등록, heartbeat, route 응답, registry 파일 저장
@@ -48,6 +49,7 @@ SocketClient/config.json
 
 SocketServer는 설정된 port range 안에서 사용 가능한 포트를 찾아 바인딩하고, ControlServer에 등록합니다. 클라이언트는 ControlServer에 route를 요청한 뒤 응답받은 SocketServer endpoint로 직접 접속합니다.
 각 모듈은 `socketOptions`로 connection/read/write timeout을 설정하며 기본값은 30초입니다.
+클라이언트 재연결 대기 시간은 기본 30초이며, 동일 ClientId 중복 거부 시 서버가 전달한 retry-after 또는 기본 90초 backoff를 사용합니다.
 
 기본 로컬 런타임 포트는 다음과 같습니다.
 
@@ -120,7 +122,7 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 1000 --ba
 UI 모드:
 
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 10060 --clients 4 --batch-size 4 --host 127.0.0.1 --port 10000 --use-control-server
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 10060 --clients 4 --start-client-id 201 --batch-size 4 --host 127.0.0.1 --port 10000 --use-control-server
 ```
 
 UI는 실행 로그의 listening 주소에서 접속 대수, 타겟 서버별 분포, 클라이언트별 접속 상태, counters/metrics를 표시합니다.

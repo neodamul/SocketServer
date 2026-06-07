@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Text.Json;
 using SocketClient.Model;
+using SocketCommon.Configuration;
 using SocketCommon.Logging;
+using SocketCommon.Model;
 using SocketServer.Model;
 
 namespace SocketLoadTest;
@@ -26,6 +28,13 @@ internal static class Program
         }
 
         LogConfigurator.Configure(ResolveLogConfigFileName());
+        SocketFactory.Configure(new SocketOperationConfig());
+        SecureSocketConnection.Configure(new SocketSecurityConfig
+        {
+            TlsProtocol = "Auto",
+            RequireTls13 = false,
+            RequireClientCertificate = false
+        });
         if (options.UiMode)
         {
             await LoadTestUiHost.RunAsync(options);
@@ -55,9 +64,10 @@ internal static class Program
 
         try
         {
-            for (int firstClientId = 1; firstClientId <= options.Clients; firstClientId += options.BatchSize)
+            int lastClientId = options.StartClientId + options.Clients - 1;
+            for (int firstClientId = options.StartClientId; firstClientId <= lastClientId; firstClientId += options.BatchSize)
             {
-                int batchCount = Math.Min(options.BatchSize, options.Clients - firstClientId + 1);
+                int batchCount = Math.Min(options.BatchSize, lastClientId - firstClientId + 1);
                 ClientAttemptResult[] results = await ConnectBatchAsync(options, firstClientId, batchCount, counters);
 
                 foreach (ClientAttemptResult result in results)
@@ -170,17 +180,19 @@ internal static class Program
             }
 
             Interlocked.Increment(ref counters.Connected);
+            (bool registerReceived, SocketCommon.Model.ClientRegisterAck registerAck) =
+                await client.RegisterClientWithAckAsync();
+            if (!registerReceived || !registerAck.Success)
+            {
+                Interlocked.Increment(ref counters.RegisterFail);
+                client.Dispose();
+                return ClientAttemptResult.Failed;
+            }
+
             bool healthCheckSucceeded = await SendAndReceiveHealthCheckAsync(client, options.HealthCheckTimeoutSeconds);
             if (healthCheckSucceeded)
             {
                 Interlocked.Increment(ref counters.HealthCheckSuccess);
-                if (options.MessageTest && !await client.RegisterClientAsync())
-                {
-                    Interlocked.Increment(ref counters.RegisterFail);
-                    client.Dispose();
-                    return ClientAttemptResult.Failed;
-                }
-
                 if (!options.MessageTest && options.HoldSeconds > 0)
                 {
                     client.StartHealthCheckLoop();
@@ -365,6 +377,7 @@ internal static class Program
             MessageRounds = options.MessageRounds,
             RampDelayMilliseconds = options.RampDelayMilliseconds,
             ExpectedConnected = options.ExpectedConnected,
+            StartClientId = options.StartClientId,
             Attempted = counters.Attempted,
             Connected = counters.Connected,
             ConnectFail = counters.ConnectFail,
@@ -387,7 +400,7 @@ internal static class Program
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: dotnet run --project SocketLoadTest -- [--ui] [--ui-port N] [--profile smoke|soak-1k|soak-10k|soak-50k|message-1k] [--clients N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--external-server] [--use-control-server] [--message-test] [--message-rounds N] [--ramp-delay-ms N] [--expected-connected N] [--healthcheck-timeout-seconds N] [--message-timeout-seconds N] [--report-file PATH]");
+            "Usage: dotnet run --project SocketLoadTest -- [--ui] [--ui-port N] [--profile smoke|soak-1k|soak-10k|soak-50k|message-1k] [--clients N] [--start-client-id N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--external-server] [--use-control-server] [--message-test] [--message-rounds N] [--ramp-delay-ms N] [--expected-connected N] [--healthcheck-timeout-seconds N] [--message-timeout-seconds N] [--report-file PATH]");
     }
 }
 
@@ -422,6 +435,7 @@ internal sealed record LoadTestOptions(
     bool MessageTest,
     int MessageRounds,
     int RampDelayMilliseconds,
+    int StartClientId,
     int ExpectedConnected,
     int HealthCheckTimeoutSeconds,
     int MessageTimeoutSeconds,
@@ -443,6 +457,7 @@ internal sealed record LoadTestOptions(
             MessageTest: false,
             MessageRounds: 1,
             RampDelayMilliseconds: 0,
+            StartClientId: 1,
             ExpectedConnected: 0,
             HealthCheckTimeoutSeconds: 10,
             MessageTimeoutSeconds: 10,
@@ -485,6 +500,15 @@ internal sealed record LoadTestOptions(
                     }
 
                     options = options with { Clients = clients };
+                    break;
+
+                case "--start-client-id":
+                    if (!TryReadInt(args, ref index, value, arg, 1, int.MaxValue, out int startClientId, out error))
+                    {
+                        return false;
+                    }
+
+                    options = options with { StartClientId = startClientId };
                     break;
 
                 case "--batch-size":
@@ -777,6 +801,8 @@ internal sealed class LoadTestReport
     public int RampDelayMilliseconds { get; init; }
 
     public int ExpectedConnected { get; init; }
+
+    public int StartClientId { get; init; }
 
     public int Attempted { get; init; }
 

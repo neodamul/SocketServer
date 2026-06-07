@@ -26,11 +26,17 @@ Bulk-connection validation uses `SocketLoadTest` (see [Operations → Load test]
 ```bash
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k --use-control-server --report-file reports/soak-10k.json
 ```
-The base run aggregates connect, first healthcheck, and healthcheck-loop retention. `--message-test` splits connected clients into source/target pairs and verifies client-to-client delivery and source ack. UI mode starts/stops load clients and shows state in the browser:
+The base run aggregates connect, register, first healthcheck, and healthcheck-loop retention. `--message-test` splits connected clients into source/target pairs and verifies client-to-client delivery and source ack.
+
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 10060 --clients 4 --batch-size 4 --host 127.0.0.1 --port 10000 --use-control-server
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 0 --use-control-server --message-test --message-rounds 1
 ```
-Options: `--profile`, `--clients`, `--batch-size`, `--hold-seconds`, `--use-control-server`, `--message-test`, `--message-rounds`, `--ramp-delay-ms`, `--expected-connected`, `--healthcheck-timeout-seconds`, `--message-timeout-seconds`, `--report-file` (JSON of options, counters, elapsed time).
+
+UI mode starts/stops load clients and shows state in the browser:
+```bash
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 10060 --clients 4 --start-client-id 201 --batch-size 4 --host 127.0.0.1 --port 10000 --use-control-server
+```
+Options: `--profile`, `--clients`, `--start-client-id`, `--batch-size`, `--hold-seconds`, `--use-control-server`, `--message-test`, `--message-rounds`, `--ramp-delay-ms`, `--expected-connected`, `--healthcheck-timeout-seconds`, `--message-timeout-seconds`, `--report-file` (JSON of options, counters, elapsed time).
 
 ## Log analysis
 After a run, inspect `bin/Debug/net9.0/logs/` or the project's `logs/`:

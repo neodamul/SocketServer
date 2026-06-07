@@ -15,7 +15,13 @@ public sealed class SocketClientSession : IDisposable
     private Task receiveTask;
     private CancellationTokenSource healthCheckCancellation;
     private Task healthCheckTask;
+    private CancellationTokenSource reconnectCancellation;
+    private Task reconnectTask;
+    private ReconnectSettings reconnectSettings;
+    private TimeSpan nextReconnectDelay = TimeSpan.FromSeconds(30);
     private bool registered;
+    private bool reconnectEnabled;
+    private bool intentionalDisconnect;
 
     public event Action<ClientMessageDelivery> MessageReceived;
 
@@ -55,20 +61,68 @@ public sealed class SocketClientSession : IDisposable
         bool useControlServer,
         int healthCheckIntervalSeconds)
     {
-        TcpClient nextClient = new(clientId, clientName, host, port);
-        bool connected = useControlServer
-            ? await nextClient.ConnectViaControlServerAsync(host, port)
+        return await this.ConnectAndRegisterAsync(
+            clientId,
+            clientName,
+            host,
+            port,
+            useControlServer,
+            healthCheckIntervalSeconds,
+            30,
+            90);
+    }
+
+    public async Task<bool> ConnectAndRegisterAsync(
+        int clientId,
+        string clientName,
+        string host,
+        int port,
+        bool useControlServer,
+        int healthCheckIntervalSeconds,
+        int reconnectRetrySeconds,
+        int duplicateRejectBackoffSeconds)
+    {
+        this.reconnectSettings = new ReconnectSettings(
+            clientId,
+            clientName,
+            host,
+            port,
+            useControlServer,
+            Math.Max(1, healthCheckIntervalSeconds),
+            Math.Max(1, reconnectRetrySeconds),
+            Math.Max(1, duplicateRejectBackoffSeconds));
+        this.nextReconnectDelay = TimeSpan.FromSeconds(this.reconnectSettings.ReconnectRetrySeconds);
+        this.intentionalDisconnect = false;
+        this.reconnectEnabled = true;
+        this.StopReconnectLoop();
+
+        bool success = await this.TryConnectAndRegisterOnceAsync();
+        this.StartReconnectLoop();
+        return success;
+    }
+
+    private async Task<bool> TryConnectAndRegisterOnceAsync()
+    {
+        ReconnectSettings settings = this.reconnectSettings;
+        TcpClient nextClient = new(settings.ClientId, settings.ClientName, settings.Host, settings.Port);
+        bool connected = settings.UseControlServer
+            ? await nextClient.ConnectViaControlServerAsync(settings.Host, settings.Port)
             : await Task.Run(nextClient.Connect);
         if (!connected)
         {
             nextClient.Dispose();
+            this.nextReconnectDelay = TimeSpan.FromSeconds(settings.ReconnectRetrySeconds);
             return false;
         }
 
-        bool registeredClient = await nextClient.RegisterClientAsync();
-        if (!registeredClient)
+        (bool registerReceived, ClientRegisterAck registerAck) = await nextClient.RegisterClientWithAckAsync();
+        if (!registerReceived || !registerAck.Success)
         {
             nextClient.Dispose();
+            int delaySeconds = registerAck?.RetryAfterSeconds > 0
+                ? registerAck.RetryAfterSeconds
+                : settings.DuplicateRejectBackoffSeconds;
+            this.nextReconnectDelay = TimeSpan.FromSeconds(Math.Max(1, delaySeconds));
             return false;
         }
 
@@ -81,7 +135,8 @@ public sealed class SocketClientSession : IDisposable
         }
 
         this.StartReceiveLoop();
-        this.StartHealthCheckLoop(Math.Max(1, healthCheckIntervalSeconds));
+        this.StartHealthCheckLoop(settings.HealthCheckIntervalSeconds);
+        this.nextReconnectDelay = TimeSpan.FromSeconds(settings.ReconnectRetrySeconds);
         return true;
     }
 
@@ -108,6 +163,9 @@ public sealed class SocketClientSession : IDisposable
 
     public void Disconnect()
     {
+        this.intentionalDisconnect = true;
+        this.reconnectEnabled = false;
+        this.StopReconnectLoop();
         this.StopBackgroundLoops();
         lock (this.syncRoot)
         {
@@ -183,6 +241,74 @@ public sealed class SocketClientSession : IDisposable
         }
     }
 
+    private void StartReconnectLoop()
+    {
+        lock (this.syncRoot)
+        {
+            if (!this.reconnectEnabled ||
+                this.reconnectTask != null && !this.reconnectTask.IsCompleted)
+            {
+                return;
+            }
+
+            this.reconnectCancellation?.Dispose();
+            this.reconnectCancellation = new CancellationTokenSource();
+            this.reconnectTask = this.RunReconnectLoopAsync(this.reconnectCancellation.Token);
+        }
+    }
+
+    private void StopReconnectLoop()
+    {
+        lock (this.syncRoot)
+        {
+            this.reconnectCancellation?.Cancel();
+            this.reconnectCancellation?.Dispose();
+            this.reconnectCancellation = null;
+            this.reconnectTask = null;
+        }
+    }
+
+    private async Task RunReconnectLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(this.nextReconnectDelay, cancellationToken);
+            if (cancellationToken.IsCancellationRequested || !this.reconnectEnabled || this.intentionalDisconnect)
+            {
+                return;
+            }
+
+            if (this.IsConnected && this.IsRegistered)
+            {
+                continue;
+            }
+
+            await this.TryConnectAndRegisterOnceAsync();
+        }
+    }
+
+    private void HandleUnexpectedDisconnect()
+    {
+        if (this.intentionalDisconnect)
+        {
+            return;
+        }
+
+        this.StopBackgroundLoops();
+        lock (this.syncRoot)
+        {
+            this.client?.Dispose();
+            this.client = null;
+            this.registered = false;
+        }
+
+        this.nextReconnectDelay = TimeSpan.FromSeconds(this.reconnectSettings.ReconnectRetrySeconds <= 0 ? 30 : this.reconnectSettings.ReconnectRetrySeconds);
+        if (this.reconnectEnabled)
+        {
+            this.StartReconnectLoop();
+        }
+    }
+
     private async Task RunReceiveLoopAsync(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -220,7 +346,7 @@ public sealed class SocketClientSession : IDisposable
 
         if (!cancellationToken.IsCancellationRequested)
         {
-            this.Disconnect();
+            this.HandleUnexpectedDisconnect();
         }
     }
 
@@ -267,7 +393,7 @@ public sealed class SocketClientSession : IDisposable
 
         if (!cancellationToken.IsCancellationRequested)
         {
-            this.Disconnect();
+            this.HandleUnexpectedDisconnect();
         }
     }
 
@@ -296,4 +422,14 @@ public sealed class SocketClientSession : IDisposable
             this.MessageFailed?.Invoke(error);
         }
     }
+
+    private sealed record ReconnectSettings(
+        int ClientId,
+        string ClientName,
+        string Host,
+        int Port,
+        bool UseControlServer,
+        int HealthCheckIntervalSeconds,
+        int ReconnectRetrySeconds,
+        int DuplicateRejectBackoffSeconds);
 }
