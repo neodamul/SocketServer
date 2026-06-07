@@ -246,6 +246,37 @@ function sameEndpoint(left, right) {
     Number(left.port) === Number(right.port);
 }
 
+function typeBadge(type) {
+  const map = { Dashboard: ["t-dash", "DASH"], ControlServer: ["t-ctrl", "CTRL"], SocketServer: ["t-sock", "SOCK"] };
+  const [cls, label] = map[type] || ["t-sock", String(type ?? "-")];
+  return `<span class="type ${cls}">${label}</span>`;
+}
+
+function healthClass(health) {
+  const h = String(health ?? "").toLowerCase();
+  if (h.includes("healthy") || h.includes("online") || h.includes("alive") || h.includes("ready")) {
+    return "h-ok";
+  }
+  if (h.includes("degraded")) {
+    return "h-warn";
+  }
+  return "h-bad";
+}
+
+function healthBadge(health) {
+  return `<span class="health ${healthClass(health)}"><i></i>${displayValue(health)}</span>`;
+}
+
+function resCell(value) {
+  if (value === null || value === undefined) {
+    return `<span class="muted">-</span>`;
+  }
+
+  const v = Math.max(0, Math.min(100, Number(value) || 0));
+  const cls = v >= 85 ? "rb-bad" : v >= 70 ? "rb-warn" : "rb-ok";
+  return `<div class="res"><span class="resbar"><i class="${cls}" style="width:${v}%"></i></span><b class="pct">${percent(value)}</b></div>`;
+}
+
 function renderServers(clusterServers, dashboardServer, controlServers) {
   const dashboardRow = buildDashboardServerRow(dashboardServer);
   const controlRows = (controlServers || []).map(buildControlServerRow);
@@ -273,16 +304,16 @@ function renderServers(clusterServers, dashboardServer, controlServers) {
 
   fields.clusterServers.innerHTML = currentInventoryRows.map(server => `
     <tr data-row-key="${server.key}" class="${server.key === selectedServerKey ? "selected-row" : ""}">
-      <td>${server.type}</td>
-      <td>${server.instanceId}</td>
-      <td>${server.health}</td>
-      <td>${server.host}:${server.port}</td>
-      <td>${server.maxConnections}</td>
-      <td>${server.currentConnections}</td>
-      <td>${server.availableConnections}</td>
-      <td>${percent(server.resourceUsage?.cpuUsagePercent)}</td>
-      <td>${percent(server.resourceUsage?.memoryUsagePercent)}</td>
-      <td>${percent(server.resourceUsage?.storageUsagePercent)}</td>
+      <td>${typeBadge(server.type)}</td>
+      <td class="cell-inst">${server.instanceId}</td>
+      <td>${healthBadge(server.health)}</td>
+      <td class="cell-ep">${server.host}:${server.port}</td>
+      <td class="cell-num">${server.maxConnections}</td>
+      <td class="cell-num">${server.currentConnections}</td>
+      <td class="cell-num">${server.availableConnections}</td>
+      <td>${resCell(server.resourceUsage?.cpuUsagePercent)}</td>
+      <td>${resCell(server.resourceUsage?.memoryUsagePercent)}</td>
+      <td>${resCell(server.resourceUsage?.storageUsagePercent)}</td>
     </tr>
   `).join("");
   renderSelectedServer(currentInventoryRows.find(server => server.key === selectedServerKey));
