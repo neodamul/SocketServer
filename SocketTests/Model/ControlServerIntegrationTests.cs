@@ -1,8 +1,10 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using SocketClient.Model;
@@ -483,6 +485,10 @@ public class ControlServerIntegrationTests
         ResetSocketTestDefaults();
         await AssertClientMessageRelayAsync(sourceClient, targetClient, 141, 142, "persistent-relay-1", targetServer.InstanceId);
         await AssertClientMessageRelayAsync(sourceClient, targetClient, 141, 142, "persistent-relay-2", targetServer.InstanceId);
+
+        IReadOnlyCollection<int> relayChannelPoolCounts = GetServerRelayChannelPoolCounts(sourceServer);
+        Assert.IsTrue(relayChannelPoolCounts.Count > 0);
+        Assert.IsTrue(relayChannelPoolCounts.All(count => count >= 2));
     }
 
     [TestMethod]
@@ -888,6 +894,26 @@ public class ControlServerIntegrationTests
             $"sessions={status.TotalSessionCount}, current={status.TotalCurrentConnections}, " +
             $"reserved={status.TotalReservedConnections}, available={status.TotalAvailableConnections}");
         return status;
+    }
+
+    private static IReadOnlyCollection<int> GetServerRelayChannelPoolCounts(TcpServer server)
+    {
+        FieldInfo? field = typeof(TcpServer).GetField(
+            "serverRelayChannelPools",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (field == null)
+        {
+            Assert.Fail("TcpServer serverRelayChannelPools field was not found.");
+            throw new InvalidOperationException();
+        }
+
+        if (field.GetValue(server) is not ConcurrentDictionary<string, PersistentSecureChannelPool> pools)
+        {
+            Assert.Fail("TcpServer serverRelayChannelPools field had an unexpected type.");
+            throw new InvalidOperationException();
+        }
+
+        return pools.Values.Select(pool => pool.ChannelCount).ToArray();
     }
 
     private static int GetAvailablePort()
