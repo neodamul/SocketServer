@@ -21,6 +21,8 @@ Coverage includes:
 
 Integration tests run real TCP/TLS servers/clients: a test class that changes global socket/security settings must restore defaults in class init. Sample-client tests assume auto-register and a background receive loop after `Connect`, and assert on sample state (`LastReceivedMessage`/`Status`) rather than a manual receive return value.
 
+Long-running integration tests emit `[test-progress]` lines for stage start/completion, wait conditions, elapsed time since the previous step, and timeout context. When a test stalls, inspect the last `[test-progress]` line first; it names the waiting condition such as cluster convergence, client location propagation, message delivery, or sample state update.
+
 ## Load test
 Bulk-connection validation uses `SocketLoadTest` (see [Operations → Load test](Operations.md#load-test)).
 ```bash
@@ -37,6 +39,8 @@ UI mode starts/stops load clients and shows state in the browser:
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 10060 --clients 4 --start-client-id 201 --batch-size 4 --host 127.0.0.1 --port 10000 --use-control-server
 ```
 Options: `--profile`, `--clients`, `--start-client-id`, `--batch-size`, `--hold-seconds`, `--use-control-server`, `--message-test`, `--message-rounds`, `--ramp-delay-ms`, `--expected-connected`, `--healthcheck-timeout-seconds`, `--message-timeout-seconds`, `--report-file` (JSON of options, counters, elapsed time).
+
+`SocketLoadTest` emits `[load-test-debug]` lines for batch start/complete, ramp delay, hold stage, message-test stage, per-round timing, and message/healthcheck timeout points. These logs make connection ramp latency and message relay stalls visible without waiting for the final summary.
 
 ## Log analysis
 After a run, inspect `bin/Debug/net9.0/logs/` or the project's `logs/`:

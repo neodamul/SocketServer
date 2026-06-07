@@ -68,7 +68,12 @@ internal static class Program
             for (int firstClientId = options.StartClientId; firstClientId <= lastClientId; firstClientId += options.BatchSize)
             {
                 int batchCount = Math.Min(options.BatchSize, lastClientId - firstClientId + 1);
+                Stopwatch batchStopwatch = Stopwatch.StartNew();
+                PrintDebug(
+                    $"batch start first-client-id={firstClientId}, count={batchCount}, " +
+                    $"elapsed={stopwatch.Elapsed}");
                 ClientAttemptResult[] results = await ConnectBatchAsync(options, firstClientId, batchCount, counters);
+                batchStopwatch.Stop();
 
                 foreach (ClientAttemptResult result in results)
                 {
@@ -78,16 +83,24 @@ internal static class Program
                     }
                 }
 
+                PrintDebug(
+                    $"batch complete first-client-id={firstClientId}, count={batchCount}, " +
+                    $"connected-clients={connectedClients.Count}, batch-elapsed={batchStopwatch.Elapsed}, " +
+                    $"total-elapsed={stopwatch.Elapsed}");
                 PrintProgress(counters, stopwatch.Elapsed);
                 if (options.RampDelayMilliseconds > 0)
                 {
+                    PrintDebug($"ramp delay start delay-ms={options.RampDelayMilliseconds}");
                     await Task.Delay(options.RampDelayMilliseconds);
+                    PrintDebug($"ramp delay complete delay-ms={options.RampDelayMilliseconds}");
                 }
             }
 
             if (options.MessageTest)
             {
+                PrintDebug("message test stage start");
                 await RunMessageTestAsync(options, connectedClients, counters);
+                PrintDebug("message test stage complete");
                 PrintProgress(counters, stopwatch.Elapsed);
             }
 
@@ -99,7 +112,9 @@ internal static class Program
                 }
 
                 Console.WriteLine($"Holding {connectedClients.Count} connected clients for {options.HoldSeconds} seconds.");
+                PrintDebug($"hold stage start connected-clients={connectedClients.Count}, seconds={options.HoldSeconds}");
                 await Task.Delay(TimeSpan.FromSeconds(options.HoldSeconds));
+                PrintDebug($"hold stage complete connected-clients={connectedClients.Count}, seconds={options.HoldSeconds}");
             }
         }
         finally
@@ -229,6 +244,8 @@ internal static class Program
         Console.WriteLine($"Starting message test: pairs={pairCount}, rounds={options.MessageRounds}.");
         for (int round = 1; round <= options.MessageRounds; round++)
         {
+            Stopwatch roundStopwatch = Stopwatch.StartNew();
+            PrintDebug($"message round start round={round}, pairs={pairCount}");
             Task[] tasks = new Task[pairCount];
             for (int pairIndex = 0; pairIndex < pairCount; pairIndex++)
             {
@@ -238,6 +255,8 @@ internal static class Program
             }
 
             await Task.WhenAll(tasks);
+            roundStopwatch.Stop();
+            PrintDebug($"message round complete round={round}, elapsed={roundStopwatch.Elapsed}");
         }
     }
 
@@ -266,6 +285,10 @@ internal static class Program
         if (completedReceiveTask != receiveTask || completedSendTask != sendTask)
         {
             Interlocked.Increment(ref counters.MessageFail);
+            PrintDebug(
+                $"message pair timeout round={round}, source={source.ClientId}, target={target.ClientId}, " +
+                $"receive-complete={completedReceiveTask == receiveTask}, send-complete={completedSendTask == sendTask}, " +
+                $"timeout-seconds={options.MessageTimeoutSeconds}");
             return;
         }
 
@@ -281,6 +304,9 @@ internal static class Program
             error != null)
         {
             Interlocked.Increment(ref counters.MessageFail);
+            PrintDebug(
+                $"message pair failed round={round}, source={source.ClientId}, target={target.ClientId}, " +
+                $"delivery-success={deliverySuccess}, ack-success={ackSuccess}, ack-target={ack?.TargetClientId}");
             return;
         }
 
@@ -302,6 +328,7 @@ internal static class Program
 
         if (completedTask != receiveTask)
         {
+            PrintDebug($"healthcheck timeout timeout-seconds={timeoutSeconds}");
             return false;
         }
 
@@ -333,6 +360,11 @@ internal static class Program
     {
         Console.WriteLine(
             $"Progress: attempted={counters.Attempted}, connected={counters.Connected}, healthcheck-success={counters.HealthCheckSuccess}, healthcheck-fail={counters.HealthCheckFail}, registered-fail={counters.RegisterFail}, message-success={counters.MessageSuccess}, message-fail={counters.MessageFail}, elapsed={elapsed}");
+    }
+
+    private static void PrintDebug(string message)
+    {
+        Console.WriteLine($"[load-test-debug] {DateTimeOffset.UtcNow:O} {message}");
     }
 
     private static void PrintSummary(LoadTestCounters counters, TimeSpan elapsed)
