@@ -449,7 +449,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     public int GetConnectedClientCount()
     {
-        return this.connectedClients.Count;
+        return Volatile.Read(ref this.activeConnectionSlots);
     }
 
     public TcpServerStatus GetStatus()
@@ -558,6 +558,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         while (!cancellationToken.IsCancellationRequested)
         {
             Socket client = null;
+            bool slotAcquired = false;
             try
             {
                 client = await SocketAsyncEventArgsTransport.AcceptAsync(this.Socket);
@@ -579,17 +580,20 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                     continue;
                 }
 
+                slotAcquired = true;
                 SecureSocketConnection connection =
                     await SecureSocketConnection.AuthenticateServerAsync(client, "SocketServer");
                 long connectionId = Interlocked.Increment(ref this.nextConnectionId);
                 ConnectionSession session = new(connectionId, connection);
                 this.AddConnectedClient(session);
+                slotAcquired = false;
                 Interlocked.Increment(ref this.totalAcceptedClients);
                 Logger.Debug($"Client accepted. connectionId={session.Id}, remote={session.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
                 session.HandlerTask = this.HandleClientAsync(session, cancellationToken);
             }
             catch (SocketException exception)
             {
+                this.ReleaseUnregisteredConnectionSlot(slotAcquired);
                 CloseClient(client);
                 if (cancellationToken.IsCancellationRequested)
                 {
@@ -600,6 +604,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             }
             catch (IOException exception)
             {
+                this.ReleaseUnregisteredConnectionSlot(slotAcquired);
                 CloseClient(client);
                 if (cancellationToken.IsCancellationRequested)
                 {
@@ -610,6 +615,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             }
             catch (AuthenticationException exception)
             {
+                this.ReleaseUnregisteredConnectionSlot(slotAcquired);
                 CloseClient(client);
                 if (cancellationToken.IsCancellationRequested)
                 {
@@ -620,6 +626,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             }
             catch (ObjectDisposedException)
             {
+                this.ReleaseUnregisteredConnectionSlot(slotAcquired);
                 CloseClient(client);
                 break;
             }
@@ -1501,6 +1508,14 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         Interlocked.Decrement(ref this.activeConnectionSlots);
         return false;
+    }
+
+    private void ReleaseUnregisteredConnectionSlot(bool slotAcquired)
+    {
+        if (slotAcquired)
+        {
+            Interlocked.Decrement(ref this.activeConnectionSlots);
+        }
     }
 
     private void AddConnectedClient(ConnectionSession session)

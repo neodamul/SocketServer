@@ -20,7 +20,7 @@ namespace SocketTests.Model;
 [TestClass()]
 public class TcpServerTests
 {
-    private const int TestPort = 5001;
+    private const int TestPort = 25001;
     private Mutex? testPortMutex;
     private string? testCertificateDirectory;
 
@@ -33,7 +33,7 @@ public class TcpServerTests
             Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(this.testCertificateDirectory);
         SecureSocketConnection.Configure(CreateTestSecurityConfig(this.testCertificateDirectory));
-        this.testPortMutex = new Mutex(false, "SocketServer.TestPort.5001");
+        this.testPortMutex = new Mutex(false, "SocketServer.TestPort.25001");
         this.testPortMutex.WaitOne();
     }
 
@@ -301,6 +301,46 @@ public class TcpServerTests
         {
             firstClient.Disconnect();
             secondClient.Disconnect();
+            server.End();
+        }
+    }
+
+    [TestMethod()]
+    public async Task FailedTlsHandshakeReleasesConnectionSlotTest()
+    {
+        SocketSecurityConfig security = CreateTestSecurityConfig(this.testCertificateDirectory);
+        security.AuthenticationTimeoutMilliseconds = 500;
+        SecureSocketConnection.Configure(security);
+
+        TcpServer server = new(
+            1,
+            "testServer",
+            "127.0.0.1",
+            TestPort,
+            maxConnections: 1,
+            pendingAcceptCount: 1,
+            idleTimeout: TimeSpan.FromSeconds(30));
+        using Socket rawClient = CreateUnboundSocket();
+        TcpClient validClient = new(1, "validClient", "127.0.0.1", TestPort);
+
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+
+            rawClient.Connect(new IPEndPoint(IPAddress.Loopback, TestPort));
+            rawClient.Send(new byte[] { 0 });
+            await Task.Delay(TimeSpan.FromSeconds(3));
+            await WaitForStatusAsync(server, status => status.ConnectedClientCount == 0, timeoutMilliseconds: 5000);
+
+            SecureSocketConnection.Configure(CreateTestSecurityConfig(this.testCertificateDirectory));
+            Assert.IsTrue(validClient.Connect());
+            await WaitForStatusAsync(server, status => status.ConnectedClientCount == 1, timeoutMilliseconds: 5000);
+        }
+        finally
+        {
+            validClient.Disconnect();
+            rawClient.Dispose();
             server.End();
         }
     }

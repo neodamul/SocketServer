@@ -19,7 +19,9 @@ Coverage includes:
 - dashboard cluster snapshot; full registration + message send/receive integration; Selected Traffic message-byte counters with healthcheck exclusion; liveness/readiness/metrics models
 - sample client settings and client-to-client flow; native Android sample protocol validation script; per-project log4net config and separate relay appender
 
-Integration tests run real TCP/TLS servers/clients: a test class that changes global socket/security settings must restore defaults in class init. Sample-client tests assume auto-register and a background receive loop after `Connect`, and assert on sample state (`LastReceivedMessage`/`Status`) rather than a manual receive return value.
+Integration tests run real TCP/TLS servers/clients: a test class that changes global socket/security settings must restore defaults in class init. The test assembly is marked `DoNotParallelize`; do not run multiple `dotnet test` processes against `SocketTests` at the same time because they share CPU-intensive TLS handshakes, global socket/security settings, and local TCP ports. Sample-client tests assume auto-register and a background receive loop after `Connect`, and assert on sample state (`LastReceivedMessage`/`Status`) rather than a manual receive return value.
+
+Long-running integration tests emit `[test-progress]` lines for stage start/completion, wait conditions, elapsed time since the previous step, and timeout context. When a test stalls, inspect the last `[test-progress]` line first; it names the waiting condition such as cluster convergence, client location propagation, message delivery, or sample state update.
 
 ## Load test
 Bulk-connection validation uses `SocketLoadTest` (see [Operations → Load test](Operations.md#load-test)).
@@ -38,6 +40,8 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 1006
 ```
 Options: `--profile`, `--clients`, `--start-client-id`, `--batch-size`, `--hold-seconds`, `--use-control-server`, `--message-test`, `--message-rounds`, `--ramp-delay-ms`, `--expected-connected`, `--healthcheck-timeout-seconds`, `--message-timeout-seconds`, `--report-file` (JSON of options, counters, elapsed time).
 
+`SocketLoadTest` emits `[load-test-debug]` lines for batch start/complete, ramp delay, hold stage, message-test stage, per-round timing, and message/healthcheck timeout points. These logs make connection ramp latency and message relay stalls visible without waiting for the final summary.
+
 ## Log analysis
 After a run, inspect `bin/Debug/net9.0/logs/` or the project's `logs/`:
 - general log: lifecycle, route, healthcheck, cleanup, register/ack
@@ -55,4 +59,4 @@ cd Samples/SocketSample.Android
 ```
 
 ## Test ports
-Some legacy tests use `5001`. Default runtime ports are nginx `10000`, ControlServer from `10001`, SocketServer from `10100`. Integration tests prefer dynamic port `0` to reduce conflicts.
+Fixed-port tests use `25001`, outside the well-known port range and away from runtime defaults. Default runtime ports are nginx `10000`, ControlServer from `10001`, SocketServer from `10100`. Integration tests prefer dynamic port `0` to reduce conflicts.

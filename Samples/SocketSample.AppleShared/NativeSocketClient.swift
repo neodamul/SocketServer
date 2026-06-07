@@ -226,6 +226,13 @@ final class NativeSocketClient {
             payload: payload))
     }
 
+    func sendHealthCheck() async throws {
+        try await send(SocketFrame(
+            clientId: config.clientId,
+            messageId: SocketMessageId.healthCheckPing,
+            payload: ProtoCodec.healthCheckPing()))
+    }
+
     func receiveMessage() async throws -> ClientMessageDelivery {
         let frame = try await receiveFrame()
         guard frame.messageId == SocketMessageId.clientMessageDeliver,
@@ -238,6 +245,11 @@ final class NativeSocketClient {
 
     func receiveEvent() async throws -> NativeSocketClientEvent {
         let frame = try await receiveFrame()
+        if frame.messageId == SocketMessageId.healthCheckPong,
+           ProtoCodec.isHealthCheckPong(frame.payload) {
+            return .ignored
+        }
+
         if frame.messageId == SocketMessageId.clientMessageDeliver,
            let delivery = ProtoCodec.decodeDelivery(frame.payload) {
             return .delivery(delivery)

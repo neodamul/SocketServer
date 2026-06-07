@@ -46,17 +46,31 @@ public class ControlServerIntegrationTests
     [TestMethod]
     public async Task ClientReceivesRouteAndConnectsToSocketServerTest()
     {
+        using TestProgress progress = TestProgress.Start(nameof(ClientReceivesRouteAndConnectsToSocketServerTest));
+        progress.Step("starting active-active ControlServer pair and SocketServer cluster");
         using ControlServerPair controls = CreateStartedControlPair("route");
         using SocketServerCluster servers = CreateStartedSocketServerCluster(1, "server-route");
         servers.AttachReporters(controls.Endpoints);
         await servers.RegisterAsync();
-        await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
-        await WaitForClusterAsync(controls.ControlB, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
+        await WaitForClusterAsync(
+            controls.ControlA,
+            status => status.ServerCount == 4 && status.TotalAvailableConnections == 40,
+            progress: progress,
+            operation: "control A sees registered servers");
+        await WaitForClusterAsync(
+            controls.ControlB,
+            status => status.ServerCount == 4 && status.TotalAvailableConnections == 40,
+            progress: progress,
+            operation: "control B sees registered servers");
 
+        progress.Step("connecting routed client through ControlServer");
         using TcpClient client = new(7, "client-7");
         Assert.IsTrue(await client.ConnectViaControlServerAsync("127.0.0.1", controls.ControlA.Port));
         Assert.IsTrue(await client.SendHealthCheckAsync());
-        (bool received, HealthCheckMessage message) = await WithTimeoutAsync(client.TryReceiveHealthCheckAsync());
+        (bool received, HealthCheckMessage message) = await WithTimeoutAsync(
+            client.TryReceiveHealthCheckAsync(),
+            progress: progress,
+            operation: "client receives healthcheck pong");
 
         Assert.IsTrue(received);
         Assert.AreEqual(HealthCheckMessageType.Pong, message.Type);
@@ -236,29 +250,45 @@ public class ControlServerIntegrationTests
     [TestMethod]
     public async Task ClientMessageDeliveredBetweenClientsOnSameSocketServerTest()
     {
+        using TestProgress progress = TestProgress.Start(nameof(ClientMessageDeliveredBetweenClientsOnSameSocketServerTest));
+        progress.Step("starting same-server messaging topology");
         using ControlServerPair controls = CreateStartedControlPair("same-server");
         using SocketServerCluster servers = CreateStartedSocketServerCluster(30, "server-same");
         servers.AttachReporters(controls.Endpoints);
         await servers.RegisterAsync();
         servers.StartHeartbeatLoops(TimeSpan.FromSeconds(5));
-        await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
+        await WaitForClusterAsync(
+            controls.ControlA,
+            status => status.ServerCount == 4 && status.TotalAvailableConnections == 40,
+            progress: progress,
+            operation: "control A sees same-server cluster");
 
         TcpServer socketServer = servers.Servers[0];
         using TcpClient sourceClient = new(31, "source-31", "127.0.0.1", socketServer.GetPort());
         using TcpClient targetClient = new(32, "target-32", "127.0.0.1", socketServer.GetPort());
 
+        progress.Step("connecting and registering source/target clients");
         Assert.IsTrue(sourceClient.Connect());
         Assert.IsTrue(targetClient.Connect());
         Assert.IsTrue(await sourceClient.RegisterClientAsync());
         Assert.IsTrue(await targetClient.RegisterClientAsync());
 
         ResetSocketTestDefaults();
+        progress.Step("sending local client-to-client message");
         Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
             sourceClient.SendClientMessageAsync(32, "same-server-message", ttlSeconds: 30);
         (bool delivered, ClientMessageDelivery delivery) =
-            await WithTimeoutAsync(targetClient.TryReceiveClientMessageAsync(), timeoutSeconds: 30);
+            await WithTimeoutAsync(
+                targetClient.TryReceiveClientMessageAsync(),
+                timeoutSeconds: 30,
+                progress: progress,
+                operation: "target receives same-server message");
         (bool acked, ClientMessageAck ack, ClientMessageError error) =
-            await WithTimeoutAsync(sendTask, timeoutSeconds: 30);
+            await WithTimeoutAsync(
+                sendTask,
+                timeoutSeconds: 30,
+                progress: progress,
+                operation: "source receives same-server ack");
 
         Assert.IsTrue(delivered);
         Assert.AreEqual((uint)31, delivery.SourceClientId);
@@ -273,32 +303,52 @@ public class ControlServerIntegrationTests
     [TestMethod]
     public async Task ClientMessageRelayedBetweenClientsOnDifferentSocketServersTest()
     {
+        using TestProgress progress = TestProgress.Start(nameof(ClientMessageRelayedBetweenClientsOnDifferentSocketServersTest));
+        progress.Step("starting cross-server relay topology");
         using ControlServerPair controls = CreateStartedControlPair("relay");
         using SocketServerCluster servers = CreateStartedSocketServerCluster(40, "server-relay");
         servers.AttachReporters(controls.Endpoints);
         await servers.RegisterAsync();
         servers.StartHeartbeatLoops(TimeSpan.FromSeconds(5));
-        await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4);
-        await WaitForClusterAsync(controls.ControlB, status => status.ServerCount == 4);
+        await WaitForClusterAsync(
+            controls.ControlA,
+            status => status.ServerCount == 4,
+            progress: progress,
+            operation: "control A sees relay cluster");
+        await WaitForClusterAsync(
+            controls.ControlB,
+            status => status.ServerCount == 4,
+            progress: progress,
+            operation: "control B sees relay cluster");
 
         TcpServer sourceServer = servers.Servers[0];
         TcpServer targetServer = servers.Servers[3];
         using TcpClient sourceClient = new(41, "source-41", "127.0.0.1", sourceServer.GetPort());
         using TcpClient targetClient = new(42, "target-42", "127.0.0.1", targetServer.GetPort());
+        progress.Step("connecting and registering relay source/target clients");
         Assert.IsTrue(sourceClient.Connect());
         Assert.IsTrue(targetClient.Connect());
         Assert.IsTrue(await sourceClient.RegisterClientAsync());
         Assert.IsTrue(await targetClient.RegisterClientAsync());
-        await WaitForClientLocationCountAsync(controls.ControlA, 2);
-        await WaitForClientLocationCountAsync(controls.ControlB, 2);
+        await WaitForClientLocationCountAsync(controls.ControlA, 2, progress: progress, operation: "control A sees two client locations");
+        await WaitForClientLocationCountAsync(controls.ControlB, 2, progress: progress, operation: "control B sees two client locations");
 
         ResetSocketTestDefaults();
+        progress.Step("sending cross-server client-to-client message");
         Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
             sourceClient.SendClientMessageAsync(42, "cross-server-message", ttlSeconds: 30);
         (bool delivered, ClientMessageDelivery delivery) =
-            await WithTimeoutAsync(targetClient.TryReceiveClientMessageAsync(), timeoutSeconds: 30);
+            await WithTimeoutAsync(
+                targetClient.TryReceiveClientMessageAsync(),
+                timeoutSeconds: 30,
+                progress: progress,
+                operation: "target receives cross-server message");
         (bool acked, ClientMessageAck ack, ClientMessageError error) =
-            await WithTimeoutAsync(sendTask, timeoutSeconds: 30);
+            await WithTimeoutAsync(
+                sendTask,
+                timeoutSeconds: 30,
+                progress: progress,
+                operation: "source receives cross-server ack");
 
         Assert.IsTrue(delivered);
         Assert.AreEqual((uint)41, delivery.SourceClientId);
@@ -357,6 +407,9 @@ public class ControlServerIntegrationTests
         servers.StartHeartbeatLoops(TimeSpan.FromSeconds(5));
         await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4 && status.TotalSessionCount == 0);
         await WaitForClusterAsync(controls.ControlB, status => status.ServerCount == 4 && status.TotalSessionCount == 0);
+        int relayServerCount = await sourceServer.RefreshRelayServersFromControlServersAsync();
+        Assert.AreEqual(3, relayServerCount);
+        Assert.AreEqual(3, sourceServer.RelayServerCount);
 
         ResetSocketTestDefaults();
         Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
@@ -564,12 +617,14 @@ public class ControlServerIntegrationTests
     [TestMethod]
     public async Task ActiveActiveControlsRouteFourServersAndPlatformSampleClientsMessageTest()
     {
+        using TestProgress progress = TestProgress.Start(nameof(ActiveActiveControlsRouteFourServersAndPlatformSampleClientsMessageTest));
+        progress.Step("configuring TLS and starting two ControlServers");
         SocketSecurityConfig security = new()
         {
             TransportMode = "Tls",
             TlsProtocol = "Auto",
             RequireTls13 = false,
-            AuthenticationTimeoutMilliseconds = 10000
+            AuthenticationTimeoutMilliseconds = 30000
         };
         SecureSocketConnection.Configure(security);
 
@@ -613,10 +668,19 @@ public class ControlServerIntegrationTests
         using SocketServerCluster servers = CreateStartedSocketServerCluster(90, "server-active");
         servers.AttachReporters(controlEndpoints);
 
+        progress.Step("registering four SocketServers to both ControlServers");
         await servers.RegisterAsync();
 
-        await WaitForClusterAsync(controlA, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
-        await WaitForClusterAsync(controlB, status => status.ServerCount == 4 && status.TotalAvailableConnections == 40);
+        await WaitForClusterAsync(
+            controlA,
+            status => status.ServerCount == 4 && status.TotalAvailableConnections == 40,
+            progress: progress,
+            operation: "control A sees four available SocketServers");
+        await WaitForClusterAsync(
+            controlB,
+            status => status.ServerCount == 4 && status.TotalAvailableConnections == 40,
+            progress: progress,
+            operation: "control B sees four available SocketServers");
 
         using SampleSocketClientSession dotnetClient = new();
         using SampleSocketClientSession iosClient = new();
@@ -628,6 +692,7 @@ public class ControlServerIntegrationTests
         macosClient.Configure(CreatePlatformClientSettings(903, "sample-macos-client", controlA.Port, security));
         androidClient.Configure(CreatePlatformClientSettings(904, "sample-android-client", controlB.Port, security));
 
+        progress.Step("connecting four platform sample clients");
         bool[] connectResults = await Task.WhenAll(
             dotnetClient.ConnectAsync(),
             iosClient.ConnectAsync(),
@@ -635,6 +700,7 @@ public class ControlServerIntegrationTests
             androidClient.ConnectAsync());
         Assert.IsTrue(connectResults.All(result => result));
 
+        progress.Step("registering four platform sample clients");
         bool[] registerResults = await Task.WhenAll(
             dotnetClient.RegisterAsync(),
             iosClient.RegisterAsync(),
@@ -642,34 +708,51 @@ public class ControlServerIntegrationTests
             androidClient.RegisterAsync());
         Assert.IsTrue(registerResults.All(result => result));
 
-        await WaitForClusterAsync(controlA, status => status.TotalSessionCount == 4, timeoutSeconds: 45);
-        await WaitForClusterAsync(controlB, status => status.TotalSessionCount == 4, timeoutSeconds: 45);
-        await WaitForClientLocationCountAsync(controlA, 4, timeoutSeconds: 45);
-        await WaitForClientLocationCountAsync(controlB, 4, timeoutSeconds: 45);
+        await WaitForClusterAsync(
+            controlA,
+            status => status.TotalSessionCount == 4,
+            timeoutSeconds: 45,
+            progress: progress,
+            operation: "control A sees four sample sessions");
+        await WaitForClusterAsync(
+            controlB,
+            status => status.TotalSessionCount == 4,
+            timeoutSeconds: 45,
+            progress: progress,
+            operation: "control B sees four sample sessions");
+        await WaitForClientLocationCountAsync(controlA, 4, timeoutSeconds: 45, progress: progress, operation: "control A sees four sample locations");
+        await WaitForClientLocationCountAsync(controlB, 4, timeoutSeconds: 45, progress: progress, operation: "control B sees four sample locations");
 
+        progress.Step("sending dotnet->ios and android->macos messages");
         Task<bool> dotnetSendTask = dotnetClient.SendMessageAsync(902, "dotnet-to-ios", ttlSeconds: 30);
         Task<bool> androidSendTask = androidClient.SendMessageAsync(903, "android-to-macos", ttlSeconds: 30);
 
-        Assert.IsTrue(await WithTimeoutAsync(dotnetSendTask, timeoutSeconds: 30));
-        Assert.IsTrue(await WithTimeoutAsync(androidSendTask, timeoutSeconds: 30));
+        Assert.IsTrue(await WithTimeoutAsync(dotnetSendTask, timeoutSeconds: 30, progress: progress, operation: "dotnet send ack"));
+        Assert.IsTrue(await WithTimeoutAsync(androidSendTask, timeoutSeconds: 30, progress: progress, operation: "android send ack"));
 
         await WaitForSampleStateAsync(
             iosClient,
             state => state.LastReceivedMessage == "901: dotnet-to-ios",
-            timeoutSeconds: 30);
+            timeoutSeconds: 30,
+            progress: progress,
+            operation: "ios sample receives dotnet message");
         Assert.AreEqual("901: dotnet-to-ios", iosClient.GetState().LastReceivedMessage);
 
         await WaitForSampleStateAsync(
             macosClient,
             state => state.LastReceivedMessage == "904: android-to-macos",
-            timeoutSeconds: 30);
+            timeoutSeconds: 30,
+            progress: progress,
+            operation: "macos sample receives android message");
         Assert.AreEqual("904: android-to-macos", macosClient.GetState().LastReceivedMessage);
 
         ClusterStatusSnapshot finalStatus = await WaitForClusterAsync(
             controlA,
             status => status.ServerCount == 4 &&
                 status.TotalSessionCount == 4,
-            timeoutSeconds: 15);
+            timeoutSeconds: 15,
+            progress: progress,
+            operation: "control A final status remains stable");
         Assert.AreEqual(4, finalStatus.ServerCount);
         Assert.AreEqual(4, finalStatus.TotalSessionCount);
     }
@@ -677,8 +760,11 @@ public class ControlServerIntegrationTests
     private static async Task<ClusterStatusSnapshot> WaitForClusterAsync(
         ControlServer controlServer,
         Func<ClusterStatusSnapshot, bool> predicate,
-        int timeoutSeconds = 5)
+        int timeoutSeconds = 5,
+        TestProgress? progress = null,
+        string operation = "cluster status condition")
     {
+        progress?.Step($"{operation} waiting timeout={timeoutSeconds}s");
         DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
         ClusterStatusSnapshot status;
         do
@@ -686,6 +772,10 @@ public class ControlServerIntegrationTests
             status = controlServer.GetClusterStatus();
             if (predicate(status))
             {
+                progress?.Step(
+                    $"{operation} satisfied servers={status.ServerCount}, healthy={status.HealthyServerCount}, " +
+                    $"sessions={status.TotalSessionCount}, current={status.TotalCurrentConnections}, " +
+                    $"reserved={status.TotalReservedConnections}, available={status.TotalAvailableConnections}");
                 return status;
             }
 
@@ -693,6 +783,7 @@ public class ControlServerIntegrationTests
         }
         while (DateTimeOffset.UtcNow < deadline);
 
+        progress?.Step($"{operation} timed out");
         Assert.Fail(
             $"Timed out waiting for cluster status. " +
             $"servers={status.ServerCount}, healthy={status.HealthyServerCount}, " +
@@ -949,13 +1040,17 @@ public class ControlServerIntegrationTests
     private static async Task WaitForClientLocationCountAsync(
         ControlServer controlServer,
         int expectedCount,
-        int timeoutSeconds = 5)
+        int timeoutSeconds = 5,
+        TestProgress? progress = null,
+        string operation = "client location count")
     {
+        progress?.Step($"{operation} waiting expected={expectedCount} timeout={timeoutSeconds}s");
         DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
         do
         {
             if (controlServer.Registry.ClientLocations.Count == expectedCount)
             {
+                progress?.Step($"{operation} satisfied count={expectedCount}");
                 return;
             }
 
@@ -963,7 +1058,10 @@ public class ControlServerIntegrationTests
         }
         while (DateTimeOffset.UtcNow < deadline);
 
-        Assert.Fail("Timed out waiting for client location count.");
+        progress?.Step($"{operation} timed out actual={controlServer.Registry.ClientLocations.Count}");
+        Assert.Fail(
+            $"Timed out waiting for client location count. expected={expectedCount}, " +
+            $"actual={controlServer.Registry.ClientLocations.Count}");
     }
 
     private static async Task AssertClientMessageRelayAsync(
@@ -1011,8 +1109,11 @@ public class ControlServerIntegrationTests
     private static async Task WaitForSampleStateAsync(
         SampleSocketClientSession client,
         Func<SampleClientState, bool> predicate,
-        int timeoutSeconds = 5)
+        int timeoutSeconds = 5,
+        TestProgress? progress = null,
+        string operation = "sample client state condition")
     {
+        progress?.Step($"{operation} waiting timeout={timeoutSeconds}s");
         DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
         SampleClientState state;
         do
@@ -1020,6 +1121,9 @@ public class ControlServerIntegrationTests
             state = client.GetState();
             if (predicate(state))
             {
+                progress?.Step(
+                    $"{operation} satisfied clientId={state.ClientId}, status={state.Status}, " +
+                    $"lastReceived={state.LastReceivedMessage}");
                 return;
             }
 
@@ -1028,14 +1132,24 @@ public class ControlServerIntegrationTests
         while (DateTimeOffset.UtcNow < deadline);
 
         state = client.GetState();
+        progress?.Step($"{operation} timed out clientId={state.ClientId}, status={state.Status}");
         Assert.Fail(
             $"Timed out waiting for sample client state. " +
             $"clientId={state.ClientId}, status={state.Status}, " +
             $"lastReceived={state.LastReceivedMessage}, error={state.LastError}");
     }
 
-    private static async Task<T> WithTimeoutAsync<T>(Task<T> task, int timeoutSeconds = 5)
+    private static async Task<T> WithTimeoutAsync<T>(
+        Task<T> task,
+        int timeoutSeconds = 5,
+        TestProgress? progress = null,
+        string operation = "task")
     {
+        if (progress != null)
+        {
+            return await progress.WaitAsync(operation, task, TimeSpan.FromSeconds(timeoutSeconds));
+        }
+
         Task completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(timeoutSeconds)));
         if (completed != task)
         {
@@ -1045,8 +1159,18 @@ public class ControlServerIntegrationTests
         return await task;
     }
 
-    private static async Task WithTimeoutAsync(Task task, int timeoutSeconds = 5)
+    private static async Task WithTimeoutAsync(
+        Task task,
+        int timeoutSeconds = 5,
+        TestProgress? progress = null,
+        string operation = "task")
     {
+        if (progress != null)
+        {
+            await progress.WaitAsync(operation, task, TimeSpan.FromSeconds(timeoutSeconds));
+            return;
+        }
+
         Task completed = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(timeoutSeconds)));
         if (completed != task)
         {

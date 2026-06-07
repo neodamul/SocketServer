@@ -375,7 +375,7 @@ async function refresh() {
 
     setHealth(online);
     fields.totalMaxConnections.textContent = status.cluster.totalMaxConnections;
-    fields.totalCurrentConnections.textContent = status.cluster.totalCurrentConnections;
+    fields.totalCurrentConnections.textContent = status.cluster.totalSessionCount ?? status.cluster.totalCurrentConnections;
     fields.totalAvailableConnections.textContent = status.cluster.totalAvailableConnections;
     renderServers(status.cluster.servers, server, status.controlServers);
   } catch {

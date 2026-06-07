@@ -21,7 +21,7 @@ public class SocketSampleClientTests
             ClientId = 12,
             ClientName = "sample",
             Host = "127.0.0.1",
-            Port = 5001,
+            Port = 25001,
             UseControlServer = false,
             ReceiveTimeoutSeconds = 3,
             HealthCheckIntervalSeconds = 5,
@@ -60,6 +60,8 @@ public class SocketSampleClientTests
     [TestMethod]
     public async Task SampleClientSessionSendsAndReceivesMessageTest()
     {
+        using TestProgress progress = TestProgress.Start(nameof(SampleClientSessionSendsAndReceivesMessageTest));
+        progress.Step("starting in-process socket server");
         using TcpServer server = new(
             30,
             "sample-server",
@@ -78,13 +80,18 @@ public class SocketSampleClientTests
         source.Configure(CreateSettings(301, server.GetPort()));
         target.Configure(CreateSettings(302, server.GetPort()));
 
+        progress.Step("connecting and auto-registering sample clients");
         Assert.IsTrue(await source.ConnectAsync());
         Assert.IsTrue(await target.ConnectAsync());
         Assert.IsTrue(source.GetState().IsRegistered);
         Assert.IsTrue(target.GetState().IsRegistered);
 
+        progress.Step("sending client-to-client sample message");
         Assert.IsTrue(await source.SendMessageAsync(302, "sample-message"));
-        await WaitUntilAsync(() => target.GetState().LastReceivedMessage == "301: sample-message");
+        await WaitUntilAsync(
+            "target sample client receives source message",
+            () => target.GetState().LastReceivedMessage == "301: sample-message",
+            progress);
 
         Assert.AreEqual("302", target.GetState().ClientId.ToString());
         Assert.AreEqual("301: sample-message", target.GetState().LastReceivedMessage);
@@ -93,6 +100,8 @@ public class SocketSampleClientTests
     [TestMethod]
     public async Task SampleClientSessionStartsHealthCheckAfterRegisterTest()
     {
+        using TestProgress progress = TestProgress.Start(nameof(SampleClientSessionStartsHealthCheckAfterRegisterTest));
+        progress.Step("starting idle-timeout socket server");
         using TcpServer server = new(
             31,
             "sample-health-server",
@@ -111,10 +120,14 @@ public class SocketSampleClientTests
         settings.HealthCheckIntervalSeconds = 1;
         client.Configure(settings);
 
+        progress.Step("connecting sample client and verifying registration");
         Assert.IsTrue(await client.ConnectAsync());
         Assert.IsTrue(client.GetState().IsRegistered);
 
-        await Task.Delay(TimeSpan.FromSeconds(4));
+        await progress.WaitAsync(
+            "healthcheck retention window",
+            Task.Delay(TimeSpan.FromSeconds(4)),
+            TimeSpan.FromSeconds(5));
 
         SampleClientState state = client.GetState();
         Assert.IsTrue(state.IsConnected);
@@ -157,6 +170,8 @@ public class SocketSampleClientTests
         Assert.IsTrue(view.Contains("SampleConfig.fromProcessArguments()", StringComparison.Ordinal));
         Assert.IsTrue(view.Contains("config.autoConnect", StringComparison.Ordinal));
         Assert.IsTrue(view.Contains("startReceiveLoop()", StringComparison.Ordinal));
+        Assert.IsTrue(view.Contains("startHealthCheckLoop()", StringComparison.Ordinal));
+        Assert.IsTrue(view.Contains("sendHealthCheck()", StringComparison.Ordinal));
         Assert.IsFalse(view.Contains("Button(\"Register\")", StringComparison.Ordinal));
         Assert.IsFalse(view.Contains("Button(\"Receive\")", StringComparison.Ordinal));
         Assert.IsTrue(readme.Contains("-derivedDataPath Samples/SocketSample.macOS/build", StringComparison.Ordinal));
@@ -186,6 +201,7 @@ public class SocketSampleClientTests
     [TestMethod]
     public async Task AndroidNativeProtocolValidationScriptPassesTest()
     {
+        using TestProgress progress = TestProgress.Start(nameof(AndroidNativeProtocolValidationScriptPassesTest));
         string root = FindRepositoryRoot();
         string sampleRoot = Path.Combine(root, "Samples/SocketSample.Android");
         string scriptPath = Path.Combine(sampleRoot, "validate.sh");
@@ -208,6 +224,7 @@ public class SocketSampleClientTests
             }
         };
 
+        progress.Step("starting Android protocol validation script");
         process.Start();
         Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
         Task<string> errorTask = process.StandardError.ReadToEndAsync();
@@ -239,6 +256,25 @@ public class SocketSampleClientTests
     }
 
     [TestMethod]
+    public void TestProgressWritesTimestampedStepLogsTest()
+    {
+        using StringWriter writer = new();
+        using (TestProgress progress = TestProgress.Start("progress-format", writer))
+        {
+            progress.Step("example stage");
+        }
+
+        string log = writer.ToString();
+        Assert.IsTrue(log.Contains("[test-progress]", StringComparison.Ordinal));
+        Assert.IsTrue(log.Contains("progress-format START", StringComparison.Ordinal));
+        Assert.IsTrue(log.Contains("progress-format STEP 1", StringComparison.Ordinal));
+        Assert.IsTrue(log.Contains("example stage", StringComparison.Ordinal));
+        Assert.IsTrue(log.Contains("total=", StringComparison.Ordinal));
+        Assert.IsTrue(log.Contains("since-last=", StringComparison.Ordinal));
+        Assert.IsTrue(log.Contains("progress-format END", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void AndroidNativeSampleUsesControlRouteHostFallbackAndReceiveLoopGenerationTest()
     {
         string root = FindRepositoryRoot();
@@ -258,7 +294,7 @@ public class SocketSampleClientTests
         Assert.IsTrue(activity.Contains("receiveLoopGeneration", StringComparison.Ordinal));
         Assert.IsTrue(activity.Contains("isActiveReceiveLoop(generation)", StringComparison.Ordinal));
         Assert.IsFalse(activity.Contains("receiveLoopRunning", StringComparison.Ordinal));
-        Assert.IsTrue(readme.Contains("원래 ControlServer 접속 host(기본 `10.0.2.2`)로 치환", StringComparison.Ordinal));
+        Assert.IsTrue(readme.Contains("the Android app replaces it with the original ControlServer host", StringComparison.Ordinal));
     }
 
     private static SampleClientSettings CreateSettings(int clientId, int port)
@@ -311,19 +347,22 @@ public class SocketSampleClientTests
         return false;
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
+    private static async Task WaitUntilAsync(string operation, Func<bool> condition, TestProgress? progress = null)
     {
+        progress?.Step($"{operation} waiting");
         DateTimeOffset deadline = DateTimeOffset.UtcNow.AddSeconds(5);
         while (DateTimeOffset.UtcNow < deadline)
         {
             if (condition())
             {
+                progress?.Step($"{operation} satisfied");
                 return;
             }
 
             await Task.Delay(100);
         }
 
-        Assert.Fail("Condition was not satisfied in time.");
+        progress?.Step($"{operation} timed out");
+        Assert.Fail($"{operation} was not satisfied in time.");
     }
 }
