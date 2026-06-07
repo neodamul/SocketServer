@@ -182,6 +182,8 @@ message ProtoBackendServerSnapshot {
   int32 socket_async_event_args_in_use_count = 35;
   int32 socket_async_event_args_high_watermark_in_use_count = 36;
   int32 socket_async_event_args_growth_count = 37;
+  int32 registered_session_count = 38;
+  int32 stale_connection_count = 39;
 }
 
 message ProtoRouteReservationMessage {

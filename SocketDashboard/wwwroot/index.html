@@ -40,7 +40,7 @@
           <strong id="totalMaxConnections">-</strong>
         </article>
         <article>
-          <span>Total Current</span>
+          <span>Registered Sessions</span>
           <strong id="totalCurrentConnections">-</strong>
         </article>
         <article>
@@ -74,7 +74,9 @@
             <th>Health</th>
             <th>Endpoint</th>
             <th>Max Conn</th>
-            <th>Current Conn</th>
+            <th>Raw Conn</th>
+            <th>Sessions</th>
+            <th>Stale</th>
             <th>Available Conn</th>
             <th>CPU</th>
             <th>MEM</th>
@@ -83,7 +85,7 @@
         </thead>
         <tbody id="clusterServers">
           <tr>
-            <td colspan="10">-</td>
+            <td colspan="12">-</td>
           </tr>
         </tbody>
       </table>
@@ -102,8 +104,16 @@
         <strong id="acceptLoop">-</strong>
       </article>
       <article>
-        <span>Connected</span>
+        <span>Raw Connections</span>
         <strong id="connectedClients">-</strong>
+      </article>
+      <article>
+        <span>Registered Sessions</span>
+        <strong id="registeredSessions">-</strong>
+      </article>
+      <article>
+        <span>Stale Connections</span>
+        <strong id="staleConnections">-</strong>
       </article>
       <article>
         <span>Max Clients</span>

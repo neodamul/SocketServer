@@ -6,6 +6,8 @@ const fields = {
   isListening: document.getElementById("isListening"),
   acceptLoop: document.getElementById("acceptLoop"),
   connectedClients: document.getElementById("connectedClients"),
+  registeredSessions: document.getElementById("registeredSessions"),
+  staleConnections: document.getElementById("staleConnections"),
   maxConnections: document.getElementById("maxConnections"),
   acceptedClients: document.getElementById("acceptedClients"),
   closedClients: document.getElementById("closedClients"),
@@ -132,6 +134,8 @@ function buildDashboardServerRow(server) {
     port: server.port,
     maxConnections: server.maxConnections,
     currentConnections: server.connectedClientCount,
+    registeredSessionCount: 0,
+    staleConnectionCount: 0,
     availableConnections: server.availableConnections,
     resourceUsage: null,
     isListening: server.isListening,
@@ -177,6 +181,8 @@ function buildSocketServerRow(server) {
     port: server.port ?? "-",
     maxConnections: server.maxConnections ?? "-",
     currentConnections: server.currentConnections ?? server.connectedClientCount ?? "-",
+    registeredSessionCount: server.registeredSessionCount ?? "-",
+    staleConnectionCount: server.staleConnectionCount ?? "-",
     availableConnections: server.availableConnections ?? "-",
     resourceUsage: server.resourceUsage || null,
     isListening: server.health === 1 || server.health === "Healthy",
@@ -213,6 +219,8 @@ function buildControlServerRow(server) {
     port: server.port ?? "-",
     maxConnections: "-",
     currentConnections: server.totalCurrentConnections ?? "-",
+    registeredSessionCount: server.totalSessionCount ?? "-",
+    staleConnectionCount: Math.max(0, (server.totalCurrentConnections ?? 0) - (server.totalSessionCount ?? 0)),
     availableConnections: server.totalAvailableConnections ?? "-",
     resourceUsage: server.resourceUsage || null,
     isListening: server.isHealthy,
@@ -293,7 +301,7 @@ function renderServers(clusterServers, dashboardServer, controlServers) {
   fields.dashboardServerCount.textContent = dashboardRow ? 1 : 0;
 
   if (currentInventoryRows.length === 0) {
-    fields.clusterServers.innerHTML = "<tr><td colspan=\"10\">-</td></tr>";
+    fields.clusterServers.innerHTML = "<tr><td colspan=\"12\">-</td></tr>";
     renderSelectedServer(null);
     return;
   }
@@ -310,6 +318,8 @@ function renderServers(clusterServers, dashboardServer, controlServers) {
       <td class="cell-ep">${server.host}:${server.port}</td>
       <td class="cell-num">${server.maxConnections}</td>
       <td class="cell-num">${server.currentConnections}</td>
+      <td class="cell-num">${server.registeredSessionCount}</td>
+      <td class="cell-num">${server.staleConnectionCount}</td>
       <td class="cell-num">${server.availableConnections}</td>
       <td>${resCell(server.resourceUsage?.cpuUsagePercent)}</td>
       <td>${resCell(server.resourceUsage?.memoryUsagePercent)}</td>
@@ -325,6 +335,8 @@ function renderSelectedServer(server) {
     fields.isListening.textContent = "-";
     fields.acceptLoop.textContent = "-";
     fields.connectedClients.textContent = "-";
+    fields.registeredSessions.textContent = "-";
+    fields.staleConnections.textContent = "-";
     fields.maxConnections.textContent = "-";
     fields.acceptedClients.textContent = "-";
     fields.closedClients.textContent = "-";
@@ -354,6 +366,8 @@ function renderSelectedServer(server) {
   fields.isListening.textContent = boolValue(server.isListening);
   fields.acceptLoop.textContent = boolValue(server.isAcceptLoopRunning);
   fields.connectedClients.textContent = displayValue(server.currentConnections);
+  fields.registeredSessions.textContent = displayValue(server.registeredSessionCount);
+  fields.staleConnections.textContent = displayValue(server.staleConnectionCount);
   fields.maxConnections.textContent = displayValue(server.maxConnections);
   fields.acceptedClients.textContent = displayValue(server.totalAcceptedClients);
   fields.closedClients.textContent = displayValue(server.totalClosedClients);

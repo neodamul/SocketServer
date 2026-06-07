@@ -89,8 +89,12 @@ public class DashboardServerServiceTests
         Assert.IsFalse(indexHtml.Contains("id=\"controlServers\"", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<th>Instance</th>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<th>Max Conn</th>", StringComparison.Ordinal));
-        Assert.IsTrue(indexHtml.Contains("<th>Current Conn</th>", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("<th>Raw Conn</th>", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("<th>Sessions</th>", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("<th>Stale</th>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<th>Available Conn</th>", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("id=\"registeredSessions\"", StringComparison.Ordinal));
+        Assert.IsTrue(indexHtml.Contains("id=\"staleConnections\"", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<option value=\"30\" selected>30s</option>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<option value=\"5\">5s</option>", StringComparison.Ordinal));
         Assert.IsTrue(indexHtml.Contains("<option value=\"10\">10s</option>", StringComparison.Ordinal));
@@ -117,6 +121,8 @@ public class DashboardServerServiceTests
         Assert.IsTrue(appJs.Contains("function renderSelectedServer(server)", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("totalReceivedMessageBytes: server.totalReceivedMessageBytes", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("fields.receivedMessageBytes.textContent = bytes(server.totalReceivedMessageBytes);", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("fields.registeredSessions.textContent = displayValue(server.registeredSessionCount);", StringComparison.Ordinal));
+        Assert.IsTrue(appJs.Contains("fields.staleConnections.textContent = displayValue(server.staleConnectionCount);", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("fields.sentMessageBytes.textContent = bytes(server.totalSentMessageBytes);", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("const SERVER_TYPE_ORDER = {", StringComparison.Ordinal));
         Assert.IsTrue(appJs.Contains("Dashboard: 0", StringComparison.Ordinal));
@@ -258,6 +264,75 @@ public class DashboardServerServiceTests
     }
 
     [TestMethod]
+    public void GetStatusMergesControlServerSessionTotalsFromServerRowsTest()
+    {
+        using ControlServer firstControlServer = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-dashboard-first",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0
+            }
+        });
+        Assert.IsTrue(firstControlServer.Start());
+
+        using ControlServer secondControlServer = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-dashboard-second",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0
+            }
+        });
+        Assert.IsTrue(secondControlServer.Start());
+
+        firstControlServer.Registry.Upsert(CreateHeartbeat(
+            "server-dashboard-first",
+            2,
+            DateTimeOffset.UtcNow),
+            "control-dashboard-first",
+            new ControlHealthThreshold());
+        secondControlServer.Registry.Upsert(CreateHeartbeat(
+            "server-dashboard-second",
+            3,
+            DateTimeOffset.UtcNow),
+            "control-dashboard-second",
+            new ControlHealthThreshold());
+
+        for (int i = 0; i < 2; i++)
+        {
+            firstControlServer.Registry.UpsertSession(CreateSession("server-dashboard-first", 801u + (uint)i, i));
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            secondControlServer.Registry.UpsertSession(CreateSession("server-dashboard-second", 901u + (uint)i, i));
+        }
+
+        using DashboardServerService service = new(
+            0,
+            new[]
+            {
+                new EndpointConfig { Host = "127.0.0.1", Port = firstControlServer.Port },
+                new EndpointConfig { Host = "127.0.0.1", Port = secondControlServer.Port }
+            });
+
+        DashboardServerStatus status = service.GetStatus();
+
+        Assert.AreEqual(2, status.Cluster.ServerCount);
+        Assert.AreEqual(5, status.Cluster.TotalCurrentConnections);
+        Assert.AreEqual(5, status.Cluster.TotalSessionCount);
+        Assert.AreEqual(5, status.Cluster.Servers.Sum(server => server.RegisteredSessionCount));
+        Assert.AreEqual(0, status.Cluster.Servers.Sum(server => server.StaleConnectionCount));
+    }
+
+    [TestMethod]
     public void GetStatusRetainsLastClusterSnapshotWhenControlServerQueryFailsTest()
     {
         using ControlServer controlServer = new(new ControlServerConfigFile
@@ -381,6 +456,8 @@ public class DashboardServerServiceTests
         Assert.AreEqual(2, clientStatus.Cluster.TotalCurrentConnections);
         Assert.AreEqual(8, clientStatus.Cluster.TotalAvailableConnections);
         Assert.AreEqual("server-dashboard-e2e", clientStatus.Cluster.Servers.First().InstanceId);
+        Assert.AreEqual(2, clientStatus.Cluster.Servers.First().RegisteredSessionCount);
+        Assert.AreEqual(0, clientStatus.Cluster.Servers.First().StaleConnectionCount);
 
         bool sent = await sourceClient.SendMessageAsync(702, "dashboard-e2e-message");
 
@@ -444,6 +521,23 @@ public class DashboardServerServiceTests
             TotalReceivedMessageBytes = currentConnections * 1000,
             TotalSentMessageBytes = (currentConnections * 1000) + 100,
             SentAt = sentAt
+        };
+    }
+
+    private static SessionEventMessage CreateSession(string instanceId, uint clientId, int offsetSeconds)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow.AddSeconds(offsetSeconds);
+        return new SessionEventMessage
+        {
+            ClusterId = "socket-cluster-1",
+            ServerId = 77,
+            InstanceId = instanceId,
+            SessionId = clientId,
+            ClientId = clientId,
+            State = "Connected",
+            ConnectedAt = now,
+            LastReceivedAt = now,
+            Version = now.ToUnixTimeMilliseconds()
         };
     }
 
