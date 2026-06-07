@@ -42,7 +42,7 @@ Connections between `SocketClient`, `SocketServer`, `SocketControl`, `SocketDash
 2001 CLIENT_REGISTER_ACK
 ```
 
-SocketServer는 동일 `clientId`의 기존 연결이 살아 있으면 기존 연결을 우선 유지하고 신규 register를 거부합니다. 이때 `CLIENT_REGISTER_ACK.success=false`, `retryAfterSeconds=<server idle timeout>`을 내려보내며 신규 연결만 닫습니다. 기존 연결이 healthcheck 중단으로 idle cleanup 된 뒤에는 같은 `clientId` 신규 register가 정상 수락됩니다.
+When an existing connection for the same `clientId` is still alive, SocketServer keeps the existing connection and rejects the new register request. It returns `CLIENT_REGISTER_ACK.success=false` with `retryAfterSeconds=<server idle timeout>`, then closes only the new connection. After the existing connection is removed by healthcheck/idle cleanup, a new register request for the same `clientId` is accepted.
 
 ## HelloWorld
 ```text
@@ -64,7 +64,7 @@ Client-to-client messages go through the SocketServer: local delivery if the tar
 `CLIENT_MESSAGE_SEND` payload (`ProtoClientMessageSendRequest`): `message_token`, `source_client_id`, `target_client_id`, `content`, `ttl_seconds`, `created_at_unix_ms`. `CLIENT_MESSAGE_DELIVER` carries source/target/content to the target; the source receives `CLIENT_MESSAGE_ACK` or `CLIENT_MESSAGE_ERROR`.
 
 ## Server relay
-SocketServer-to-SocketServer delivery connects directly to the target server's listen endpoint over TLS.
+SocketServer-to-SocketServer delivery connects directly to the target server's listen endpoint over TLS. Each source server keeps a persistent per-endpoint relay channel pool with at least 2 channels, so cross-server messages do not serialize behind a single send lock during bursts.
 ```text
 2100 SERVER_RELAY_MESSAGE
 2101 SERVER_RELAY_ACK

@@ -28,12 +28,13 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     private const int ClientCommandWorkerCount = 4;
     private const int ClientResponseWorkerCount = 4;
     private const int ServerRelayWorkerCount = 8;
+    private const int MinimumServerRelayChannelCount = 2;
 
     private readonly ConcurrentDictionary<long, ConnectionSession> connectedClients = new();
     private readonly ConcurrentDictionary<uint, ConnectionSession> connectedClientsById = new();
     private readonly ConcurrentDictionary<string, BackendServerSnapshot> relayServers = new();
     private readonly ConcurrentDictionary<string, PersistentSecureChannel> controlCommandChannels = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, PersistentSecureChannel> serverRelayChannels = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, PersistentSecureChannelPool> serverRelayChannelPools = new(StringComparer.Ordinal);
     private readonly Channel<ClientCommandRequest> clientCommandRequestChannel = Channel.CreateUnbounded<ClientCommandRequest>(
         new UnboundedChannelOptions
         {
@@ -1286,8 +1287,8 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         try
         {
             RelayLogger.Info($"Server relay send started. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
-            PersistentSecureChannel channel = this.GetServerRelayChannel(host, port);
-            (bool success, SocketMessageFrame frame) = await channel.SendAndReceiveAsync(
+            PersistentSecureChannelPool channelPool = this.GetServerRelayChannelPool(host, port);
+            (bool success, SocketMessageFrame frame) = await channelPool.SendAndReceiveAsync(
                 connection => ClientMessageProtocol.SendRelayAndReceiveAsync(
                     connection,
                     ClientMessageProtocol.CreateRelay(this.clusterId, this.instanceId, request)),
@@ -1338,6 +1339,12 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             Logger.Warn($"Server relay timed out. target={host}:{port}, targetClientId={request.TargetClientId}", exception);
             RelayLogger.Warn($"Server relay timed out. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}", exception);
             return (false, targetInstanceId, "Target server relay timed out.");
+        }
+        catch (ObjectDisposedException exception)
+        {
+            Logger.Warn($"Server relay channel was closed. target={host}:{port}, targetClientId={request.TargetClientId}", exception);
+            RelayLogger.Warn($"Server relay channel was closed. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}", exception);
+            return (false, targetInstanceId, "Target server relay channel was closed.");
         }
     }
 
@@ -1417,12 +1424,16 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             _ => new PersistentSecureChannel(endpoint, "SocketServer"));
     }
 
-    private PersistentSecureChannel GetServerRelayChannel(string host, int port)
+    private PersistentSecureChannelPool GetServerRelayChannelPool(string host, int port)
     {
         string endpointKey = PersistentSecureChannel.CreateEndpointKey(host, port);
-        return this.serverRelayChannels.GetOrAdd(
+        return this.serverRelayChannelPools.GetOrAdd(
             endpointKey,
-            _ => new PersistentSecureChannel(host, port, "SocketServer"));
+            _ =>
+            {
+                RelayLogger.Info($"Server relay channel pool created. sourceInstanceId={this.instanceId}, endpoint={endpointKey}, channelCount={MinimumServerRelayChannelCount}");
+                return new PersistentSecureChannelPool(host, port, "SocketServer", MinimumServerRelayChannelCount);
+            });
     }
 
     private void ClosePersistentChannels()
@@ -1432,13 +1443,13 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             channel.Dispose();
         }
 
-        foreach (PersistentSecureChannel channel in this.serverRelayChannels.Values)
+        foreach (PersistentSecureChannelPool channelPool in this.serverRelayChannelPools.Values)
         {
-            channel.Dispose();
+            channelPool.Dispose();
         }
 
         this.controlCommandChannels.Clear();
-        this.serverRelayChannels.Clear();
+        this.serverRelayChannelPools.Clear();
     }
 
     private async Task<bool> SendClientMessageAckAsync(ConnectionSession sourceSession, ClientMessageSendRequest request, string targetInstanceId)
