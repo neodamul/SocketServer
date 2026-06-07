@@ -1,6 +1,7 @@
 ﻿using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Threading;
@@ -21,11 +22,17 @@ public class TcpServerTests
 {
     private const int TestPort = 5001;
     private Mutex? testPortMutex;
+    private string? testCertificateDirectory;
 
     [TestInitialize]
     public void Initialize()
     {
-        SecureSocketConnection.Configure(CreateTestSecurityConfig());
+        this.testCertificateDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "socketserver-tcpserver-tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(this.testCertificateDirectory);
+        SecureSocketConnection.Configure(CreateTestSecurityConfig(this.testCertificateDirectory));
         this.testPortMutex = new Mutex(false, "SocketServer.TestPort.5001");
         this.testPortMutex.WaitOne();
     }
@@ -35,18 +42,20 @@ public class TcpServerTests
     {
         SocketFactory.Configure(new SocketOperationConfig());
         SecureSocketConnection.Configure(CreateTestSecurityConfig());
+        DeleteTestCertificateDirectory(this.testCertificateDirectory);
         this.testPortMutex?.ReleaseMutex();
         this.testPortMutex?.Dispose();
     }
 
-    private static SocketSecurityConfig CreateTestSecurityConfig()
+    private static SocketSecurityConfig CreateTestSecurityConfig(string? certificateDirectory = null)
     {
         return new SocketSecurityConfig
         {
             TransportMode = "Tls",
             TlsProtocol = "Auto",
             RequireTls13 = false,
-            AuthenticationTimeoutMilliseconds = 30000
+            AuthenticationTimeoutMilliseconds = 30000,
+            CertificateDirectory = certificateDirectory ?? ""
         };
     }
 
@@ -702,5 +711,24 @@ public class TcpServerTests
     private static Socket CreateUnboundSocket()
     {
         return new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+    }
+
+    private static void DeleteTestCertificateDirectory(string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
     }
 }
