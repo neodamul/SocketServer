@@ -751,7 +751,9 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     private bool IsClientFrameAuthorized(ConnectionSession session, uint clientId)
     {
-        if (SecureSocketConnection.SecurityProfile != SocketSecurityProfile.EndToEndTls || clientId == 0)
+        if (SecureSocketConnection.SecurityProfile != SocketSecurityProfile.EndToEndTls ||
+            !SecureSocketConnection.RequireClientCertificate ||
+            clientId == 0)
         {
             return true;
         }

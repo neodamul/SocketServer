@@ -19,71 +19,78 @@ struct SampleContentView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("Socket Sample Client")
-                    .font(.title2)
-                    .fontWeight(.semibold)
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Socket Sample Client")
+                .font(.title2)
+                .fontWeight(.semibold)
 
-                GroupBox {
-                    VStack(spacing: 10) {
-                        HStack {
-                            field("Client ID", text: Binding(
-                                get: { String(config.clientId) },
-                                set: { config.clientId = UInt32($0) ?? config.clientId }))
-                            field("Client Name", text: $config.clientName)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    GroupBox {
+                        VStack(spacing: 10) {
+                            HStack {
+                                field("Client ID", text: Binding(
+                                    get: { String(config.clientId) },
+                                    set: { config.clientId = UInt32($0) ?? config.clientId }))
+                                field("Client Name", text: $config.clientName)
+                            }
+                            HStack {
+                                field("Host", text: $config.host)
+                                field("Port", text: Binding(
+                                    get: { String(config.port) },
+                                    set: { config.port = UInt16($0) ?? config.port }))
+                            }
+                            compactMultilineField("Control Endpoints", text: Binding(
+                                get: { config.controlEndpoints.map(\.displayValue).joined(separator: "\n") },
+                                set: { config.controlEndpoints = SampleConfig.parseControlEndpoints($0) }))
+                            HStack {
+                                Toggle("Use ControlServer route", isOn: $config.useControlServer)
+                                Toggle("Allow local self-signed certificate", isOn: $config.allowUntrustedLocalCertificate)
+                            }
+                            HStack {
+                                field("Transport", text: $config.transportMode)
+                                field("Message Secret", text: $config.messageEncryptionSecret)
+                            }
+                            HStack {
+                                Spacer()
+                                Button("Connect") { run { try await connect() } }
+                                Button("Disconnect") { disconnect() }
+                            }
                         }
-                        HStack {
-                            field("Host", text: $config.host)
-                            field("Port", text: Binding(
-                                get: { String(config.port) },
-                                set: { config.port = UInt16($0) ?? config.port }))
-                        }
-                        multilineField("Control Endpoints", text: Binding(
-                            get: { config.controlEndpoints.map(\.displayValue).joined(separator: "\n") },
-                            set: { config.controlEndpoints = SampleConfig.parseControlEndpoints($0) }))
-                        HStack {
-                            Toggle("Use ControlServer route", isOn: $config.useControlServer)
-                            Toggle("Allow local self-signed certificate", isOn: $config.allowUntrustedLocalCertificate)
-                        }
-                        HStack {
-                            field("Transport", text: $config.transportMode)
-                            field("Message Secret", text: $config.messageEncryptionSecret)
-                        }
-                        HStack {
-                            Spacer()
-                            Button("Connect") { run { try await connect() } }
-                            Button("Disconnect") { disconnect() }
+                    }
+
+                    GroupBox {
+                        VStack(spacing: 10) {
+                            HStack {
+                                field("Target Client ID", text: $targetClientId)
+                                field("Message", text: $message)
+                            }
+                            HStack {
+                                Spacer()
+                                Button("Send") { run { try await send() } }
+                            }
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 430)
 
-                GroupBox {
-                    VStack(spacing: 10) {
-                        HStack {
-                            field("Target Client ID", text: $targetClientId)
-                            field("Message", text: $message)
-                        }
-                        HStack {
-                            Spacer()
-                            Button("Send") { run { try await send() } }
-                        }
-                    }
-                }
-
-                GroupBox("Status") {
+            GroupBox("Status") {
+                ScrollView {
                     Text(statusText)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .fixedSize(horizontal: false, vertical: true)
                         .lineLimit(nil)
                         .font(.system(.body, design: .monospaced))
                         .textSelection(.enabled)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minHeight: 150, maxHeight: 220)
             }
-            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
         }
-        .frame(minWidth: 560, minHeight: 560)
+        .padding()
+        .frame(minWidth: 640, minHeight: 640)
         .onAppear {
             if config.autoConnect && !state.isConnected {
                 run {
@@ -124,11 +131,11 @@ struct SampleContentView: View {
         }
     }
 
-    private func multilineField(_ title: String, text: Binding<String>) -> some View {
+    private func compactMultilineField(_ title: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading) {
             Text(title).font(.caption).fontWeight(.semibold)
             TextEditor(text: text)
-                .frame(minHeight: 58)
+                .frame(height: 46)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Color.secondary.opacity(0.35)))

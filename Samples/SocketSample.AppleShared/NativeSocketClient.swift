@@ -115,6 +115,12 @@ final class NativeSocketClient {
             parameters = NWParameters(tls: nil, tcp: tcpOptions)
         } else {
             let tlsOptions = NWProtocolTLS.Options()
+            sec_protocol_options_set_min_tls_protocol_version(
+                tlsOptions.securityProtocolOptions,
+                tls_protocol_version_t.TLSv12)
+            sec_protocol_options_set_max_tls_protocol_version(
+                tlsOptions.securityProtocolOptions,
+                tls_protocol_version_t.TLSv13)
             if config.allowUntrustedLocalCertificate {
                 sec_protocol_options_set_verify_block(tlsOptions.securityProtocolOptions, { _, _, complete in
                     complete(true)

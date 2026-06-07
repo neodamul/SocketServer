@@ -15,7 +15,7 @@ Max application payload is 4KB. Payload is serialized as protobuf (`SocketCommon
 Connections between `SocketClient`, `SocketServer`, `SocketControl`, `SocketDashboard` are protected by `SecureSocketConnection` before exchanging common frames. See [Configuration → Security](Configuration.md#security) and [Architecture → Security profiles](Architecture.md#security-profiles) for profiles.
 
 ### Transport security
-- **`Tls` (default)**: `SslStream`. The `EndToEndTls` profile forces mTLS — a local Root CA signs per-module leaf certs and each side validates the peer against the same Root CA. With `SOCKET_REQUIRE_TLS13=true`, a non-TLS-1.3 negotiation result fails the connection. Certificate validation checks Root CA signature, server cert SAN/name match, and serverAuth/clientAuth EKU. The SocketClient cert SAN `socket-client-{clientId}` is bound to the client-facing frame header `clientId` (mismatch → connection refused).
+- **`Tls` (default)**: `SslStream`. The `EndToEndTls` profile supports mTLS when `requireClientCertificate=true`: a local Root CA signs per-module leaf certs and each side validates the peer against the same Root CA. With `SOCKET_REQUIRE_TLS13=true`, a non-TLS-1.3 negotiation result fails the connection. Certificate validation checks Root CA signature, server cert SAN/name match, and serverAuth/clientAuth EKU. When mTLS is enabled, the SocketClient cert SAN `socket-client-{clientId}` is bound to the client-facing frame header `clientId` (mismatch -> connection refused).
 - **`MessageEncryption`**: no TLS handshake; each frame payload is protected. Wire payload envelope:
   ```text
   0      version     byte
