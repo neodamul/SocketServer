@@ -449,7 +449,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     public int GetConnectedClientCount()
     {
-        return this.connectedClients.Count;
+        return this.connectedClientsById.Values.Count(session => !session.IsClosed);
     }
 
     public TcpServerStatus GetStatus()

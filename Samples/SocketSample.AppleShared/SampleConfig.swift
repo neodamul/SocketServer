@@ -13,6 +13,7 @@ struct SampleConfig: Codable, Equatable {
     var messageEncryptionSecret: String = ""
     var certificateDirectory: String = ProcessInfo.processInfo.environment["SOCKET_CERTIFICATE_DIR"] ?? ""
     var certificatePassword: String = ProcessInfo.processInfo.environment["SOCKET_CERTIFICATE_PASSWORD"] ?? ""
+    var healthCheckIntervalSeconds: UInt64 = 30
 
     var usesMessageEncryption: Bool {
         transportMode.caseInsensitiveCompare("MessageEncryption") == .orderedSame ||
@@ -44,6 +45,10 @@ struct SampleConfig: Codable, Equatable {
                 config.certificateDirectory = value
             case "certificate-password":
                 config.certificatePassword = value
+            case "healthcheck-interval-seconds":
+                if let seconds = UInt64(value), seconds > 0 {
+                    config.healthCheckIntervalSeconds = seconds
+                }
             default:
                 continue
             }
@@ -99,5 +104,6 @@ struct ClientState {
     var status = "Disconnected"
     var connectedServer = ""
     var lastReceived = ""
+    var lastReceivedAt = ""
     var lastError = ""
 }

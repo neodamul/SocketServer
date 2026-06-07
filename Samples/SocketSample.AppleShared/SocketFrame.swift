@@ -1,6 +1,8 @@
 import Foundation
 
 enum SocketMessageId {
+    static let healthCheckPing: UInt32 = 1
+    static let healthCheckPong: UInt32 = 2
     static let routeRequest: UInt32 = 1200
     static let routeResponse: UInt32 = 1201
     static let clientRegister: UInt32 = 2000

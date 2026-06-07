@@ -19,6 +19,16 @@ struct RouteTarget {
 }
 
 enum ProtoCodec {
+    static func healthCheckPing() -> Data {
+        var data = Data()
+        data.appendVarintField(2, UInt64(Date().unixMilliseconds))
+        return data
+    }
+
+    static func isHealthCheckPong(_ data: Data) -> Bool {
+        fields(from: data).strings[1] == "OK"
+    }
+
     static func routeRequest(clientId: UInt32) -> Data {
         var data = Data()
         data.appendVarintField(1, UInt64(clientId))

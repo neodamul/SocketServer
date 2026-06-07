@@ -157,6 +157,8 @@ public class SocketSampleClientTests
         Assert.IsTrue(view.Contains("SampleConfig.fromProcessArguments()", StringComparison.Ordinal));
         Assert.IsTrue(view.Contains("config.autoConnect", StringComparison.Ordinal));
         Assert.IsTrue(view.Contains("startReceiveLoop()", StringComparison.Ordinal));
+        Assert.IsTrue(view.Contains("startHealthCheckLoop()", StringComparison.Ordinal));
+        Assert.IsTrue(view.Contains("sendHealthCheck()", StringComparison.Ordinal));
         Assert.IsFalse(view.Contains("Button(\"Register\")", StringComparison.Ordinal));
         Assert.IsFalse(view.Contains("Button(\"Receive\")", StringComparison.Ordinal));
         Assert.IsTrue(readme.Contains("-derivedDataPath Samples/SocketSample.macOS/build", StringComparison.Ordinal));
@@ -258,7 +260,7 @@ public class SocketSampleClientTests
         Assert.IsTrue(activity.Contains("receiveLoopGeneration", StringComparison.Ordinal));
         Assert.IsTrue(activity.Contains("isActiveReceiveLoop(generation)", StringComparison.Ordinal));
         Assert.IsFalse(activity.Contains("receiveLoopRunning", StringComparison.Ordinal));
-        Assert.IsTrue(readme.Contains("원래 ControlServer 접속 host(기본 `10.0.2.2`)로 치환", StringComparison.Ordinal));
+        Assert.IsTrue(readme.Contains("the Android app replaces it with the original ControlServer host", StringComparison.Ordinal));
     }
 
     private static SampleClientSettings CreateSettings(int clientId, int port)
