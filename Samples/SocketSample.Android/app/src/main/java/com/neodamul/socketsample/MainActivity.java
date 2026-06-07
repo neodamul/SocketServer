@@ -23,6 +23,7 @@ public final class MainActivity extends Activity {
     private EditText clientId;
     private EditText host;
     private EditText port;
+    private EditText controlEndpoints;
     private EditText transportMode;
     private EditText messageSecret;
     private EditText targetClientId;
@@ -54,6 +55,7 @@ public final class MainActivity extends Activity {
         clientId = input(String.valueOf(config.clientId));
         host = input(config.host);
         port = input(String.valueOf(config.port));
+        controlEndpoints = input(SampleConfig.formatControlEndpoints(config.controlEndpoints));
         transportMode = input(config.transportMode);
         messageSecret = input(config.messageEncryptionSecret);
         targetClientId = input("2");
@@ -72,6 +74,8 @@ public final class MainActivity extends Activity {
         root.addView(host);
         root.addView(label("Port"));
         root.addView(port);
+        root.addView(label("Control Endpoints"));
+        root.addView(controlEndpoints);
         root.addView(useControlServer);
         root.addView(allowUntrusted);
         root.addView(label("Transport"));
@@ -135,6 +139,8 @@ public final class MainActivity extends Activity {
         config.clientId = Integer.parseInt(clientId.getText().toString());
         config.host = host.getText().toString();
         config.port = Integer.parseInt(port.getText().toString());
+        config.controlEndpoints.clear();
+        config.controlEndpoints.addAll(SampleConfig.parseControlEndpoints(controlEndpoints.getText().toString()));
         config.useControlServer = useControlServer.isChecked();
         config.allowUntrustedLocalCertificate = allowUntrusted.isChecked();
         config.transportMode = transportMode.getText().toString();
@@ -234,6 +240,7 @@ public final class MainActivity extends Activity {
             "Status: " + line + "\n" +
             "Connected: " + client.isConnected() + "\n" +
             "Registered: " + registered + "\n" +
+            "Connected Server: " + client.connectedServer() + "\n" +
             "Last Received: " + lastReceived + "\n" +
             "Last Error: " + lastError + "\n" +
             "Client ID: " + config.clientId + "\n" +

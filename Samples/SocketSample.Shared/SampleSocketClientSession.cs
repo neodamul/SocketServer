@@ -1,4 +1,7 @@
 using SocketClient.Model;
+using System.Collections.Generic;
+using System.Net;
+using System.Net.Sockets;
 using SocketCommon.Model;
 
 namespace SocketSample.Shared;
@@ -35,6 +38,7 @@ public sealed class SampleSocketClientSession : IDisposable
                 Host = this.settings.Host,
                 Port = this.settings.Port,
                 UseControlServer = this.settings.UseControlServer,
+                ConnectedServer = this.session?.ConnectedEndpoint ?? "",
                 Status = this.status,
                 LastReceivedMessage = this.lastReceivedMessage,
                 LastError = this.lastError
@@ -66,15 +70,25 @@ public sealed class SampleSocketClientSession : IDisposable
         SocketClientSession nextSession = new();
         this.AttachSessionEvents(nextSession);
 
-        bool success = await nextSession.ConnectAndRegisterAsync(
-            current.ClientId,
-            current.ClientName,
-            current.Host,
-            current.Port,
-            current.UseControlServer,
-            current.HealthCheckIntervalSeconds,
-            current.ReconnectRetrySeconds,
-            current.DuplicateRejectBackoffSeconds);
+        IPEndPoint[] controlEndpoints = ResolveControlEndpoints(current);
+
+        bool success = current.UseControlServer && controlEndpoints.Length > 0
+            ? await nextSession.ConnectAndRegisterAsync(
+                current.ClientId,
+                current.ClientName,
+                controlEndpoints,
+                current.HealthCheckIntervalSeconds,
+                current.ReconnectRetrySeconds,
+                current.DuplicateRejectBackoffSeconds)
+            : await nextSession.ConnectAndRegisterAsync(
+                current.ClientId,
+                current.ClientName,
+                current.Host,
+                current.Port,
+                current.UseControlServer,
+                current.HealthCheckIntervalSeconds,
+                current.ReconnectRetrySeconds,
+                current.DuplicateRejectBackoffSeconds);
 
         lock (this.syncRoot)
         {
@@ -203,5 +217,32 @@ public sealed class SampleSocketClientSession : IDisposable
             this.status = error;
             this.lastError = error;
         }
+    }
+
+    private static IPEndPoint[] ResolveControlEndpoints(SampleClientSettings settings)
+    {
+        List<IPEndPoint> endpoints = new();
+        foreach (SocketCommon.Configuration.EndpointConfig endpoint in settings.ControlEndpoints)
+        {
+            if (endpoint == null || endpoint.Port <= 0)
+            {
+                continue;
+            }
+
+            try
+            {
+                endpoints.Add(new IPEndPoint(
+                    SocketFactory.ResolveAddress(endpoint.Host, AddressFamily.InterNetwork),
+                    endpoint.Port));
+            }
+            catch (ArgumentException)
+            {
+            }
+            catch (SocketException)
+            {
+            }
+        }
+
+        return endpoints.ToArray();
     }
 }

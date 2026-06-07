@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using SocketCommon.Configuration;
 
 namespace SocketSample.Shared;
@@ -13,6 +15,8 @@ public sealed class SampleClientSettings
     public int Port { get; set; } = 10000;
 
     public bool UseControlServer { get; set; } = true;
+
+    public List<EndpointConfig> ControlEndpoints { get; set; } = new();
 
     public int ReceiveTimeoutSeconds { get; set; } = 10;
 
@@ -35,6 +39,10 @@ public sealed class SampleClientSettings
             Host = this.Host,
             Port = this.Port,
             UseControlServer = this.UseControlServer,
+            ControlEndpoints = this.ControlEndpoints
+                .Where(endpoint => endpoint != null)
+                .Select(endpoint => new EndpointConfig { Host = endpoint.Host, Port = endpoint.Port })
+                .ToList(),
             ReceiveTimeoutSeconds = this.ReceiveTimeoutSeconds,
             HealthCheckIntervalSeconds = this.HealthCheckIntervalSeconds,
             ReconnectRetrySeconds = this.ReconnectRetrySeconds,

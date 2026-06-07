@@ -4,6 +4,9 @@
   "host": "10.0.2.2",
   "port": 10000,
   "useControlServer": true,
+  "controlEndpoints": [
+    { "host": "10.0.2.2", "port": 10000 }
+  ],
   "receiveTimeoutSeconds": 10,
   "allowUntrustedLocalCertificate": true,
   "transportMode": "Tls",

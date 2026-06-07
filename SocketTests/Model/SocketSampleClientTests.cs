@@ -2,9 +2,13 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using SocketCommon.Configuration;
+using SocketCommon.Model;
+using SocketControl.Model;
 using SocketSample.Shared;
 using SocketServer.Model;
 
@@ -23,6 +27,11 @@ public class SocketSampleClientTests
             Host = "127.0.0.1",
             Port = 25001,
             UseControlServer = false,
+            ControlEndpoints =
+            {
+                new EndpointConfig { Host = "127.0.0.1", Port = 25001 },
+                new EndpointConfig { Host = "127.0.0.1", Port = 25002 }
+            },
             ReceiveTimeoutSeconds = 3,
             HealthCheckIntervalSeconds = 5,
             Security = new SocketSecurityConfig
@@ -48,6 +57,9 @@ public class SocketSampleClientTests
 
         Assert.AreEqual(12, clone.ClientId);
         Assert.AreEqual(5, clone.HealthCheckIntervalSeconds);
+        Assert.AreEqual(2, clone.ControlEndpoints.Count);
+        clone.ControlEndpoints[0].Host = "changed";
+        Assert.AreEqual("127.0.0.1", settings.ControlEndpoints[0].Host);
         Assert.AreEqual("EdgeTerminated", clone.Security.Profile);
         Assert.AreEqual("MessageEncryption", clone.Security.TransportMode);
         Assert.AreEqual("Auto", settings.Security.TlsProtocol);
@@ -136,6 +148,57 @@ public class SocketSampleClientTests
     }
 
     [TestMethod]
+    public async Task SampleClientSessionFallsBackAcrossControlEndpointsTest()
+    {
+        using TestProgress progress = TestProgress.Start(nameof(SampleClientSessionFallsBackAcrossControlEndpointsTest));
+        using ControlServer controlServer = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "sample-control-fallback",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0
+            }
+        });
+        Assert.IsTrue(controlServer.Start());
+
+        using TcpServer server = new(
+            32,
+            "sample-control-server",
+            "127.0.0.1",
+            0,
+            maxConnections: 10,
+            pendingAcceptCount: 2,
+            idleTimeout: TimeSpan.FromSeconds(30),
+            instanceId: "sample-control-server");
+        Assert.IsTrue(server.BindInPortRange(0, 0));
+        Assert.IsTrue(server.Listen());
+        Assert.IsTrue(server.StartClientAcceptLoop());
+
+        await SendServerHeartbeatAsync(
+            controlServer,
+            CreateServerHeartbeat(32, "sample-control-server", server.GetPort()));
+        await WaitUntilAsync(
+            "sample ControlServer sees SocketServer",
+            () => controlServer.GetClusterStatus().ServerCount == 1,
+            progress);
+
+        using SampleSocketClientSession client = new();
+        SampleClientSettings settings = CreateSettings(304, controlServer.Port);
+        settings.UseControlServer = true;
+        settings.ControlEndpoints.Add(new EndpointConfig { Host = "bad-control.invalid", Port = 10000 });
+        settings.ControlEndpoints.Add(new EndpointConfig { Host = "127.0.0.1", Port = controlServer.Port });
+        client.Configure(settings);
+
+        Assert.IsTrue(await client.ConnectAsync());
+        SampleClientState state = client.GetState();
+        Assert.IsTrue(state.IsRegistered);
+        Assert.AreEqual($"127.0.0.1:{server.GetPort()}", state.ConnectedServer);
+    }
+
+    [TestMethod]
     public void NativeSampleProjectFilesAreIncludedTest()
     {
         string root = FindRepositoryRoot();
@@ -165,13 +228,19 @@ public class SocketSampleClientTests
         Assert.IsTrue(config.Contains("targetClientIdFromProcessArguments", StringComparison.Ordinal));
         Assert.IsTrue(config.Contains("client-id", StringComparison.Ordinal));
         Assert.IsTrue(config.Contains("use-control-server", StringComparison.Ordinal));
+        Assert.IsTrue(config.Contains("control-endpoints", StringComparison.Ordinal));
+        Assert.IsTrue(config.Contains("parseControlEndpoints", StringComparison.Ordinal));
+        Assert.IsTrue(config.Contains("effectiveControlEndpoints", StringComparison.Ordinal));
         Assert.IsTrue(config.Contains("auto-connect", StringComparison.Ordinal));
         Assert.IsTrue(config.Contains("target-client-id", StringComparison.Ordinal));
         Assert.IsTrue(view.Contains("SampleConfig.fromProcessArguments()", StringComparison.Ordinal));
         Assert.IsTrue(view.Contains("config.autoConnect", StringComparison.Ordinal));
+        Assert.IsTrue(view.Contains("Control Endpoints", StringComparison.Ordinal));
         Assert.IsTrue(view.Contains("startReceiveLoop()", StringComparison.Ordinal));
         Assert.IsTrue(view.Contains("startHealthCheckLoop()", StringComparison.Ordinal));
         Assert.IsTrue(view.Contains("sendHealthCheck()", StringComparison.Ordinal));
+        Assert.IsTrue(File.ReadAllText(Path.Combine(root, "Samples/SocketSample.AppleShared/NativeSocketClient.swift"))
+            .Contains("resolveRouteHost(route.host, controlHost: controlEndpoint.host)", StringComparison.Ordinal));
         Assert.IsFalse(view.Contains("Button(\"Register\")", StringComparison.Ordinal));
         Assert.IsFalse(view.Contains("Button(\"Receive\")", StringComparison.Ordinal));
         Assert.IsTrue(readme.Contains("-derivedDataPath Samples/SocketSample.macOS/build", StringComparison.Ordinal));
@@ -195,7 +264,14 @@ public class SocketSampleClientTests
         Assert.IsFalse(program.Contains("/api/receive", StringComparison.Ordinal));
         Assert.IsTrue(clientSession.Contains("ConnectAndRegisterAsync", StringComparison.Ordinal));
         Assert.IsTrue(clientSession.Contains("StartReceiveLoop()", StringComparison.Ordinal));
+        Assert.IsTrue(clientSession.Contains("ConnectedEndpoint", StringComparison.Ordinal));
+        Assert.IsTrue(sampleSession.Contains("controlEndpoints.Length > 0", StringComparison.Ordinal));
+        Assert.IsTrue(sampleSession.Contains("ResolveControlEndpoints", StringComparison.Ordinal));
+        Assert.IsTrue(sampleSession.Contains("catch (SocketException)", StringComparison.Ordinal));
+        Assert.IsTrue(sampleSession.Contains("ConnectedServer", StringComparison.Ordinal));
         Assert.IsTrue(sampleSession.Contains("SocketClientSession", StringComparison.Ordinal));
+        Assert.IsTrue(program.Contains("controlEndpoints", StringComparison.Ordinal));
+        Assert.IsTrue(program.Contains("parseEndpoints", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -286,15 +362,22 @@ public class SocketSampleClientTests
         string readme = File.ReadAllText(Path.Combine(root, "Samples/README.md"));
 
         Assert.IsTrue(config.Contains("\"useControlServer\": true", StringComparison.Ordinal));
+        Assert.IsTrue(config.Contains("\"controlEndpoints\"", StringComparison.Ordinal));
         Assert.IsTrue(sampleConfig.Contains("useControlServer", StringComparison.Ordinal));
-        Assert.IsTrue(client.Contains("ProtoCodec.resolveRouteHost(route.host, config.host)", StringComparison.Ordinal));
+        Assert.IsTrue(sampleConfig.Contains("effectiveControlEndpoints", StringComparison.Ordinal));
+        Assert.IsTrue(sampleConfig.Contains("parseControlEndpoints", StringComparison.Ordinal));
+        Assert.IsTrue(client.Contains("config.effectiveControlEndpoints()", StringComparison.Ordinal));
+        Assert.IsTrue(client.Contains("ProtoCodec.resolveRouteHost(route.host, endpoint.host)", StringComparison.Ordinal));
+        Assert.IsTrue(client.Contains("connectedServer()", StringComparison.Ordinal));
         Assert.IsTrue(codec.Contains("isLoopbackHost", StringComparison.Ordinal));
         Assert.IsTrue(codec.Contains("\"localhost\".equals(value)", StringComparison.Ordinal));
         Assert.IsTrue(codec.Contains("\"::1\".equals(value)", StringComparison.Ordinal));
         Assert.IsTrue(activity.Contains("receiveLoopGeneration", StringComparison.Ordinal));
         Assert.IsTrue(activity.Contains("isActiveReceiveLoop(generation)", StringComparison.Ordinal));
+        Assert.IsTrue(activity.Contains("Control Endpoints", StringComparison.Ordinal));
+        Assert.IsTrue(activity.Contains("Connected Server", StringComparison.Ordinal));
         Assert.IsFalse(activity.Contains("receiveLoopRunning", StringComparison.Ordinal));
-        Assert.IsTrue(readme.Contains("the Android app replaces it with the original ControlServer host", StringComparison.Ordinal));
+        Assert.IsTrue(readme.Contains("the Android app replaces it with the ControlServer host that returned the route", StringComparison.Ordinal));
     }
 
     private static SampleClientSettings CreateSettings(int clientId, int port)
@@ -311,7 +394,7 @@ public class SocketSampleClientTests
             {
                 TlsProtocol = "Auto",
                 RequireTls13 = false,
-                AuthenticationTimeoutMilliseconds = 5000
+                AuthenticationTimeoutMilliseconds = 30000
             }
         };
     }
@@ -345,6 +428,48 @@ public class SocketSampleClientTests
         }
 
         return false;
+    }
+
+    private static ServerHeartbeatRequest CreateServerHeartbeat(
+        int serverId,
+        string instanceId,
+        int port)
+    {
+        return new ServerHeartbeatRequest
+        {
+            ClusterId = "socket-cluster-1",
+            ServerId = serverId,
+            InstanceId = instanceId,
+            Host = "127.0.0.1",
+            Port = port,
+            MaxConnections = 10,
+            CurrentConnections = 0,
+            ResourceUsage = new ResourceUsageSnapshot
+            {
+                CpuUsagePercent = 1,
+                MemoryUsagePercent = 1,
+                StorageUsagePercent = 1
+            },
+            SentAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    private static async Task SendServerHeartbeatAsync(
+        ControlServer controlServer,
+        ServerHeartbeatRequest request)
+    {
+        using Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+        await SocketFactory.ConnectAsync(socket, IPAddress.Loopback, controlServer.Port);
+        using SecureSocketConnection connection =
+            await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
+
+        (bool success, _) = await ControlProtocol.SendAndReceiveAsync(
+            connection,
+            0,
+            ControlMessageIds.ServerHeartbeat,
+            request,
+            timeoutMilliseconds: 5000);
+        Assert.IsTrue(success);
     }
 
     private static async Task WaitUntilAsync(string operation, Func<bool> condition, TestProgress? progress = null)

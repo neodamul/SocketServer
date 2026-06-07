@@ -39,6 +39,9 @@ struct SampleContentView: View {
                                 get: { String(config.port) },
                                 set: { config.port = UInt16($0) ?? config.port }))
                         }
+                        multilineField("Control Endpoints", text: Binding(
+                            get: { config.controlEndpoints.map(\.displayValue).joined(separator: "\n") },
+                            set: { config.controlEndpoints = SampleConfig.parseControlEndpoints($0) }))
                         HStack {
                             Toggle("Use ControlServer route", isOn: $config.useControlServer)
                             Toggle("Allow local self-signed certificate", isOn: $config.allowUntrustedLocalCertificate)
@@ -118,6 +121,17 @@ struct SampleContentView: View {
             Text(title).font(.caption).fontWeight(.semibold)
             TextField(title, text: text)
                 .textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private func multilineField(_ title: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading) {
+            Text(title).font(.caption).fontWeight(.semibold)
+            TextEditor(text: text)
+                .frame(minHeight: 58)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.secondary.opacity(0.35)))
         }
     }
 
