@@ -159,6 +159,17 @@ public class SocketLoadTestTests
     }
 
     [TestMethod]
+    public void DefaultSecurityRequiresClientCertificateTest()
+    {
+        SocketSecurityConfig security = Program.CreateDefaultSecurityConfig();
+
+        Assert.AreEqual("Tls", security.TransportMode);
+        Assert.AreEqual("Auto", security.TlsProtocol);
+        Assert.IsFalse(security.RequireTls13);
+        Assert.IsTrue(security.RequireClientCertificate);
+    }
+
+    [TestMethod]
     public async Task RunMessageLoadTestWithTwoClientsTest()
     {
         int exitCode = await Program.RunAsync(new[]
