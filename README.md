@@ -1,44 +1,42 @@
 # SocketServer
 
-SocketServer는 TLS 또는 메시지 암호화를 사용하는 고성능 C#/.NET TCP 소켓 서버/클라이언트 솔루션입니다.
-ControlServer 브로커가 서버 등록, healthcheck, route 분배, 세션 위치 공유를 관리하며 여러 SocketServer 인스턴스와 클라이언트를 연결합니다.
-SAEA 기반 비동기 I/O, 고정 슬랩 버퍼, protobuf 프로토콜, 대시보드, 부하 테스트, 네이티브 샘플 클라이언트를 포함합니다.
+SocketServer is a C#/.NET TCP socket server/client solution with TLS or message encryption.
+ControlServer acts as the broker for server registration, healthcheck, routing, and session location sharing across multiple SocketServer instances and clients.
+The project includes SAEA-based async I/O, fixed slab buffers, protobuf protocols, a dashboard, load testing, and native sample clients.
 
-## 구성
+## Project Layout
 
 ```text
 SocketServer.sln
-├── SocketCommon      공통 프레임, 프로토콜, 설정, 로깅
-├── SocketClient      TCP 클라이언트 라이브러리
-├── SocketControl     서버 등록/상태 취합/라우팅 브로커
-├── SocketServer      TCP 서버 실행 프로젝트
-├── SocketDashboard   상태 API와 웹 대시보드
-├── SocketLoadTest    대량 접속 검증 도구
-├── SocketTests       MSTest 통합 테스트
-└── Samples           .NET, iOS, macOS, Android 네이티브 샘플 클라이언트
+├── SocketCommon      shared frames, protocols, config, logging
+├── SocketClient      TCP client library
+├── SocketControl     registration, status, and routing broker
+├── SocketServer      TCP server executable
+├── SocketDashboard   status API and web dashboard
+├── SocketLoadTest    load and message test tool
+├── SocketTests       MSTest suite
+└── Samples           .NET, iOS, macOS, Android sample clients
 ```
 
-## 핵심 기능
+## Key Features
 
-- TLS 기반 소켓 연결, optional mTLS, TLS 비활성 시 AES-GCM/HMAC 메시지 보호
-- healthcheck, HelloWorld, ControlServer route 프로토콜
-- 클라이언트 간 메시지 전송과 SocketServer 간 relay
-- `SocketAsyncEventArgs` 기반 비동기 송수신, 객체 풀, 고정 슬랩 버퍼
-- SocketServer port range 바인딩과 서버별 최대/현재/접속가능 수 관리
-- ControlServer 브로커 기반 서버 등록, heartbeat, route 응답, registry 파일 저장
-- ControlServer client location 조회와 heartbeat timeout 기반 서버 상태 정리
-- ControlServer/SocketServer 비정상 연결 cleanup scheduler
-- ControlServer/SocketServer/SocketClient 전담 워커 기반 command, response, relay, healthcheck 처리
-- ControlServer peer, SocketServer control lookup, SocketServer relay persistent channel 유지
-- ControlServer/SocketServer 목록, 서버 선택형 runtime/detail, 30초 기본 자동 갱신 대시보드, health/metrics API
-- 일반/relay 분리 log4net 로깅과 INFO/DEBUG 추적
+- TLS socket connections, optional mTLS, and AES-GCM/HMAC message protection when TLS is disabled
+- Healthcheck, HelloWorld, ControlServer route, client message, and server relay protocols
+- Existing-connection-first policy for duplicate ClientId registration and client reconnect/backoff
+- `SocketAsyncEventArgs` async send/receive, object pools, and fixed slab buffers
+- SocketServer port range binding and per-server max/current/available connection tracking
+- ControlServer broker registration, heartbeat, route response, registry persistence, and peer sync
+- Client location lookup, SocketServer-to-SocketServer message relay, and heartbeat timeout cleanup
+- Dedicated command, response, relay, and healthcheck workers for ControlServer, SocketServer, and SocketClient
+- Dashboard with ControlServer/SocketServer inventory, selected runtime/details, metrics, and 30-second default refresh
+- Separate general/relay log4net files with INFO/DEBUG trace coverage
 
-## 요구 사항
+## Requirements
 
-- .NET SDK 9.0 이상
-- Visual Studio 2022, Rider, VS Code 또는 `dotnet` CLI
+- .NET SDK 9.0 or later
+- Visual Studio 2022, Rider, VS Code, or the `dotnet` CLI
 
-## 설정 파일
+## Configuration
 
 ```text
 SocketControl/config.json
@@ -46,10 +44,11 @@ SocketServer/config.json
 SocketClient/config.json
 ```
 
-SocketServer는 설정된 port range 안에서 사용 가능한 포트를 찾아 바인딩하고, ControlServer에 등록합니다. 클라이언트는 ControlServer에 route를 요청한 뒤 응답받은 SocketServer endpoint로 직접 접속합니다.
-각 모듈은 `socketOptions`로 connection/read/write timeout을 설정하며 기본값은 30초입니다.
+SocketServer binds to an available port in its configured port range, registers with ControlServer, and reports heartbeat/session status. Clients request a route from ControlServer and then connect directly to the routed SocketServer endpoint.
 
-기본 로컬 런타임 포트는 다음과 같습니다.
+Each module uses `socketOptions` for connection/read/write timeouts; the default is 30 seconds. Client reconnect delay defaults to 30 seconds. Duplicate ClientId rejection uses the server-provided retry-after value or the default 90-second backoff.
+
+Default local runtime ports:
 
 ```text
 nginx client-facing endpoint  10000
@@ -59,15 +58,17 @@ Dashboard                     10050
 SocketLoadTest UI             10060
 ```
 
-## 빌드 및 테스트
+## Build And Test
 
 ```bash
 dotnet restore SocketServer.sln
 dotnet build SocketServer.sln
-dotnet test SocketServer.sln
+dotnet test SocketTests/SocketTests.csproj
 ```
 
-## 실행
+Use targeted tests for change-scoped development. The full test suite is the merge gate for broad changes.
+
+## Run
 
 ControlServer:
 
@@ -87,7 +88,11 @@ Dashboard:
 dotnet run --project SocketDashboard/SocketDashboard.csproj
 ```
 
-기본 대시보드 주소는 `http://127.0.0.1:10050`입니다.
+Default dashboard URL:
+
+```text
+http://127.0.0.1:10050
+```
 
 Sample Client:
 
@@ -95,37 +100,37 @@ Sample Client:
 dotnet run --project Samples/SocketSample.Net/SocketSample.Net.csproj
 ```
 
-.NET 샘플 클라이언트 UI는 기본적으로 동적 포트에 바인딩됩니다. 실행 로그의 `Now listening on` 주소를 확인합니다. iOS, macOS, Android 네이티브 샘플은 [Samples](Samples/README.md)를 참고합니다.
+The .NET sample client UI binds to a dynamic local port by default. Check the `Now listening on` log line for the URL. See [Samples](Samples/README.md) for iOS, macOS, and Android native clients.
 
-## 부하 테스트
+## Load Test
 
-직접 서버 접속:
+Broker-routed 10k connection test:
 
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --port 10000
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --host 127.0.0.1 --port 10000 --use-control-server
 ```
 
-ControlServer route 사용:
+ControlServer route profile:
 
 ```bash
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k --host 127.0.0.1 --port 10000 --use-control-server --report-file reports/soak-10k.json
 ```
 
-클라이언트 간 메시지 전송 부하:
+Broker-routed client-to-client message load:
 
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 1000 --batch-size 100 --hold-seconds 0 --port 10000 --message-test --message-rounds 1
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 1000 --batch-size 100 --hold-seconds 0 --host 127.0.0.1 --port 10000 --use-control-server --message-test --message-rounds 1
 ```
 
-UI 모드:
+UI mode:
 
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 10060 --clients 4 --batch-size 4 --host 127.0.0.1 --port 10000 --use-control-server
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 10060 --clients 4 --start-client-id 201 --batch-size 4 --host 127.0.0.1 --port 10000 --use-control-server
 ```
 
-UI는 실행 로그의 listening 주소에서 접속 대수, 타겟 서버별 분포, 클라이언트별 접속 상태, counters/metrics를 표시합니다.
+The UI shows connected clients, target server distribution, per-client connection state, counters, and metrics.
 
-## 상세 문서
+## Detailed Documentation
 
 - [Architecture](wiki/Architecture.md)
 - [Configuration](wiki/Configuration.md)

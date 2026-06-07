@@ -894,6 +894,35 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         if (ClientMessageProtocol.TryDecodeRegister(frame, out ClientRegisterRequest registerRequest))
         {
             session.MarkReceived(registerRequest.ClientId);
+            if (registerRequest.ClientId > 0 &&
+                this.connectedClientsById.TryGetValue(registerRequest.ClientId, out ConnectionSession existingSession) &&
+                existingSession.Id != session.Id &&
+                !existingSession.IsClosed)
+            {
+                SocketMessageFrame duplicateAckFrame = ClientMessageProtocol.CreateFrame(
+                    registerRequest.ClientId,
+                    ClientMessageIds.ClientRegisterAck,
+                    new ClientRegisterAck
+                    {
+                        ClientId = registerRequest.ClientId,
+                        Success = false,
+                        ErrorMessage = "Duplicate clientId is already connected.",
+                        RetryAfterSeconds = Math.Max(1, (int)Math.Ceiling(this.idleTimeout.TotalSeconds))
+                    });
+                sent = await this.EnqueueClientResponseAsync(
+                    session,
+                    duplicateAckFrame,
+                    "ClientRegisterDuplicateAck");
+                if (sent)
+                {
+                    Interlocked.Increment(ref this.totalSentMessages);
+                    this.AddSentMessageBytes(duplicateAckFrame);
+                }
+
+                Logger.Warn($"Duplicate client register rejected. instanceId={this.InstanceId}, clientId={registerRequest.ClientId}, existingConnectionId={existingSession.Id}, rejectedConnectionId={session.Id}");
+                return false;
+            }
+
             this.UpdateClientIndex(session);
             SocketMessageFrame ackFrame = ClientMessageProtocol.CreateFrame(
                 registerRequest.ClientId,
@@ -1486,7 +1515,10 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             return;
         }
 
-        this.connectedClientsById[session.ClientId] = session;
+        this.connectedClientsById.AddOrUpdate(
+            session.ClientId,
+            session,
+            (_, existingSession) => existingSession.Id == session.Id || existingSession.IsClosed ? session : existingSession);
     }
 
     private bool RemoveConnectedClient(ConnectionSession session)

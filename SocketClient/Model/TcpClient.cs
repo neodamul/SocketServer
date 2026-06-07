@@ -400,25 +400,30 @@ public class TcpClient : IClient, IDisposable
 
     public async Task<bool> RegisterClientAsync()
     {
+        (bool received, ClientRegisterAck ack) = await this.RegisterClientWithAckAsync();
+        return received && ack.Success;
+    }
+
+    public async Task<(bool Success, ClientRegisterAck Ack)> RegisterClientWithAckAsync()
+    {
         if (this.Socket == null)
         {
             Logger.Warn($"Client register skipped because socket is not initialized. clientId={this.ClientId}");
-            return false;
+            return (false, null);
         }
 
         if (!await ClientMessageProtocol.SendRegisterAsync(this.Connection, this.ClientId))
         {
             Logger.Warn($"Client register send failed. clientId={this.ClientId}");
-            return false;
+            return (false, null);
         }
 
         Logger.Info($"Client register request sent. clientId={this.ClientId}");
         (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Connection);
-        bool registered = success &&
-            ClientMessageProtocol.TryDecodeRegisterAck(frame, out ClientRegisterAck ack) &&
-            ack.Success;
-        Logger.Info($"Client register response received. clientId={this.ClientId}, success={registered}");
-        return registered;
+        ClientRegisterAck ack = null;
+        bool decoded = success && ClientMessageProtocol.TryDecodeRegisterAck(frame, out ack);
+        Logger.Info($"Client register response received. clientId={this.ClientId}, success={decoded && ack.Success}");
+        return decoded ? (true, ack) : (false, null);
     }
 
     public async Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> SendClientMessageAsync(

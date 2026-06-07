@@ -1,8 +1,11 @@
 import Foundation
 import Network
+import Security
 
 enum NativeSocketError: Error {
     case connectFailed
+    case certificateNotFound
+    case certificateLoadFailed
     case invalidFrame
     case receiveFailed
     case registerFailed
@@ -34,11 +37,12 @@ final class NativeSocketClient {
         self.config = config
     }
 
-    func connect() async throws {
+    func connect() async throws -> String {
         disconnect()
 
         let target = try await resolveConnectionTarget()
         try await connectToHost(target.host, port: target.port)
+        return "\(target.host):\(target.port)"
     }
 
     private func resolveConnectionTarget() async throws -> (host: String, port: UInt16) {
@@ -93,6 +97,9 @@ final class NativeSocketClient {
                     complete(true)
                 }, queue)
             }
+            if let identity = try loadClientIdentity() {
+                sec_protocol_options_set_local_identity(tlsOptions.securityProtocolOptions, identity)
+            }
 
             parameters = NWParameters(tls: tlsOptions, tcp: tcpOptions)
         }
@@ -119,6 +126,80 @@ final class NativeSocketClient {
         }
 
         return connection
+    }
+
+    private func loadClientIdentity() throws -> sec_identity_t? {
+        guard !config.usesMessageEncryption else {
+            return nil
+        }
+
+        guard let certificateUrl = findClientCertificateUrl() else {
+            throw NativeSocketError.certificateNotFound
+        }
+
+        let certificateData = try Data(contentsOf: certificateUrl)
+        let options = [kSecImportExportPassphrase as String: config.certificatePassword] as CFDictionary
+        var importedItems: CFArray?
+        let status = SecPKCS12Import(certificateData as CFData, options, &importedItems)
+        guard status == errSecSuccess,
+              let items = importedItems as? [[String: Any]],
+              let identity = items.first?[kSecImportItemIdentity as String] else {
+            throw NativeSocketError.certificateLoadFailed
+        }
+
+        return sec_identity_create(identity as! SecIdentity)
+    }
+
+    private func findClientCertificateUrl() -> URL? {
+        let fileNames = [
+            "SocketClient-\(config.clientId).pfx",
+            "SocketClient.pfx"
+        ]
+
+        let configuredDirectory = config.certificateDirectory.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !configuredDirectory.isEmpty {
+            let directoryUrl = URL(fileURLWithPath: configuredDirectory)
+            if let url = firstExistingCertificate(in: directoryUrl, fileNames: fileNames) {
+                return url
+            }
+        }
+
+        var candidates: [URL] = [
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        ]
+        if let resourceUrl = Bundle.main.resourceURL {
+            candidates.append(resourceUrl)
+        }
+        candidates.append(Bundle.main.bundleURL)
+
+        for startUrl in candidates {
+            var currentUrl = startUrl
+            while true {
+                if let url = firstExistingCertificate(in: currentUrl.appendingPathComponent("Certificates"), fileNames: fileNames) {
+                    return url
+                }
+
+                let parentUrl = currentUrl.deletingLastPathComponent()
+                if parentUrl.path == currentUrl.path {
+                    break
+                }
+
+                currentUrl = parentUrl
+            }
+        }
+
+        return nil
+    }
+
+    private func firstExistingCertificate(in directoryUrl: URL, fileNames: [String]) -> URL? {
+        for fileName in fileNames {
+            let certificateUrl = directoryUrl.appendingPathComponent(fileName)
+            if FileManager.default.fileExists(atPath: certificateUrl.path) {
+                return certificateUrl
+            }
+        }
+
+        return nil
     }
 
     func register() async throws {

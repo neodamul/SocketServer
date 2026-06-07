@@ -835,7 +835,8 @@ internal static class ProtobufPayloadSerializer
             ClientId = value.ClientId,
             Success = value.Success,
             ErrorMessage = value.ErrorMessage ?? "",
-            RegisteredAtUnixMs = ToUnixMs(value.RegisteredAt)
+            RegisteredAtUnixMs = ToUnixMs(value.RegisteredAt),
+            RetryAfterSeconds = value.RetryAfterSeconds
         };
     }
 
@@ -846,7 +847,8 @@ internal static class ProtobufPayloadSerializer
             ClientId = value.ClientId,
             Success = value.Success,
             ErrorMessage = value.ErrorMessage,
-            RegisteredAt = FromUnixMs(value.RegisteredAtUnixMs)
+            RegisteredAt = FromUnixMs(value.RegisteredAtUnixMs),
+            RetryAfterSeconds = value.RetryAfterSeconds
         };
     }
 

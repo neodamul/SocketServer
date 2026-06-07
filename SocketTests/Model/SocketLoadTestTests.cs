@@ -38,6 +38,7 @@ public class SocketLoadTestTests
             new[]
             {
                 "--clients", "20",
+                "--start-client-id", "200",
                 "--batch-size", "5",
                 "--hold-seconds", "0",
                 "--port", "0",
@@ -53,6 +54,7 @@ public class SocketLoadTestTests
 
         Assert.AreEqual(string.Empty, error);
         Assert.AreEqual(20, options.Clients);
+        Assert.AreEqual(200, options.StartClientId);
         Assert.AreEqual(5, options.BatchSize);
         Assert.AreEqual(0, options.HoldSeconds);
         Assert.AreEqual(0, options.Port);
@@ -181,6 +183,7 @@ public class SocketLoadTestTests
             int exitCode = await Program.RunAsync(new[]
             {
                 "--clients", "1",
+                "--start-client-id", "300",
                 "--batch-size", "1",
                 "--hold-seconds", "0",
                 "--port", "0",
@@ -194,6 +197,7 @@ public class SocketLoadTestTests
             JsonElement root = document.RootElement;
             Assert.AreEqual("custom", root.GetProperty("Profile").GetString());
             Assert.AreEqual(1, root.GetProperty("Clients").GetInt32());
+            Assert.AreEqual(300, root.GetProperty("StartClientId").GetInt32());
             Assert.AreEqual(1, root.GetProperty("Connected").GetInt32());
             Assert.AreEqual(1, root.GetProperty("HealthCheckSuccess").GetInt32());
         }

@@ -242,6 +242,7 @@ message ProtoClientRegisterAck {
   bool success = 2;
   string error_message = 3;
   int64 registered_at_unix_ms = 4;
+  int32 retry_after_seconds = 5;
 }
 
 message ProtoClientMessageSendRequest {

@@ -55,6 +55,27 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void ClientRegisterAckEncodeDecodePreservesRetryAfterSecondsTest()
+    {
+        ClientRegisterAck ack = new()
+        {
+            ClientId = 11,
+            Success = false,
+            ErrorMessage = "Duplicate clientId is already connected.",
+            RetryAfterSeconds = 90
+        };
+
+        SocketMessageFrame frame = ClientMessageProtocol.CreateFrame(11, ClientMessageIds.ClientRegisterAck, ack);
+        bool decoded = ClientMessageProtocol.TryDecodeRegisterAck(frame, out ClientRegisterAck decodedAck);
+
+        Assert.IsTrue(decoded);
+        Assert.AreEqual((uint)11, decodedAck.ClientId);
+        Assert.IsFalse(decodedAck.Success);
+        Assert.AreEqual("Duplicate clientId is already connected.", decodedAck.ErrorMessage);
+        Assert.AreEqual(90, decodedAck.RetryAfterSeconds);
+    }
+
+    [TestMethod]
     public void ClusterStatusSnapshotEncodeDecodePreservesControlServerResourceUsageTest()
     {
         ClusterStatusSnapshot status = new()
@@ -98,6 +119,15 @@ public class ControlProtocolTests
 
         Assert.IsTrue(decoded);
         Assert.IsNull(decodedStatus.ControlServerResourceUsage);
+    }
+
+    [TestMethod]
+    public void SocketClientConnectionConfigDefaultsReconnectDelaysTest()
+    {
+        SocketClientConnectionConfig config = new();
+
+        Assert.AreEqual(30, config.ReconnectRetrySeconds);
+        Assert.AreEqual(90, config.DuplicateRejectBackoffSeconds);
     }
 
     [TestMethod]

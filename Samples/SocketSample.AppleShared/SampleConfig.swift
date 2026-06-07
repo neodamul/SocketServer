@@ -11,6 +11,8 @@ struct SampleConfig: Codable, Equatable {
     var allowUntrustedLocalCertificate: Bool = true
     var transportMode: String = "Tls"
     var messageEncryptionSecret: String = ""
+    var certificateDirectory: String = ProcessInfo.processInfo.environment["SOCKET_CERTIFICATE_DIR"] ?? ""
+    var certificatePassword: String = ProcessInfo.processInfo.environment["SOCKET_CERTIFICATE_PASSWORD"] ?? ""
 
     var usesMessageEncryption: Bool {
         transportMode.caseInsensitiveCompare("MessageEncryption") == .orderedSame ||
@@ -38,6 +40,10 @@ struct SampleConfig: Codable, Equatable {
                 config.transportMode = value
             case "message-secret":
                 config.messageEncryptionSecret = value
+            case "certificate-dir":
+                config.certificateDirectory = value
+            case "certificate-password":
+                config.certificatePassword = value
             default:
                 continue
             }
@@ -91,6 +97,7 @@ struct ClientState {
     var isConnected = false
     var isRegistered = false
     var status = "Disconnected"
+    var connectedServer = ""
     var lastReceived = ""
     var lastError = ""
 }

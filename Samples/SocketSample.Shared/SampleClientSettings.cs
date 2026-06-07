@@ -18,6 +18,10 @@ public sealed class SampleClientSettings
 
     public int HealthCheckIntervalSeconds { get; set; } = 30;
 
+    public int ReconnectRetrySeconds { get; set; } = 30;
+
+    public int DuplicateRejectBackoffSeconds { get; set; } = 90;
+
     public SocketSecurityConfig Security { get; set; } = new();
 
     public SocketOperationConfig SocketOptions { get; set; } = new();
@@ -33,6 +37,8 @@ public sealed class SampleClientSettings
             UseControlServer = this.UseControlServer,
             ReceiveTimeoutSeconds = this.ReceiveTimeoutSeconds,
             HealthCheckIntervalSeconds = this.HealthCheckIntervalSeconds,
+            ReconnectRetrySeconds = this.ReconnectRetrySeconds,
+            DuplicateRejectBackoffSeconds = this.DuplicateRejectBackoffSeconds,
             Security = new SocketSecurityConfig
             {
                 Profile = this.Security.Profile,
