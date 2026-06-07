@@ -407,6 +407,9 @@ public class ControlServerIntegrationTests
         servers.StartHeartbeatLoops(TimeSpan.FromSeconds(5));
         await WaitForClusterAsync(controls.ControlA, status => status.ServerCount == 4 && status.TotalSessionCount == 0);
         await WaitForClusterAsync(controls.ControlB, status => status.ServerCount == 4 && status.TotalSessionCount == 0);
+        int relayServerCount = await sourceServer.RefreshRelayServersFromControlServersAsync();
+        Assert.AreEqual(3, relayServerCount);
+        Assert.AreEqual(3, sourceServer.RelayServerCount);
 
         ResetSocketTestDefaults();
         Task<(bool Success, ClientMessageAck Ack, ClientMessageError Error)> sendTask =
