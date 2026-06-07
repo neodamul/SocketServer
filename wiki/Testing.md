@@ -19,7 +19,7 @@ Coverage includes:
 - dashboard cluster snapshot; full registration + message send/receive integration; Selected Traffic message-byte counters with healthcheck exclusion; liveness/readiness/metrics models
 - sample client settings and client-to-client flow; native Android sample protocol validation script; per-project log4net config and separate relay appender
 
-Integration tests run real TCP/TLS servers/clients: a test class that changes global socket/security settings must restore defaults in class init. Sample-client tests assume auto-register and a background receive loop after `Connect`, and assert on sample state (`LastReceivedMessage`/`Status`) rather than a manual receive return value.
+Integration tests run real TCP/TLS servers/clients: a test class that changes global socket/security settings must restore defaults in class init. The test assembly is marked `DoNotParallelize`; do not run multiple `dotnet test` processes against `SocketTests` at the same time because they share CPU-intensive TLS handshakes, global socket/security settings, and local TCP ports. Sample-client tests assume auto-register and a background receive loop after `Connect`, and assert on sample state (`LastReceivedMessage`/`Status`) rather than a manual receive return value.
 
 Long-running integration tests emit `[test-progress]` lines for stage start/completion, wait conditions, elapsed time since the previous step, and timeout context. When a test stalls, inspect the last `[test-progress]` line first; it names the waiting condition such as cluster convergence, client location propagation, message delivery, or sample state update.
 
