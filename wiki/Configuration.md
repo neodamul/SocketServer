@@ -1,40 +1,23 @@
 # Configuration
 
-각 실행 프로젝트는 JSON 설정 파일을 사용합니다.
-
+Each executable project uses a JSON config file:
 ```text
 SocketControl/config.json
 SocketServer/config.json
 SocketClient/config.json
 ```
+Each project keeps its own `log4net.config`. Executable and test projects copy their `log4net.config` to build output; library projects keep only their config file to avoid conflicts across referencing projects.
 
-각 프로젝트는 자체 `log4net.config`를 관리합니다. 실행 프로젝트와 테스트 프로젝트는 빌드 출력으로 자신의 `log4net.config`를 복사하고, 라이브러리 프로젝트는 프로젝트별 설정 파일만 보관해 참조 프로젝트 간 설정 파일 충돌을 피합니다.
+`host`, `bindHost`, `controlEndpoints[].host`, `controlServers[].host`, `peers[].host` accept both IP literals (`127.0.0.1`) and DNS names (`localhost`). Connect paths use async DNS resolution and select only an address matching the socket address family.
 
-`host`, `bindHost`, `controlEndpoints[].host`, `controlServers[].host`, `peers[].host`는 `127.0.0.1` 같은 IP literal과 `localhost` 같은 DNS host name을 모두 사용할 수 있습니다. 연결 경로는 비동기 DNS 조회를 사용하고 socket address family에 맞는 주소만 선택합니다.
-
-```text
-SocketCommon/log4net.config
-SocketClient/log4net.config
-SocketControl/log4net.config
-SocketServer/log4net.config
-SocketDashboard/log4net.config
-SocketLoadTest/log4net.config
-SocketTests/log4net.config
-```
-
-`SocketLoadTest`는 부하 테스트용 `log4net.load-test.config`를 우선 사용하고, 해당 파일이 없으면 `log4net.config`를 fallback으로 사용합니다.
-
-로그 파일은 프로젝트별 `logs/` 디렉터리에 분리 저장합니다.
-
-- 일반 로그: `logs/<project>.log`
-- relay 로그: `logs/<project>.relay.log`
-
-일반 로그는 서버 시작/종료, 연결, healthcheck, route, cleanup, 테스트 진행 상태를 기록합니다. Relay 로그는 `SocketRelay` logger로 분리되어 ControlServer peer relay/snapshot sync, SocketServer relay server refresh, client-to-client message relay, target location 조회, broadcast/targeted relay 결과를 기록합니다. 파일 로그는 DEBUG까지 저장하고 콘솔은 INFO 이상만 출력해 테스트 실행 중에는 핵심 진행 상태를 보고, 실패 분석은 로그 파일에서 상세 단계까지 확인합니다.
+## Logging
+Per-project `log4net.config` files exist for SocketCommon/Client/Control/Server/Dashboard/LoadTest/Tests. `SocketLoadTest` prefers `log4net.load-test.config`, falling back to `log4net.config`. Logs are split per project under `logs/`:
+- general: `logs/<project>.log`
+- relay: `logs/<project>.relay.log`
+General logs cover lifecycle, connection, healthcheck, route, cleanup, test progress. The relay log (`SocketRelay` logger) covers ControlServer peer relay/snapshot sync, SocketServer relay refresh, client-to-client relay, target-location lookups, and broadcast/targeted relay results. Files log down to DEBUG; the console shows INFO+.
 
 ## Security
-
-실행 프로젝트는 `security` 설정을 통해 전송 보안 정책을 적용합니다. 기본값은 TLS입니다.
-
+Executable projects apply transport security via `security` (default TLS). Profiles are described in [Architecture → Security profiles](Architecture.md#security-profiles).
 ```json
 {
   "security": {
@@ -54,59 +37,30 @@ SocketTests/log4net.config
   }
 }
 ```
+- `profile`: `EndToEndTls` (default, TLS to the app) · `EdgeTerminated` (edge terminates TLS; requires `trustedNetwork=true` and a loopback/private SocketServer `bindHost`; rejected with `transportMode=Tls`; edge identity propagation not yet implemented) · `AppTokenSession` (reserved, rejected at startup).
+- `transportMode`: `Tls` (`SslStream`) or `MessageEncryption` (per-frame AES-GCM-256 + HMAC-SHA256, no TLS handshake). `EdgeTerminated` currently uses the `MessageEncryption` path for non-TLS app transport. See [Protocols → Transport security](Protocols.md#transport-security).
+- `MessageEncryption` requires every node and client to share the same secret via env var (default `SOCKET_MESSAGE_SECRET`; override with `messageEncryptionSecretEnvironmentVariable`). The secret may be base64 or plain text; AES-GCM and HMAC keys are derived separately.
+- `tlsProtocol`: default `Tls13`; `Auto` uses OS/.NET negotiation. Production forces TLS 1.3. `EndToEndTls` forces mTLS — even if `requireClientCertificate=false`, it is normalized to true. Cert validation checks Root CA signature, SAN/name match, serverAuth/clientAuth EKU; the SocketClient cert SAN includes `socket-client-{clientId}` and the SocketServer refuses a connection whose client-facing frame header clientId differs.
 
-`profile`은 보안 토폴로지 선택값입니다. 기본값은 `EndToEndTls`이며 앱 프로세스까지 TLS를 종단합니다. `EdgeTerminated`는 L7 proxy나 edge 장비가 TLS/client 인증을 이미 처리하고 내부 신뢰망에서 앱 TLS를 쓰지 않는 구성입니다. 이 profile은 오설정 방지를 위해 `trustedNetwork=true`가 필요하며, SocketServer `bindHost`가 명시적인 loopback/private 주소가 아니면 기동 시 거부됩니다. `transportMode=Tls`와 함께 쓰는 조합도 거부됩니다. 신원 전파(PROXY protocol/edge token)는 아직 구현되지 않았으므로 `EdgeTerminated`는 현재 edge가 인증한 client identity를 SocketServer 세션에 바인딩하지 않습니다. `AppTokenSession`은 향후 per-session key 기반 고속 데이터 플레인을 위한 예약값이며 현재는 기동 시 지원하지 않는 설정으로 거부됩니다.
+> Note: on macOS, `SslStream` cannot explicitly request `Tls13`; use `Auto` (OS negotiation) for non-server components.
 
-`transportMode`는 `Tls` 또는 `MessageEncryption`입니다. `Tls`는 `SslStream` 기반 TLS 연결을 사용하고, `MessageEncryption`은 TLS handshake 없이 각 frame payload를 AES-GCM-256으로 암호화하고 HMAC-SHA256으로 envelope를 검증합니다. `EdgeTerminated` profile은 현재 앱 비-TLS 전송으로 `MessageEncryption` 경로를 사용합니다.
-
-`MessageEncryption` 모드는 모든 노드와 클라이언트가 같은 secret을 환경 변수로 제공해야 합니다. 기본 변수명은 `SOCKET_MESSAGE_SECRET`이며, `messageEncryptionSecretEnvironmentVariable`로 바꿀 수 있습니다. secret은 base64 또는 일반 문자열을 사용할 수 있고 내부적으로 AES-GCM key와 HMAC key를 분리 파생합니다.
-
-`tlsProtocol`은 기본 `Tls13`입니다. `Auto`로 설정하면 OS/.NET 기본 협상을 사용합니다. 운영 설정은 TLS 1.3 강제를 기본으로 둡니다.
-`EndToEndTls` profile은 mTLS를 강제하므로 `requireClientCertificate`가 false여도 내부적으로 true로 정규화됩니다. 클라이언트도 같은 Root CA로 서명된 모듈 인증서를 제시해야 합니다. `EndToEndTls` 인증서 검증은 Root CA 서명, SAN/name mismatch, serverAuth/clientAuth EKU를 확인합니다. SocketClient 인증서는 SAN에 `socket-client-{clientId}`를 포함하며, SocketServer는 client-facing frame의 header clientId가 인증서 clientId와 다르면 연결을 거부합니다.
-
-## Socket Options
-
-`socketOptions`는 외부 노드에 접속하거나 frame을 읽고 쓰는 네트워크 operation timeout을 설정합니다. 설정이 없거나 0 이하이면 기본값 30초를 사용합니다.
-
+## Socket options
+`socketOptions` sets network operation timeouts; missing or ≤0 falls back to 30s.
 ```json
-{
-  "socketOptions": {
-    "connectTimeoutSeconds": 30,
-    "readTimeoutSeconds": 30,
-    "writeTimeoutSeconds": 30
-  }
-}
+{ "socketOptions": { "connectTimeoutSeconds": 30, "readTimeoutSeconds": 30, "writeTimeoutSeconds": 30 } }
 ```
-
-- `connectTimeoutSeconds`: ControlServer, SocketServer, client 간 TCP 연결 제한 시간
-- `readTimeoutSeconds`: frame header/payload 읽기 제한 시간
-- `writeTimeoutSeconds`: frame write/flush 제한 시간
+- `connectTimeoutSeconds`: TCP connect limit between ControlServer/SocketServer/client
+- `readTimeoutSeconds`: frame header/payload read limit
+- `writeTimeoutSeconds`: frame write/flush limit
 
 ## Dashboard
-
-`SocketDashboard/appsettings.json`은 조회할 ControlServer endpoint를 설정합니다. `dashboard.controlServers` 배열을 사용하면 여러 ControlServer를 Server Inventory에 `ControlServer` type으로 항상 표시하고, 각 endpoint별 조회 상태를 확인할 수 있습니다. 기존 단일 `dashboard.controlServer` 설정은 fallback으로 유지됩니다.
-
+`SocketDashboard/appsettings.json` sets ControlServer endpoints to query. `dashboard.controlServers[]` shows multiple ControlServers as `ControlServer` rows with per-endpoint query status; the legacy single `dashboard.controlServer` remains a fallback. A `dashboard.security` section may set the dashboard's transport security (e.g. `tlsProtocol: Auto` on macOS).
 ```json
-{
-  "dashboard": {
-    "controlServers": [
-      {
-        "host": "127.0.0.1",
-        "port": 10001
-      },
-      {
-        "host": "127.0.0.1",
-        "port": 10002
-      }
-    ]
-  }
-}
+{ "dashboard": { "controlServers": [ { "host": "127.0.0.1", "port": 10001 }, { "host": "127.0.0.1", "port": 10002 } ] } }
 ```
 
 ## Certificates
-
-각 모듈은 최초 TLS 연결 시 로컬 인증서를 자동 생성합니다. Root CA는 하나만 만들고, 모듈별 leaf 인증서는 이 Root CA로 서명합니다.
-
+Each module auto-generates local certs on first TLS connection. One Root CA signs per-module leaf certs.
 ```text
 Certificates/SocketServerLocalRootCA.pfx
 Certificates/SocketClient.pfx
@@ -114,127 +68,64 @@ Certificates/SocketServer.pfx
 Certificates/SocketControl.pfx
 Certificates/SocketDashboard.pfx
 ```
-
-기본 저장 위치는 솔루션 루트의 `Certificates/`입니다. `security.certificateDirectory` 또는 `SOCKET_CERTIFICATE_DIR` 환경 변수를 설정하면 다른 로컬 경로를 사용할 수 있습니다. PFX 비밀번호는 `security.certificatePasswordEnvironmentVariable`에 지정한 환경 변수에서 읽으며, 기본 변수명은 `SOCKET_CERTIFICATE_PASSWORD`입니다. 인증서는 로컬 개발/테스트용이며 leaf subject는 `CN=SocketServerLocal`, SAN은 `SocketServerLocal`, `localhost`입니다. TLS 1.3을 필수로 검증해야 하는 환경은 `security.requireTls13=true` 또는 `SOCKET_REQUIRE_TLS13=true`를 설정합니다. 플랫폼이 TLS 1.3을 협상하지 못하면 연결은 실패합니다.
-
-Root CA와 모듈 인증서는 `certificateRenewBeforeDays` 이내로 만료가 가까워지거나, 현재 설정된 PFX 비밀번호로 읽을 수 없으면 삭제 후 재생성됩니다.
-TLS handshake 경로는 Root CA와 모듈 인증서를 프로세스 캐시에 보관해 반복 파일 로드와 chain 검증 비용을 줄입니다. `security` 설정이 다시 적용되거나 인증서 파일/비밀번호/수정 시간이 바뀌면 캐시는 새 항목으로 교체됩니다. 진행 중인 handshake가 참조 중일 수 있는 공유 인증서 인스턴스는 즉시 dispose하지 않습니다.
+Default location is the solution-root `Certificates/`; override with `security.certificateDirectory` or `SOCKET_CERTIFICATE_DIR`. PFX password from the env var named by `security.certificatePasswordEnvironmentVariable` (default `SOCKET_CERTIFICATE_PASSWORD`). Certs are for local dev/test: leaf subject `CN=SocketServerLocal`, SAN `SocketServerLocal`, `localhost`. Force TLS 1.3 with `security.requireTls13=true` or `SOCKET_REQUIRE_TLS13=true` (connection fails if the platform can't negotiate it). Root CA / module certs are deleted and regenerated when near expiry (`certificateRenewBeforeDays`) or unreadable with the current PFX password. The TLS handshake path caches Root CA and module certs in-process to avoid repeated file loads and chain validation; the cache is replaced when `security` is re-applied or the cert file/password/mtime changes; a shared cert instance that an in-progress handshake may reference is not disposed immediately.
 
 ## ControlServer
-
 ```json
 {
   "controlServer": {
-    "clusterId": "socket-cluster-1",
-    "nodeId": "control-1",
-    "host": "127.0.0.1",
-    "port": 10001,
-    "peerSyncPort": 10021,
-    "heartbeatTimeoutSeconds": 90,
-    "peerSnapshotSyncIntervalSeconds": 30,
-    "routeReservationSeconds": 10,
-    "routingPolicy": "MostAvailableConnections",
-    "degradedCpuPercent": 85,
-    "degradedMemoryPercent": 85,
-    "degradedStoragePercent": 90
+    "clusterId": "socket-cluster-1", "nodeId": "control-1",
+    "host": "127.0.0.1", "port": 10001, "peerSyncPort": 10021,
+    "heartbeatTimeoutSeconds": 90, "peerSnapshotSyncIntervalSeconds": 30,
+    "routeReservationSeconds": 10, "routingPolicy": "MostAvailableConnections",
+    "degradedCpuPercent": 85, "degradedMemoryPercent": 85, "degradedStoragePercent": 90
   },
   "peers": [],
-  "registry": {
-    "provider": "File",
-    "syncMode": "ActiveActive",
-    "connectionString": "control-registry.json"
-  }
+  "registry": { "provider": "File", "syncMode": "ActiveActive", "connectionString": "control-registry.json" }
 }
 ```
+- `port`: client route requests + SocketServer register/heartbeat
+- `peerSyncPort`: ControlServer-to-ControlServer sync
+- `heartbeatTimeoutSeconds`: timed-out servers excluded from routing
+- `peerSnapshotSyncIntervalSeconds`: interval to re-fetch peer full snapshot (recover missed events)
+- `routeReservationSeconds`: short reservation TTL between route response and actual connect
+- `degraded*Percent`: marks `Degraded` above resource thresholds — evaluated on **machine-wide** usage (not the process)
+- `registry.provider`: `InMemory` or `File`; `registry.connectionString`: file path (empty → `{nodeId}-registry.json` in the run dir)
 
-주요 항목:
-
-- `port`: 클라이언트 route 요청과 SocketServer 등록/heartbeat를 받는 기본 포트
-- `peerSyncPort`: ControlServer 간 동기화 포트
-- `heartbeatTimeoutSeconds`: timeout이 지난 서버는 route 후보에서 제외
-- `peerSnapshotSyncIntervalSeconds`: peer full snapshot을 주기적으로 가져와 누락 이벤트를 보정하는 간격
-- `routeReservationSeconds`: route 응답 후 실제 접속 전까지의 짧은 예약 TTL
-- `degraded*Percent`: resource threshold 초과 시 `Degraded`
-- `registry.provider`: `InMemory` 또는 `File`
-- `registry.connectionString`: `File` provider의 저장 경로. 비어 있으면 실행 디렉터리의 `{nodeId}-registry.json`을 사용
-
-기본 실행 config는 `File` provider로 ControlServer registry를 저장합니다. 테스트나 임시 실행처럼 상태 공유가 필요 없으면 `InMemory`를 사용합니다. registry 파일에는 서버 snapshot, route reservation, session summary, client location이 저장되며 메시지 payload 프로토콜은 계속 protobuf를 사용합니다.
-`degraded*Percent`는 SocketServer 프로세스가 아니라 SocketServer가 실행 중인 머신 전체의 CPU/MEM/STORAGE 사용률을 기준으로 평가합니다.
+The default config uses `File`; tests/ephemeral runs use `InMemory`. The registry file stores server snapshots, route reservations, session summaries, client locations (payload protocol stays protobuf).
 
 ## SocketServer
-
 ```json
 {
-  "socketAsyncEventArgsPool": {
-    "initialSize": 1000,
-    "growthSize": 100,
-    "maxRetained": 20000
-  },
-  "controlServers": [
-    {
-      "host": "127.0.0.1",
-      "port": 10000
-    }
-  ],
+  "socketAsyncEventArgsPool": { "initialSize": 1000, "growthSize": 100, "maxRetained": 20000 },
+  "controlServers": [ { "host": "127.0.0.1", "port": 10000 } ],
   "servers": [
     {
-      "serverId": 1,
-      "instanceId": "server-1-a",
-      "name": "socket-server-1",
-      "bindHost": "127.0.0.1",
-      "portRangeStart": 10100,
-      "portRangeEnd": 10199,
-      "maxConnections": 10000,
-      "pendingAcceptCount": 100,
-      "idleTimeoutSeconds": 90,
-      "heartbeatIntervalSeconds": 30
+      "serverId": 1, "instanceId": "server-1-a", "name": "socket-server-1",
+      "bindHost": "127.0.0.1", "portRangeStart": 10100, "portRangeEnd": 10199,
+      "maxConnections": 10000, "pendingAcceptCount": 100,
+      "idleTimeoutSeconds": 90, "heartbeatIntervalSeconds": 30
     }
   ]
 }
 ```
-
-`portRangeStart=0`, `portRangeEnd=0`이면 OS 동적 포트 바인딩을 사용합니다. 운영 설정은 명시적인 port range 사용을 권장합니다.
-
-`socketAsyncEventArgsPool`은 accept/send/receive에 사용하는 `SocketAsyncEventArgs` pool을 설정합니다. 운영에서는 목표 동접과 메시지 빈도에 맞춰 `initialSize`, `growthSize`, `maxRetained`를 조정합니다. 각 SAEA는 8KB 고정 receive buffer segment를 유지하며, segment는 슬랩 단위로 선할당됩니다. `MessageEncryption` 같은 비-TLS 데이터 플레인은 protected frame 송수신에 SAEA transport를 사용합니다. `EndToEndTls`는 `SslStream`이 socket I/O를 소유하므로 TLS record 송수신은 .NET TLS stack 경로를 유지합니다.
-`maxRetained`를 초과해 반환되는 SAEA는 폐기되고 pool counter에서도 제거되어 `/metrics`와 대시보드의 pool 지표가 실제 retained/in-use 상태를 기준으로 표시됩니다.
+`portRangeStart=0`/`portRangeEnd=0` uses OS dynamic port binding; production should use an explicit range. `socketAsyncEventArgsPool` tunes the SAEA pool used for accept/send/receive (`initialSize`, `growthSize`, `maxRetained`); each SAEA holds a fixed 8KB receive segment pre-allocated as slabs. Non-TLS data planes (`MessageEncryption`) use SAEA transport for protected frame I/O; `EndToEndTls` keeps TLS record I/O on the .NET TLS stack because `SslStream` owns socket I/O. SAEA returned beyond `maxRetained` is discarded and removed from pool counters, so `/metrics` and the dashboard reflect actual retained/in-use state.
 
 ## SocketClient
-
 ```json
 {
   "client": {
-    "clientId": 1,
-    "name": "socket-client-1",
-    "controlEndpoints": [
-      {
-        "host": "127.0.0.1",
-        "port": 10000
-      }
-    ],
+    "clientId": 1, "name": "socket-client-1",
+    "controlEndpoints": [ { "host": "127.0.0.1", "port": 10000 } ],
     "healthCheckIntervalSeconds": 30
   }
 }
 ```
+`controlEndpoints` may list multiple entries; on ControlServer failure the client can try the next endpoint for a route request.
 
-`controlEndpoints`는 여러 개 설정할 수 있습니다. 클라이언트는 ControlServer 장애 시 다음 endpoint로 route 요청을 시도할 수 있습니다.
-
-## Sample Clients
-
-샘플 클라이언트 설정:
-
+## Sample clients
 ```text
 Samples/SocketSample.Net/appsettings.json
 Samples/SocketSample.Android/app/src/main/res/raw/config.json
 ```
-
-공통 설정 항목:
-
-- `clientId`: 샘플 클라이언트 ID
-- `clientName`: 화면과 로그에서 사용할 이름
-- `host`, `port`: 직접 SocketServer 또는 ControlServer endpoint
-- `useControlServer`: `true`이면 ControlServer route 요청 후 SocketServer에 연결
-- `receiveTimeoutSeconds`: receive 버튼 대기 시간
-- `healthCheckIntervalSeconds`: 등록 후 keepalive healthcheck 전송 간격
-- `security`: TLS/mTLS 설정
-
-iOS/macOS 샘플은 화면에서 `Client ID`, `Host`, `Port`, local self-signed certificate 허용 여부를 설정합니다. Swift 샘플 프로젝트 파일은 `Samples/SocketSample.iOS/project.yml`, `Samples/SocketSample.macOS/project.yml`에서 XcodeGen으로 생성합니다.
+Common keys: `clientId`, `clientName`, `host`/`port` (direct SocketServer or ControlServer endpoint), `useControlServer` (route via ControlServer then connect), `receiveTimeoutSeconds`, `healthCheckIntervalSeconds`, `security`. iOS/macOS samples set `Client ID`, `Host`, `Port`, and self-signed cert acceptance on screen; Swift sample projects are generated by XcodeGen from `Samples/SocketSample.iOS/project.yml` and `Samples/SocketSample.macOS/project.yml`.
