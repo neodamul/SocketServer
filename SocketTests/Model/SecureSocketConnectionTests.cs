@@ -130,7 +130,7 @@ public class SecureSocketConnectionTests
     }
 
     [TestMethod]
-    public void SecurityProfileNormalizesClientCertificateRequirementTest()
+    public void SecurityProfileAppliesClientCertificateRequirementTest()
     {
         SecureSocketConnection.Configure(new SocketSecurityConfig
         {
@@ -140,7 +140,7 @@ public class SecureSocketConnectionTests
             RequireClientCertificate = false
         });
 
-        Assert.IsTrue(SecureSocketConnection.RequireClientCertificate);
+        Assert.IsFalse(SecureSocketConnection.RequireClientCertificate);
 
         SecureSocketConnection.Configure(new SocketSecurityConfig
         {

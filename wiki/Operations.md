@@ -57,7 +57,7 @@ Presets: `smoke` (100/10s), `soak-1k` (1k/300s), `soak-10k` (10k/600s), `soak-50
 ## Scale notes
 300k concurrency is not guaranteed by app structure alone; also validate: OS file-descriptor limit, ephemeral port range, TCP backlog, memory/CPU/GC, host count and server instance count, ControlServer redundancy. Current default recommendation is 10,000 connections per SocketServer instance.
 
-`EndToEndTls` keeps TLS to the app process and forces mTLS. For large fan-out, distribute connections across SocketServer nodes via L4 TCP pass-through / TCP stream proxy and size shard count from measured per-node SslStream memory.
+`EndToEndTls` keeps TLS to the app process and enables mTLS when `requireClientCertificate=true`. For large fan-out, distribute connections across SocketServer nodes via L4 TCP pass-through / TCP stream proxy and size shard count from measured per-node SslStream memory.
 
 Sizing procedure:
 ```text

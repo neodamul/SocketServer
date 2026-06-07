@@ -167,7 +167,9 @@ public sealed class SecureSocketConnection : IDisposable
             ValidateSecurityProfile(config, nextSecurityProfile);
             SocketTransportSecurityMode nextTransportMode =
                 ParseTransportMode(config.TransportMode, config.TlsProtocol, nextSecurityProfile);
-            bool nextRequireClientCertificate = nextSecurityProfile == SocketSecurityProfile.EndToEndTls;
+            bool nextRequireClientCertificate =
+                nextSecurityProfile == SocketSecurityProfile.EndToEndTls &&
+                config.RequireClientCertificate;
 
             securityProfile = nextSecurityProfile;
             configuredProtocols = ParseProtocols(config.TlsProtocol);
