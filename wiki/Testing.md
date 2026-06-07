@@ -1,119 +1,52 @@
 # Testing
 
-## Test Project
-
-테스트는 `SocketTests` 프로젝트에 통합되어 있습니다.
-
+## Test project
+Tests live in `SocketTests`:
 ```bash
 dotnet test SocketTests/SocketTests.csproj
 ```
+Coverage includes:
+- frame encode/decode; protobuf payload encode/decode
+- healthcheck and HelloWorld protocols
+- TLS secure connection, shared local Root CA, module cert creation; cert password env var and optional mTLS handshake
+- TLS-disabled MessageEncryption transport (AES-GCM/HMAC)
+- SAEA pool and mapped slab receive buffer
+- TcpClient/TcpServer basic send/receive; inactive-client cleanup scheduler; port range binding
+- ControlServer route; peer registry sync; command/relay queue isolation; periodic peer snapshot sync recovery; dual-endpoint direct report with stalled-endpoint isolation; registry file persistence and stale-heartbeat normalization; stale control-connection cleanup scheduler
+- client-to-client local delivery; SocketServer-to-SocketServer relay; persistent relay channel sequential delivery; command/response/relay queue workers; relay list refresh and broadcast fallback; four-server relay fan-out; control-channel disconnect detection
+- active-active ControlServer + four SocketServers + platform sample clients concurrent messaging
+- graceful shutdown (ControlServer/SocketServer/SocketClient); route reservation release; heartbeat-timeout and degraded-resource route exclusion
+- dashboard cluster snapshot; full registration + message send/receive integration; Selected Traffic message-byte counters with healthcheck exclusion; liveness/readiness/metrics models
+- sample client settings and client-to-client flow; native Android sample protocol validation script; per-project log4net config and separate relay appender
 
-검증 범위:
+Integration tests run real TCP/TLS servers/clients: a test class that changes global socket/security settings must restore defaults in class init. Sample-client tests assume auto-register and a background receive loop after `Connect`, and assert on sample state (`LastReceivedMessage`/`Status`) rather than a manual receive return value.
 
-- frame encode/decode
-- protobuf payload encode/decode
-- healthcheck protocol
-- HelloWorld protocol
-- TLS secure connection, shared local Root CA, module certificate creation
-- certificate password environment variable and optional mTLS handshake
-- TLS disabled message encryption transport with AES-GCM/HMAC
-- SocketAsyncEventArgs pool and mapped slab receive buffer
-- TcpClient/TcpServer 기본 송수신
-- SocketServer inactive client cleanup scheduler
-- port range binding
-- ControlServer route
-- ControlServer peer registry sync
-- ControlServer command/relay queue isolation
-- ControlServer periodic peer snapshot sync recovery
-- ControlServer dual endpoint direct report with stalled endpoint isolation
-- ControlServer registry file persistence and stale heartbeat normalization
-- ControlServer stale control connection cleanup scheduler
-- client-to-client local delivery
-- SocketServer-to-SocketServer client message relay
-- SocketServer-to-SocketServer persistent relay channel sequential delivery
-- SocketServer command/response/relay queue workers
-- SocketServer relay server list refresh and broadcast fallback
-- four SocketServer relay list refresh and broadcast fan-out
-- SocketServer control channel disconnect detection
-- active-active ControlServer, four SocketServers, platform sample clients concurrent messaging
-- graceful shutdown for ControlServer, SocketServer, and SocketClient
-- route reservation release
-- heartbeat timeout route exclusion
-- degraded resource route exclusion
-- dashboard cluster snapshot
-- dashboard, ControlServer, SocketServer, sample client registration and message send/receive integration
-- dashboard Selected Traffic message byte counters with healthcheck exclusion
-- dashboard liveness, readiness, metrics models
-- sample client settings and client-to-client message flow
-- native Android sample protocol validation script
-- project log4net configuration and separate relay log appender
-
-통합 테스트는 실제 TCP/TLS 서버와 클라이언트를 실행하므로 테스트 클래스가 전역 socket/security 설정을 바꾸면 클래스 초기화에서 기본값을 복원해야 합니다. 샘플 클라이언트 테스트는 `Connect` 이후 자동 register와 background receive loop가 동작한다는 전제를 사용하며, 수신 검증은 manual receive 반환값이 아니라 sample state의 `LastReceivedMessage`/`Status` 갱신을 기다립니다.
-
-## Load Test
-
-대량 접속 검증은 `SocketLoadTest`에서 수행합니다.
-
+## Load test
+Bulk-connection validation uses `SocketLoadTest` (see [Operations → Load test](Operations.md#load-test)).
 ```bash
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k --use-control-server --report-file reports/soak-10k.json
 ```
-
-기본 부하 테스트는 접속, 최초 healthcheck, healthcheck loop 유지 상태를 집계합니다. `--message-test`를 추가하면 연결된 클라이언트를 source/target 쌍으로 나누고 클라이언트 간 메시지 delivery와 source ack를 검증합니다.
-
-```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 0 --use-control-server --message-test --message-rounds 1
-```
-
-UI 모드는 브라우저에서 부하 클라이언트를 시작/중지하고 상태를 조회합니다.
-
+The base run aggregates connect, first healthcheck, and healthcheck-loop retention. `--message-test` splits connected clients into source/target pairs and verifies client-to-client delivery and source ack. UI mode starts/stops load clients and shows state in the browser:
 ```bash
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 10060 --clients 4 --batch-size 4 --host 127.0.0.1 --port 10000 --use-control-server
 ```
+Options: `--profile`, `--clients`, `--batch-size`, `--hold-seconds`, `--use-control-server`, `--message-test`, `--message-rounds`, `--ramp-delay-ms`, `--expected-connected`, `--healthcheck-timeout-seconds`, `--message-timeout-seconds`, `--report-file` (JSON of options, counters, elapsed time).
 
-표시 항목:
+## Log analysis
+After a run, inspect `bin/Debug/net9.0/logs/` or the project's `logs/`:
+- general log: lifecycle, route, healthcheck, cleanup, register/ack
+- relay log: per client message token — local delivery, broadcast/targeted relay, ControlServer peer sync
+- on integration failure, search source/target client id + message token + instance id + reservation id to locate the failing server/ControlServer stage
 
-- 현재 실행 상태
-- 접속 대수와 healthcheck counters
-- 타겟 서버별 연결 수
-- 클라이언트별 타겟 서버와 연결 상태
+Default batch increment is 100; validate ≥10,000 only after checking OS/host settings.
 
-주요 옵션:
-
-- `--profile`: `smoke`, `soak-1k`, `soak-10k`, `soak-50k`, `message-1k`
-- `--clients`: 생성할 클라이언트 수
-- `--batch-size`: 한 번에 증가시킬 클라이언트 수
-- `--hold-seconds`: 접속 유지 시간
-- `--use-control-server`: ControlServer route를 통해 SocketServer에 접속
-- `--message-test`: 클라이언트 간 메시지 delivery/ack 부하 검증
-- `--message-rounds`: source/target 쌍별 메시지 반복 횟수
-- `--ramp-delay-ms`: batch 사이 대기 시간
-- `--expected-connected`: 최소 연결 성공 수
-- `--healthcheck-timeout-seconds`: healthcheck 응답 timeout
-- `--message-timeout-seconds`: client message delivery/ack timeout
-- `--report-file`: 실행 옵션, counters, elapsed time을 JSON 파일로 저장
-
-## Log Analysis
-
-테스트 실행 후 `bin/Debug/net9.0/logs/` 또는 실행 프로젝트의 `logs/`에서 결과를 확인합니다.
-
-- 일반 로그는 lifecycle, route, healthcheck, cleanup, register/ack 상태를 확인합니다.
-- relay 로그는 client message token 기준으로 local delivery, broadcast relay, targeted relay, ControlServer peer sync 흐름을 추적합니다.
-- 통합테스트 실패 시 source/target client id, message token, instance id, reservation id를 함께 검색하면 어느 서버 또는 ControlServer 단계에서 실패했는지 확인할 수 있습니다.
-
-기본 batch size는 100개 단위 증가입니다. 10,000개 이상 검증은 OS와 장비 설정을 먼저 확인해야 합니다.
-
-## Native Samples
-
-Android 샘플은 Gradle Wrapper와 `validate.sh`를 포함합니다.
-
+## Native samples
+The Android sample includes a Gradle Wrapper and `validate.sh`:
 ```bash
 cd Samples/SocketSample.Android
-./validate.sh --protocol-only
-./validate.sh --apk
+./validate.sh --protocol-only   # validate frame/protocol Java sources without Android SDK
+./validate.sh --apk             # force a debug APK build where the Android SDK is configured
 ```
 
-`--protocol-only`는 Android SDK 없이 프레임/프로토콜 Java 소스를 검증합니다. `--apk`는 Android SDK가 설정된 환경에서 debug APK 빌드를 강제합니다.
-
-## Test Port
-
-일부 기존 테스트는 `5001`을 사용합니다. 기본 런타임 포트는 nginx `10000`, ControlServer `10001`부터, SocketServer `10100`부터 사용합니다. 통합 테스트는 가능한 동적 포트 `0`을 사용해 충돌을 줄입니다.
+## Test ports
+Some legacy tests use `5001`. Default runtime ports are nginx `10000`, ControlServer from `10001`, SocketServer from `10100`. Integration tests prefer dynamic port `0` to reduce conflicts.

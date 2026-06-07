@@ -1,28 +1,16 @@
 # Operations
 
 ## Build
-
 ```bash
 dotnet restore SocketServer.sln
 dotnet build SocketServer.sln
 ```
-
-MSBuild 병렬 노드에서 문제가 있으면 다음처럼 단일 노드 빌드를 사용할 수 있습니다.
-
+If MSBuild parallel nodes cause issues, use a single-node build:
 ```bash
 dotnet build SocketServer.sln --no-restore --disable-build-servers -p:UseSharedCompilation=false -m:1
 ```
 
-## Run ControlServer
-
-```bash
-dotnet run --project SocketControl/SocketControl.csproj
-```
-
-기본 client-facing endpoint는 nginx TCP stream proxy인 `127.0.0.1:10000`입니다. ControlServer 인스턴스는 기본적으로 `10001`, `10002`에서 실행합니다.
-
-기본 로컬 포트 맵:
-
+## Local port map
 ```text
 nginx client-facing endpoint  10000
 ControlServer                 10001, 10002
@@ -30,111 +18,53 @@ SocketServer                  10100-10199
 Dashboard                     10050
 SocketLoadTest UI             10060
 ```
+The default client-facing endpoint is the nginx TCP stream proxy at `127.0.0.1:10000`; ControlServer instances run on `10001`/`10002`.
 
-## Run SocketServer
-
-설정 파일의 모든 서버 인스턴스 실행:
-
+## Run
+ControlServer:
+```bash
+dotnet run --project SocketControl/SocketControl.csproj
+```
+SocketServer — all configured instances, or a specific id:
 ```bash
 dotnet run --project SocketServer/SocketServer.csproj -- --all
-```
-
-특정 server id 실행:
-
-```bash
 dotnet run --project SocketServer/SocketServer.csproj -- --server-id 1
 ```
-
-## Run Dashboard
-
+Dashboard (`http://127.0.0.1:10050`):
 ```bash
 dotnet run --project SocketDashboard/SocketDashboard.csproj
 ```
-
-대시보드 기본 URL:
-
-```text
-http://127.0.0.1:10050
-```
-
-API:
-
-```text
-GET /api/server/status
-GET /health/live
-GET /health/ready
-GET /metrics
-```
-
-ControlServer가 실행 중이면 cluster registry snapshot을 표시합니다. ControlServer가 없으면 로컬 fallback SocketServer 상태를 표시합니다. Cluster Summary는 capacity/current/available과 ControlServer/SocketServer/Dashboard 수를 줄로 나눠 표시합니다. 설정된 ControlServer endpoint는 Server Inventory에 `ControlServer` type으로 항상 표시되며, endpoint별 healthy/unavailable 상태, counters, CPU/memory/storage 사용률을 확인할 수 있습니다. Server Inventory는 Dashboard, ControlServer, SocketServer 순서로 표시하고 같은 type 안에서는 instance 오름차순으로 정렬합니다. Server Inventory row를 선택하면 하단 패널에서 해당 서버의 연결 수, traffic, runtime, 상세 값을 확인할 수 있습니다.
-웹 대시보드는 기본 30초 간격으로 `/api/server/status`를 갱신하며, 화면 상단 콤보에서 5초, 10초, 30초, 60초를 선택할 수 있습니다.
-`/health/live`는 Dashboard 프로세스 생존 여부, `/health/ready`는 Dashboard 내부 TCP 서버 준비 상태, `/metrics`는 cluster 연결 수와 로컬 socket/pool counters를 반환합니다.
+APIs: `GET /api/server/status`, `/health/live`, `/health/ready`, `/metrics`. With a ControlServer running, the dashboard shows the cluster registry snapshot; otherwise the local fallback SocketServer state. `/health/live` = dashboard process liveness, `/health/ready` = dashboard TCP server readiness, `/metrics` = cluster connection counters + local socket/pool counters. See [Architecture → Dashboard](Architecture.md#dashboard).
 
 ## Certificates
-
-로컬 인증서는 기본적으로 솔루션 루트의 `Certificates/`에 생성됩니다. 운영이나 장비별 격리가 필요하면 각 프로젝트의 `config.json`에서 `security.certificateDirectory`를 지정하거나 `SOCKET_CERTIFICATE_DIR` 환경 변수를 설정합니다.
-
-PFX 비밀번호는 코드에 고정하지 않고 `security.certificatePasswordEnvironmentVariable`에 지정한 환경 변수에서 읽습니다. 기본 변수명은 `SOCKET_CERTIFICATE_PASSWORD`입니다.
-
+Local certs are generated under the solution-root `Certificates/` by default. For per-host isolation, set `security.certificateDirectory` (per project `config.json`) or `SOCKET_CERTIFICATE_DIR`. The PFX password is read from the env var named by `security.certificatePasswordEnvironmentVariable` (default `SOCKET_CERTIFICATE_PASSWORD`), never hardcoded:
 ```bash
 export SOCKET_CERTIFICATE_PASSWORD='change-this-local-secret'
 ```
+Root CA / module certs nearing expiry within `certificateRenewBeforeDays` are regenerated on the next start/connect. With mTLS (`requireClientCertificate=true` / `EndToEndTls`), all modules must share the same Root CA chain. See [Configuration → Certificates](Configuration.md#certificates).
 
-`certificateRenewBeforeDays` 이내로 만료가 가까운 Root CA 또는 모듈 인증서는 다음 시작/연결 시 재생성됩니다. `requireClientCertificate=true`를 사용하면 mTLS 모드로 동작하므로 모든 모듈이 같은 Root CA 체인을 사용해야 합니다.
-
-## Load Test
-
-직접 서버 접속:
-
+## Load test
 ```bash
+# direct
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --port 10000
-```
-
-외부 서버 접속:
-
-```bash
+# external server
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --host 127.0.0.1 --port 10000 --external-server
-```
-
-ControlServer route 사용:
-
-```bash
+# via ControlServer route
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k --host 127.0.0.1 --port 10000 --use-control-server --report-file reports/soak-10k.json
 ```
+Presets: `smoke` (100/10s), `soak-1k` (1k/300s), `soak-10k` (10k/600s), `soak-50k` (50k/900s), `message-1k` (1k, client message delivery/ack). See [Testing → Load test](Testing.md#load-test) for options and UI mode.
 
-부하 테스트 preset:
+## Scale notes
+300k concurrency is not guaranteed by app structure alone; also validate: OS file-descriptor limit, ephemeral port range, TCP backlog, memory/CPU/GC, host count and server instance count, ControlServer redundancy. Current default recommendation is 10,000 connections per SocketServer instance.
 
+`EndToEndTls` keeps TLS to the app process and forces mTLS. For large fan-out, distribute connections across SocketServer nodes via L4 TCP pass-through / TCP stream proxy and size shard count from measured per-node SslStream memory.
+
+Sizing procedure:
 ```text
-smoke       100 clients, 10s hold
-soak-1k     1,000 clients, 300s hold
-soak-10k    10,000 clients, 600s hold
-soak-50k    50,000 clients, 900s hold
-message-1k  1,000 clients, client message delivery/ack
+1. Hold long-lived connections at 1k, 10k, 50k stages.
+2. Record RSS / managed heap / GC count / socket count / p95-p99 latency at each stage.
+3. Per-connection memory = (stage RSS - baseline RSS) / connection count.
+4. Budget only 60-70% of node memory for connections.
+5. Node count = target concurrency / safe connections per node.
 ```
-
-## Scale Notes
-
-30만 동접은 애플리케이션 구조만으로 보장되지 않습니다. 다음 조건을 함께 검증해야 합니다.
-
-- OS file descriptor limit
-- ephemeral port range
-- TCP backlog
-- 메모리/CPU/GC 상태
-- 장비 수와 서버 인스턴스 수
-- ControlServer 이중화 구성
-
-현재 기본 권장값은 SocketServer 인스턴스당 10,000 연결입니다.
-
-`EndToEndTls` profile은 앱 프로세스까지 TLS를 유지하고 mTLS를 강제합니다. 이 구성에서 대규모 동접을 처리할 때는 L4 TCP pass-through 또는 TCP stream proxy로 연결을 여러 SocketServer 노드에 분산하고, 노드당 SslStream 메모리 사용량을 실측해 shard 수를 산정합니다.
-
-Sizing 절차:
-
-```text
-1. 1k, 10k, 50k 단계로 장수명 연결을 유지한다.
-2. 각 단계에서 RSS/managed heap/GC count/socket count/p95-p99 latency를 기록한다.
-3. 연결당 추가 메모리 = (단계 RSS - baseline RSS) / 연결 수로 계산한다.
-4. 노드 가용 메모리의 60-70%만 연결 예산으로 사용한다.
-5. 목표 동접 / 노드당 안전 연결 수로 SocketServer 노드 수를 결정한다.
-```
-
-예를 들어 노드당 안전 연결 수를 10,000으로 검증했다면 300,000 동접에는 최소 30개 SocketServer 인스턴스가 필요합니다. TLS handshake CPU는 장수명 연결에서는 순간 부하이므로 재시작/재접속 storm 시나리오를 별도로 측정해야 합니다.
+Example: a validated 10,000 safe connections/node implies ≥30 SocketServer instances for 300,000. TLS handshake CPU is a transient spike for long-lived connections — measure restart/reconnect-storm scenarios separately.
