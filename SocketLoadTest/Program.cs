@@ -29,12 +29,7 @@ internal static class Program
 
         LogConfigurator.Configure(ResolveLogConfigFileName());
         SocketFactory.Configure(new SocketOperationConfig());
-        SecureSocketConnection.Configure(new SocketSecurityConfig
-        {
-            TlsProtocol = "Auto",
-            RequireTls13 = false,
-            RequireClientCertificate = false
-        });
+        SecureSocketConnection.Configure(CreateDefaultSecurityConfig());
         if (options.UiMode)
         {
             await LoadTestUiHost.RunAsync(options);
@@ -354,6 +349,18 @@ internal static class Program
         }
 
         return "log4net.config";
+    }
+
+    internal static SocketSecurityConfig CreateDefaultSecurityConfig()
+    {
+        return new SocketSecurityConfig
+        {
+            TransportMode = "Tls",
+            TlsProtocol = "Auto",
+            RequireTls13 = false,
+            RequireClientCertificate = true,
+            AuthenticationTimeoutMilliseconds = 30000
+        };
     }
 
     private static void PrintProgress(LoadTestCounters counters, TimeSpan elapsed)
