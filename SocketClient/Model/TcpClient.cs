@@ -106,42 +106,71 @@ public class TcpClient : IClient, IDisposable
         catch (SocketException exception)
         {
             Logger.Warn($"Client connect failed. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}", exception);
-            return false;
+            return this.ResetAfterConnectFailure();
         }
         catch (ObjectDisposedException exception)
         {
             Logger.Warn($"Client connect failed because socket is disposed. clientId={this.ClientId}", exception);
-            return false;
+            return this.ResetAfterConnectFailure();
         }
         catch (AuthenticationException exception)
         {
             Logger.Warn($"Client TLS handshake failed. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}", exception);
-            return false;
+            return this.ResetAfterConnectFailure();
         }
         catch (IOException exception)
         {
             Logger.Warn($"Client TLS connection failed. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}", exception);
-            return false;
+            return this.ResetAfterConnectFailure();
         }
         catch (TimeoutException exception)
         {
             Logger.Warn($"Client connect timed out. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}", exception);
-            return false;
+            return this.ResetAfterConnectFailure();
         }
     }
 
     public async Task<bool> ConnectViaControlServerAsync(string controlHost, int controlPort)
     {
-        return await this.ConnectViaControlEndpointAsync(controlHost, controlPort);
-    }
-
-    public async Task<bool> ConnectViaControlServersAsync(IEnumerable<IPEndPoint> controlEndpoints)
-    {
-        foreach (IPEndPoint endpoint in controlEndpoints)
+        for (int attempt = 1; attempt <= 2; attempt++)
         {
-            if (await this.ConnectViaControlEndpointAsync(endpoint.Address.ToString(), endpoint.Port))
+            if (await this.ConnectViaControlEndpointAsync(controlHost, controlPort))
             {
                 return true;
+            }
+        }
+
+        return false;
+    }
+
+    public async Task<bool> ConnectViaControlServersAsync(IEnumerable<IPEndPoint> controlEndpoints, int maxRouteAttempts = 2)
+    {
+        List<IPEndPoint> endpoints = new();
+        if (controlEndpoints != null)
+        {
+            foreach (IPEndPoint endpoint in controlEndpoints)
+            {
+                if (endpoint != null)
+                {
+                    endpoints.Add(endpoint);
+                }
+            }
+        }
+
+        if (endpoints.Count == 0)
+        {
+            return false;
+        }
+
+        int attempts = Math.Max(1, maxRouteAttempts);
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            foreach (IPEndPoint endpoint in endpoints)
+            {
+                if (await this.ConnectViaControlEndpointAsync(endpoint.Address.ToString(), endpoint.Port))
+                {
+                    return true;
+                }
             }
         }
 
@@ -154,7 +183,7 @@ public class TcpClient : IClient, IDisposable
         try
         {
             Logger.Info($"ControlServer route request started. clientId={this.ClientId}, endpoint={endpoint}");
-            Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family);
+            using Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family);
             await SocketFactory.ConnectAsync(controlSocket, controlHost, controlPort);
             using SecureSocketConnection controlConnection =
                 await SecureSocketConnection.AuthenticateClientAsync(controlSocket, this.GetCertificateModuleName());
@@ -185,9 +214,21 @@ public class TcpClient : IClient, IDisposable
         {
             Logger.Warn($"ControlServer route request failed. clientId={this.ClientId}, endpoint={endpoint}", exception);
         }
+        catch (AuthenticationException exception)
+        {
+            Logger.Warn($"ControlServer route request TLS handshake failed. clientId={this.ClientId}, endpoint={endpoint}", exception);
+        }
+        catch (IOException exception)
+        {
+            Logger.Warn($"ControlServer route request stream failed. clientId={this.ClientId}, endpoint={endpoint}", exception);
+        }
         catch (TimeoutException exception)
         {
             Logger.Warn($"ControlServer route request timed out. clientId={this.ClientId}, endpoint={endpoint}", exception);
+        }
+        catch (ObjectDisposedException exception)
+        {
+            Logger.Warn($"ControlServer route request socket was disposed. clientId={this.ClientId}, endpoint={endpoint}", exception);
         }
 
         return false;
@@ -196,6 +237,15 @@ public class TcpClient : IClient, IDisposable
     private string GetCertificateModuleName()
     {
         return this.ClientId > 0 ? $"SocketClient-{this.ClientId}" : "SocketClient";
+    }
+
+    private bool ResetAfterConnectFailure()
+    {
+        this.Connection?.Dispose();
+        this.Connection = null;
+        this.Socket?.Dispose();
+        this.Socket = null;
+        return false;
     }
 
     public bool Disconnect()

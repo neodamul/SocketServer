@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 using SocketCommon.Model;
@@ -75,9 +77,56 @@ public sealed class SocketClientSession : IDisposable
     public async Task<bool> ConnectAndRegisterAsync(
         int clientId,
         string clientName,
+        IEnumerable<IPEndPoint> controlEndpoints,
+        int healthCheckIntervalSeconds,
+        int reconnectRetrySeconds,
+        int duplicateRejectBackoffSeconds)
+    {
+        IPEndPoint[] endpoints = NormalizeControlEndpoints(controlEndpoints);
+        IPEndPoint firstEndpoint = endpoints.Length > 0
+            ? endpoints[0]
+            : new IPEndPoint(IPAddress.Loopback, 0);
+        return await this.ConnectAndRegisterAsync(
+            clientId,
+            clientName,
+            firstEndpoint.Address.ToString(),
+            firstEndpoint.Port,
+            true,
+            endpoints,
+            healthCheckIntervalSeconds,
+            reconnectRetrySeconds,
+            duplicateRejectBackoffSeconds);
+    }
+
+    public async Task<bool> ConnectAndRegisterAsync(
+        int clientId,
+        string clientName,
         string host,
         int port,
         bool useControlServer,
+        int healthCheckIntervalSeconds,
+        int reconnectRetrySeconds,
+        int duplicateRejectBackoffSeconds)
+    {
+        return await this.ConnectAndRegisterAsync(
+            clientId,
+            clientName,
+            host,
+            port,
+            useControlServer,
+            Array.Empty<IPEndPoint>(),
+            healthCheckIntervalSeconds,
+            reconnectRetrySeconds,
+            duplicateRejectBackoffSeconds);
+    }
+
+    private async Task<bool> ConnectAndRegisterAsync(
+        int clientId,
+        string clientName,
+        string host,
+        int port,
+        bool useControlServer,
+        IPEndPoint[] controlEndpoints,
         int healthCheckIntervalSeconds,
         int reconnectRetrySeconds,
         int duplicateRejectBackoffSeconds)
@@ -88,6 +137,7 @@ public sealed class SocketClientSession : IDisposable
             host,
             port,
             useControlServer,
+            controlEndpoints,
             Math.Max(1, healthCheckIntervalSeconds),
             Math.Max(1, reconnectRetrySeconds),
             Math.Max(1, duplicateRejectBackoffSeconds));
@@ -106,7 +156,9 @@ public sealed class SocketClientSession : IDisposable
         ReconnectSettings settings = this.reconnectSettings;
         TcpClient nextClient = new(settings.ClientId, settings.ClientName, settings.Host, settings.Port);
         bool connected = settings.UseControlServer
-            ? await nextClient.ConnectViaControlServerAsync(settings.Host, settings.Port)
+            ? settings.ControlEndpoints.Length > 0
+                ? await nextClient.ConnectViaControlServersAsync(settings.ControlEndpoints)
+                : await nextClient.ConnectViaControlServerAsync(settings.Host, settings.Port)
             : await Task.Run(nextClient.Connect);
         if (!connected)
         {
@@ -429,7 +481,26 @@ public sealed class SocketClientSession : IDisposable
         string Host,
         int Port,
         bool UseControlServer,
+        IPEndPoint[] ControlEndpoints,
         int HealthCheckIntervalSeconds,
         int ReconnectRetrySeconds,
         int DuplicateRejectBackoffSeconds);
+
+    private static IPEndPoint[] NormalizeControlEndpoints(IEnumerable<IPEndPoint> controlEndpoints)
+    {
+        List<IPEndPoint> endpoints = new();
+        if (controlEndpoints != null)
+        {
+            foreach (IPEndPoint endpoint in controlEndpoints)
+            {
+                if (endpoint != null)
+                {
+                    endpoints.Add(endpoint);
+                }
+            }
+        }
+
+        return endpoints.ToArray();
+    }
+
 }
