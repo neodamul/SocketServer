@@ -37,11 +37,12 @@ final class NativeSocketClient {
         self.config = config
     }
 
-    func connect() async throws {
+    func connect() async throws -> String {
         disconnect()
 
         let target = try await resolveConnectionTarget()
         try await connectToHost(target.host, port: target.port)
+        return "\(target.host):\(target.port)"
     }
 
     private func resolveConnectionTarget() async throws -> (host: String, port: UInt16) {

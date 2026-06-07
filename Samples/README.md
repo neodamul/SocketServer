@@ -32,7 +32,7 @@ xcodegen generate --spec Samples/SocketSample.macOS/project.yml
 xcodebuild -project Samples/SocketSample.macOS/SocketSampleMac.xcodeproj -scheme SocketSampleMac -configuration Debug -derivedDataPath Samples/SocketSample.macOS/build CODE_SIGNING_ALLOWED=NO build
 ```
 
-Run two native sample clients against the broker endpoint to test message delivery across routed SocketServer instances. `Connect` performs both connection and client registration, and the receive loop stays active so inbound messages and ACKs appear in the status panel.
+Run two native sample clients against the broker endpoint to test message delivery across routed SocketServer instances. `Connect` performs both connection and client registration, and the receive loop stays active so inbound messages, ACKs, and the connected SocketServer endpoint appear in the status panel.
 
 For the default `EndToEndTls` profile, pass the local client certificate directory and password so each app instance can present `SocketClient-{clientId}.pfx` during mTLS.
 

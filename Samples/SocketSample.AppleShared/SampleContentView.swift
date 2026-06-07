@@ -86,6 +86,7 @@ struct SampleContentView: View {
         Status: \(state.status)
         Connected: \(state.isConnected)
         Registered: \(state.isRegistered)
+        Connected Server: \(state.connectedServer)
         Last Received: \(state.lastReceived)
         Last Error: \(state.lastError)
         """
@@ -102,11 +103,12 @@ struct SampleContentView: View {
     private func connect() async throws {
         stopReceiveLoop()
         client.update(config: config)
-        try await client.connect()
+        let connectedServer = try await client.connect()
         try await client.register()
         state.isConnected = true
         state.isRegistered = true
         state.status = "Connected and registered"
+        state.connectedServer = connectedServer
         state.lastError = ""
         startReceiveLoop()
     }
@@ -122,6 +124,7 @@ struct SampleContentView: View {
         client.disconnect()
         state.isConnected = false
         state.isRegistered = false
+        state.connectedServer = ""
         state.status = "Disconnected"
     }
 

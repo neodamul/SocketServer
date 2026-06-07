@@ -97,6 +97,7 @@ struct ClientState {
     var isConnected = false
     var isRegistered = false
     var status = "Disconnected"
+    var connectedServer = ""
     var lastReceived = ""
     var lastError = ""
 }
