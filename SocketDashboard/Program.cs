@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SocketCommon;
 using SocketCommon.Configuration;
@@ -28,6 +29,20 @@ if (String.IsNullOrEmpty(builder.Configuration["urls"]) &&
 }
 
 IReadOnlyCollection<EndpointConfig> controlEndpoints = ReadControlEndpoints(builder);
+SocketSecurityConfig securityConfig = builder.Configuration
+    .GetSection("dashboard:security")
+    .Get<SocketSecurityConfig>() ?? new SocketSecurityConfig();
+// macOS SslStream cannot explicitly request TLS 1.3; unless tlsProtocol is set, let the OS negotiate
+// (matches the ControlServer/SocketServer "Auto" configuration). The SocketSecurityConfig default is
+// "Tls13"/RequireTls13=true, which throws PlatformNotSupportedException on macOS.
+if (string.IsNullOrWhiteSpace(builder.Configuration["dashboard:security:tlsProtocol"]))
+{
+    securityConfig.TlsProtocol = "Auto";
+    securityConfig.RequireTls13 = false;
+}
+
+SecureSocketConnection.Configure(securityConfig);
+logger.Info($"Dashboard security configured: profile={securityConfig.Profile}, tlsProtocol={securityConfig.TlsProtocol}, requireTls13={securityConfig.RequireTls13}");
 SocketFactory.Configure(new SocketOperationConfig
 {
     ConnectTimeoutSeconds = Int32.TryParse(builder.Configuration["dashboard:socketOptions:connectTimeoutSeconds"], out int connectTimeoutSeconds)

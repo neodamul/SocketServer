@@ -287,7 +287,14 @@ public class DashboardServerService : IDisposable
             }
             catch (AuthenticationException exception)
             {
-                return CreateControlServerStatus(endpoint, false, "AuthenticationFailed", checkedAt, null, exception.Message);
+                Exception innermost = exception;
+                while (innermost.InnerException != null)
+                {
+                    innermost = innermost.InnerException;
+                }
+
+                Logger.Warn($"ControlServer dashboard auth failed. endpoint={endpoint.Host}:{endpoint.Port}", exception);
+                return CreateControlServerStatus(endpoint, false, "AuthenticationFailed", checkedAt, null, $"{exception.Message} | inner: {innermost.GetType().Name}: {innermost.Message}");
             }
             catch (TimeoutException exception)
             {
