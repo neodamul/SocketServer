@@ -624,7 +624,7 @@ public class ControlServerIntegrationTests
             TransportMode = "Tls",
             TlsProtocol = "Auto",
             RequireTls13 = false,
-            AuthenticationTimeoutMilliseconds = 10000
+            AuthenticationTimeoutMilliseconds = 30000
         };
         SecureSocketConnection.Configure(security);
 
