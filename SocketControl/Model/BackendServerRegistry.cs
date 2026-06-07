@@ -634,6 +634,7 @@ public class BackendServerRegistry
                 this.SaveState();
             }
 
+            ApplySessionCounts();
             BackendServerSnapshot[] currentServers = this.servers.Values.ToArray();
             return new ClusterStatusSnapshot
             {
@@ -645,7 +646,7 @@ public class BackendServerRegistry
                 TotalCurrentConnections = currentServers.Sum(server => server.CurrentConnections),
                 TotalReservedConnections = currentServers.Sum(server => server.ReservedConnections),
                 TotalAvailableConnections = currentServers.Sum(server => server.AvailableConnections),
-                TotalSessionCount = this.sessions.Count,
+                TotalSessionCount = currentServers.Sum(server => server.RegisteredSessionCount),
                 AverageCpuUsagePercent = currentServers.Length == 0 ? 0 : currentServers.Average(server => server.ResourceUsage.CpuUsagePercent),
                 AverageMemoryUsagePercent = currentServers.Length == 0 ? 0 : currentServers.Average(server => server.ResourceUsage.MemoryUsagePercent),
                 AverageStorageUsagePercent = currentServers.Length == 0 ? 0 : currentServers.Average(server => server.ResourceUsage.StorageUsagePercent),
@@ -701,6 +702,21 @@ public class BackendServerRegistry
         }
 
         return changed;
+    }
+
+    private void ApplySessionCounts()
+    {
+        Dictionary<string, int> activeSessionCountsByInstanceId = this.sessions.Values
+            .Where(session => session.ClientId > 0)
+            .Where(session => !string.Equals(session.State, "ServerDisconnected", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(session => session.InstanceId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+
+        foreach (BackendServerSnapshot server in this.servers.Values)
+        {
+            server.RegisteredSessionCount = activeSessionCountsByInstanceId.TryGetValue(server.InstanceId, out int count) ? count : 0;
+            server.StaleConnectionCount = Math.Max(0, server.CurrentConnections - server.RegisteredSessionCount);
+        }
     }
 
     private bool NormalizeExpiredServers()

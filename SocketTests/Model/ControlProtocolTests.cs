@@ -216,6 +216,51 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void BackendRegistryReportsRegisteredAndStaleConnectionCountsTest()
+    {
+        BackendServerRegistry registry = new();
+        registry.Upsert(CreateRegister(1, "server-1", 5101, 10), "control-1");
+        registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 3, 10), "control-1", new ControlHealthThreshold());
+        registry.UpsertSession(new SessionEventMessage
+        {
+            ClusterId = "socket-cluster-1",
+            ServerId = 1,
+            InstanceId = "server-1",
+            SessionId = 700,
+            ClientId = 101,
+            State = "Connected",
+            Version = 1,
+            ConnectedAt = DateTimeOffset.UtcNow,
+            LastReceivedAt = DateTimeOffset.UtcNow
+        });
+        registry.UpsertSession(new SessionEventMessage
+        {
+            ClusterId = "socket-cluster-1",
+            ServerId = 1,
+            InstanceId = "server-1",
+            SessionId = 701,
+            ClientId = 102,
+            State = "ServerDisconnected",
+            Version = 2,
+            ConnectedAt = DateTimeOffset.UtcNow,
+            LastReceivedAt = DateTimeOffset.UtcNow
+        });
+
+        ClusterStatusSnapshot status = registry.GetStatus();
+        BackendServerSnapshot snapshot = status.Servers.Single();
+
+        Assert.AreEqual(1, status.TotalSessionCount);
+        Assert.AreEqual(3, snapshot.CurrentConnections);
+        Assert.AreEqual(1, snapshot.RegisteredSessionCount);
+        Assert.AreEqual(2, snapshot.StaleConnectionCount);
+
+        SocketMessageFrame snapshotFrame = ControlProtocol.CreateFrame(0, ControlMessageIds.ServerRegistryUpsert, snapshot);
+        Assert.IsTrue(ControlProtocol.TryDecode(snapshotFrame, ControlMessageIds.ServerRegistryUpsert, out BackendServerSnapshot decodedSnapshot));
+        Assert.AreEqual(1, decodedSnapshot.RegisteredSessionCount);
+        Assert.AreEqual(2, decodedSnapshot.StaleConnectionCount);
+    }
+
+    [TestMethod]
     public void BackendRegistryRandomizesOnlyEqualScoreRouteCandidatesTest()
     {
         BackendServerSnapshot[] candidates =
@@ -391,7 +436,7 @@ public class ControlProtocolTests
     public void BackendRegistryClearsInstanceSessionsWhenPeerSnapshotShowsRestartTest()
     {
         BackendServerRegistry registry = new();
-        DateTimeOffset firstStart = DateTimeOffset.UtcNow.AddMinutes(-10);
+        DateTimeOffset firstStart = DateTimeOffset.UtcNow.AddSeconds(-10);
         registry.UpsertPeerSnapshot(new BackendServerSnapshot
         {
             ClusterId = "socket-cluster-1",

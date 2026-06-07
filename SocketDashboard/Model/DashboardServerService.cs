@@ -248,7 +248,7 @@ public class DashboardServerService : IDisposable
             TotalCurrentConnections = servers.Sum(server => server.CurrentConnections),
             TotalReservedConnections = servers.Sum(server => server.ReservedConnections),
             TotalAvailableConnections = servers.Sum(server => server.AvailableConnections),
-            TotalSessionCount = healthySnapshots.Max(snapshot => snapshot.TotalSessionCount),
+            TotalSessionCount = servers.Sum(server => server.RegisteredSessionCount),
             AverageCpuUsagePercent = servers.Length == 0 ? 0 : servers.Average(server => server.ResourceUsage.CpuUsagePercent),
             AverageMemoryUsagePercent = servers.Length == 0 ? 0 : servers.Average(server => server.ResourceUsage.MemoryUsagePercent),
             AverageStorageUsagePercent = servers.Length == 0 ? 0 : servers.Average(server => server.ResourceUsage.StorageUsagePercent),

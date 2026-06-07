@@ -276,6 +276,10 @@ public class BackendServerSnapshot
 
     public int CurrentConnections { get; set; }
 
+    public int RegisteredSessionCount { get; set; }
+
+    public int StaleConnectionCount { get; set; }
+
     public int ReservedConnections { get; set; }
 
     public int AvailableConnections { get; set; }
