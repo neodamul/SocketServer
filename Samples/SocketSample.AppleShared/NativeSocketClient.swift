@@ -39,19 +39,33 @@ final class NativeSocketClient {
 
     func connect() async throws -> String {
         disconnect()
-
-        let target = try await resolveConnectionTarget()
-        try await connectToHost(target.host, port: target.port)
-        return "\(target.host):\(target.port)"
-    }
-
-    private func resolveConnectionTarget() async throws -> (host: String, port: UInt16) {
         try prepareProtector()
+
         guard config.useControlServer else {
-            return (config.host, config.port)
+            try await connectToHost(config.host, port: config.port)
+            return "\(config.host):\(config.port)"
         }
 
-        let controlConnection = try await openConnection(host: config.host, port: config.port)
+        var lastError: Error?
+        for _ in 0..<2 {
+            for endpoint in config.effectiveControlEndpoints {
+                do {
+                    let target = try await resolveConnectionTarget(controlEndpoint: endpoint)
+                    try await connectToHost(target.host, port: target.port)
+                    return "\(target.host):\(target.port)"
+                } catch {
+                    disconnect()
+                    try prepareProtector()
+                    lastError = error
+                }
+            }
+        }
+
+        throw lastError ?? NativeSocketError.connectFailed
+    }
+
+    private func resolveConnectionTarget(controlEndpoint: ControlEndpoint) async throws -> (host: String, port: UInt16) {
+        let controlConnection = try await openConnection(host: controlEndpoint.host, port: controlEndpoint.port)
         defer {
             controlConnection.cancel()
         }
@@ -71,7 +85,16 @@ final class NativeSocketClient {
             throw NativeSocketError.messageFailed(route.errorMessage)
         }
 
-        return (route.host, route.port)
+        return (resolveRouteHost(route.host, controlHost: controlEndpoint.host), route.port)
+    }
+
+    private func resolveRouteHost(_ routeHost: String, controlHost: String) -> String {
+        let value = routeHost.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if value == "127.0.0.1" || value == "localhost" || value == "::1" {
+            return controlHost
+        }
+
+        return routeHost
     }
 
     private func connectToHost(_ host: String, port: UInt16) async throws {

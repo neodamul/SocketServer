@@ -1,11 +1,21 @@
 import Foundation
 
+struct ControlEndpoint: Codable, Equatable {
+    var host: String
+    var port: UInt16
+
+    var displayValue: String {
+        "\(host):\(port)"
+    }
+}
+
 struct SampleConfig: Codable, Equatable {
     var clientId: UInt32 = 1
     var clientName: String = "apple-native-client"
     var host: String = "127.0.0.1"
     var port: UInt16 = 10000
     var useControlServer: Bool = true
+    var controlEndpoints: [ControlEndpoint] = []
     var autoConnect: Bool = false
     var receiveTimeoutSeconds: Int = 10
     var allowUntrustedLocalCertificate: Bool = true
@@ -19,6 +29,12 @@ struct SampleConfig: Codable, Equatable {
         transportMode.caseInsensitiveCompare("MessageEncryption") == .orderedSame ||
             transportMode.caseInsensitiveCompare("Encrypted") == .orderedSame ||
             transportMode.caseInsensitiveCompare("PlainEncrypted") == .orderedSame
+    }
+
+    var effectiveControlEndpoints: [ControlEndpoint] {
+        controlEndpoints.isEmpty
+            ? [ControlEndpoint(host: host, port: port)]
+            : controlEndpoints
     }
 
     static func fromProcessArguments(_ arguments: [String] = ProcessInfo.processInfo.arguments) -> SampleConfig {
@@ -35,6 +51,8 @@ struct SampleConfig: Codable, Equatable {
                 config.port = UInt16(value) ?? config.port
             case "use-control-server":
                 config.useControlServer = parseBoolean(value)
+            case "control-endpoints":
+                config.controlEndpoints = parseControlEndpoints(value)
             case "auto-connect":
                 config.autoConnect = parseBoolean(value)
             case "transport":
@@ -95,6 +113,27 @@ struct SampleConfig: Codable, Equatable {
             value == "1" ||
             value.caseInsensitiveCompare("yes") == .orderedSame ||
             value.caseInsensitiveCompare("on") == .orderedSame
+    }
+
+    static func parseControlEndpoints(_ value: String) -> [ControlEndpoint] {
+        value
+            .split { character in
+                character == "," || character == "\n"
+            }
+            .compactMap { item -> ControlEndpoint? in
+                let text = item.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let separator = text.lastIndex(of: ":") else {
+                    return nil
+                }
+
+                let host = String(text[..<separator])
+                let portText = String(text[text.index(after: separator)...])
+                guard !host.isEmpty, let port = UInt16(portText), port > 0 else {
+                    return nil
+                }
+
+                return ControlEndpoint(host: host, port: port)
+            }
     }
 }
 

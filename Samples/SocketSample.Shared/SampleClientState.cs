@@ -14,6 +14,8 @@ public sealed class SampleClientState
 
     public bool UseControlServer { get; init; }
 
+    public string ConnectedServer { get; init; } = "";
+
     public string Status { get; init; } = "";
 
     public string LastReceivedMessage { get; init; } = "";

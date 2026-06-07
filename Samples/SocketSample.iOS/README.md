@@ -1,10 +1,14 @@
 # SocketSample.iOS
 
-SwiftUI + Network.framework 기반 iOS 네이티브 샘플 클라이언트입니다.
+Native SwiftUI iOS sample client built with Network.framework.
 
 ```bash
 xcodegen generate --spec Samples/SocketSample.iOS/project.yml
 xcodebuild -project Samples/SocketSample.iOS/SocketSampleiOS.xcodeproj -scheme SocketSampleiOS -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build
 ```
 
-UI에서 `Client ID`, `Host`, `Port`, `Transport`, `Message Secret`을 설정하고 connect/register/send/receive를 실행합니다. `Transport=MessageEncryption`은 TLS 없이 AES-GCM/HMAC 메시지 보호 모드로 접속하며, `Message Secret`은 서버의 `SOCKET_MESSAGE_SECRET` 값과 같아야 합니다.
+The UI supports connection, client registration, background receive, healthcheck keepalive, and client-to-client message send/receive. `Connect` performs both TCP/TLS connection and client registration. The status panel shows the connected SocketServer endpoint returned by ControlServer routing.
+
+`Control Endpoints` accepts one endpoint per line or comma-separated `host:port` entries. When `Use ControlServer route` is enabled, route resolution and routed SocketServer connection retry across those endpoints before failing. If a route response contains a loopback host, the app replaces it with the ControlServer host that returned the route.
+
+`Transport=MessageEncryption` connects without TLS and uses AES-GCM/HMAC frame protection. In that mode, `Message Secret` must match the server's `SOCKET_MESSAGE_SECRET`.

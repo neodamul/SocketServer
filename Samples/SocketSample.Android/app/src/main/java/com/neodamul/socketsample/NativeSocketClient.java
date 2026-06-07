@@ -26,6 +26,7 @@ public final class NativeSocketClient implements AutoCloseable {
     private DataInputStream input;
     private DataOutputStream output;
     private SocketMessageProtector protector;
+    private String connectedServer = "";
 
     public NativeSocketClient(SampleConfig config) {
         this.config = config;
@@ -39,13 +40,17 @@ public final class NativeSocketClient implements AutoCloseable {
         return socket != null && socket.isConnected() && !socket.isClosed();
     }
 
+    public String connectedServer() {
+        return connectedServer;
+    }
+
     public void connect() throws Exception {
         close();
         protector = createProtector();
-        ConnectionTarget target = resolveConnectionTarget(protector);
-        socket = openSocket(target.host, target.port, protector);
+        ConnectionTarget target = openRoutedSocket(protector);
         input = new DataInputStream(socket.getInputStream());
         output = new DataOutputStream(socket.getOutputStream());
+        connectedServer = target.host + ":" + target.port;
     }
 
     public void register() throws Exception {
@@ -91,12 +96,34 @@ public final class NativeSocketClient implements AutoCloseable {
         return ClientEvent.ignored();
     }
 
-    private ConnectionTarget resolveConnectionTarget(SocketMessageProtector activeProtector) throws Exception {
+    private ConnectionTarget openRoutedSocket(SocketMessageProtector activeProtector) throws Exception {
         if (!config.useControlServer) {
-            return new ConnectionTarget(config.host, config.port);
+            ConnectionTarget target = new ConnectionTarget(config.host, config.port);
+            socket = openSocket(target.host, target.port, activeProtector);
+            return target;
         }
 
-        Socket controlSocket = openSocket(config.host, config.port, activeProtector);
+        Exception lastException = null;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            for (SampleConfig.Endpoint endpoint : config.effectiveControlEndpoints()) {
+                try {
+                    ConnectionTarget target = resolveConnectionTarget(endpoint, activeProtector);
+                    socket = openSocket(target.host, target.port, activeProtector);
+                    return target;
+                } catch (Exception exception) {
+                    closeDataSocket();
+                    lastException = exception;
+                }
+            }
+        }
+
+        throw lastException == null ? new IllegalStateException("Route resolution failed.") : lastException;
+    }
+
+    private ConnectionTarget resolveConnectionTarget(
+        SampleConfig.Endpoint endpoint,
+        SocketMessageProtector activeProtector) throws Exception {
+        Socket controlSocket = openSocket(endpoint.host, endpoint.port, activeProtector);
         try {
             DataInputStream controlInput = new DataInputStream(controlSocket.getInputStream());
             DataOutputStream controlOutput = new DataOutputStream(controlSocket.getOutputStream());
@@ -115,7 +142,7 @@ public final class NativeSocketClient implements AutoCloseable {
             }
 
             return new ConnectionTarget(
-                ProtoCodec.resolveRouteHost(route.host, config.host),
+                ProtoCodec.resolveRouteHost(route.host, endpoint.host),
                 route.port);
         } finally {
             controlSocket.close();
@@ -164,6 +191,21 @@ public final class NativeSocketClient implements AutoCloseable {
         input = null;
         output = null;
         protector = null;
+        connectedServer = "";
+    }
+
+    private void closeDataSocket() {
+        try {
+            if (socket != null) {
+                socket.close();
+            }
+        } catch (Exception ignored) {
+        }
+
+        socket = null;
+        input = null;
+        output = null;
+        connectedServer = "";
     }
 
     private SocketMessageProtector createProtector() throws Exception {

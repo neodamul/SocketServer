@@ -1,6 +1,6 @@
 # SocketSample.Android
 
-Java + Android SDK 기반 Android 네이티브 샘플 클라이언트입니다.
+Native Java Android sample client built with the Android SDK.
 
 ```bash
 cd Samples/SocketSample.Android
@@ -9,8 +9,10 @@ cd Samples/SocketSample.Android
 ./validate.sh --apk
 ```
 
-Android Studio에서 `Samples/SocketSample.Android` 폴더를 열어도 됩니다.
+You can also open `Samples/SocketSample.Android` in Android Studio.
 
-`validate.sh`는 Android 샘플의 프레임/프로토콜 Java 코드를 먼저 검증합니다. Android SDK가 설정된 환경에서는 APK 빌드까지 실행하며, 프로토콜 검증만 실행하려면 `--protocol-only`, APK 빌드를 강제하려면 `--apk` 옵션을 사용합니다. Homebrew `android-commandlinetools` 기본 설치 경로(`/opt/homebrew/share/android-commandlinetools`)도 자동 감지합니다.
+`validate.sh` validates the native frame/protocol Java code first. When the Android SDK is configured, it also builds the APK. Use `--protocol-only` for protocol validation without the Android SDK, or `--apk` to require APK build. The Homebrew `android-commandlinetools` default path (`/opt/homebrew/share/android-commandlinetools`) is detected automatically.
 
-기본 설정 파일은 `app/src/main/res/raw/config.json`입니다. `useControlServer=true`이면 `host`/`port`를 ControlServer endpoint로 사용해 route를 받은 뒤 SocketServer에 접속합니다. ControlServer가 route response에 `127.0.0.1`, `localhost`, `::1` 같은 loopback host를 반환하면 Android 앱은 그 host에 직접 접속하지 않고 원래 ControlServer 접속 host(기본 `10.0.2.2`)로 치환합니다. `transportMode=MessageEncryption`으로 바꾸면 TLS 없이 AES-GCM/HMAC 메시지 보호 모드로 접속하며, `messageEncryptionSecret`은 서버의 `SOCKET_MESSAGE_SECRET` 값과 같아야 합니다. Android emulator에서 개발 PC의 localhost에 접근하려면 기본 host `10.0.2.2`를 사용합니다. 실제 기기에서는 SocketServer 또는 ControlServer가 실행 중인 장비의 LAN IP로 바꿔야 합니다.
+The default config file is `app/src/main/res/raw/config.json`. When `useControlServer=true`, `host` and `port` are the fallback ControlServer endpoint and `controlEndpoints[]` can list multiple ControlServers. The app retries route resolution and routed SocketServer connection across those endpoints before failing. The UI shows the connected SocketServer endpoint in `Connected Server`.
+
+If a route response contains a loopback host such as `127.0.0.1`, `localhost`, or `::1`, the Android app replaces it with the ControlServer host that returned the route, usually `10.0.2.2` in the emulator. Use a LAN IP for real devices. `transportMode=MessageEncryption` connects without TLS and uses AES-GCM/HMAC frame protection; `messageEncryptionSecret` must match the server's `SOCKET_MESSAGE_SECRET`.

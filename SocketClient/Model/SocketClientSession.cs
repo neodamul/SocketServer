@@ -55,6 +55,19 @@ public sealed class SocketClientSession : IDisposable
         }
     }
 
+    public string ConnectedEndpoint
+    {
+        get
+        {
+            lock (this.syncRoot)
+            {
+                return this.client == null
+                    ? ""
+                    : $"{this.client.GetIpAddress()}:{this.client.GetPort()}";
+            }
+        }
+    }
+
     public async Task<bool> ConnectAndRegisterAsync(
         int clientId,
         string clientName,

@@ -9,6 +9,8 @@ xcodebuild -project Samples/SocketSample.macOS/SocketSampleMac.xcodeproj -scheme
 
 The UI supports connection, client registration, background receive, healthcheck keepalive, and client-to-client message send/receive. `Connect` performs both TCP/TLS connection and client registration. The status panel shows the connected SocketServer endpoint returned by ControlServer routing.
 
+`Control Endpoints` accepts one endpoint per line or comma-separated `host:port` entries. When `Use ControlServer route` is enabled, route resolution and routed SocketServer connection retry across those endpoints before failing. If a route response contains a loopback host, the app replaces it with the ControlServer host that returned the route.
+
 For the default `EndToEndTls` profile, pass the local client certificate directory and password so the app can present `SocketClient-{clientId}.pfx` during mTLS:
 
 ```bash
