@@ -83,6 +83,104 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
+    public async Task ClientRouteFallsBackAcrossControlEndpointsTest()
+    {
+        using TestProgress progress = TestProgress.Start(nameof(ClientRouteFallsBackAcrossControlEndpointsTest));
+        int deadControlPort = GetAvailablePort();
+        int deadSocketServerPort = GetAvailablePort();
+
+        progress.Step("starting empty and healthy ControlServer endpoints");
+        using ControlServer emptyControl = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-route-fallback-empty",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0
+            }
+        });
+        Assert.IsTrue(emptyControl.Start());
+
+        using ControlServer staleRouteControl = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-route-fallback-stale",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0
+            }
+        });
+        Assert.IsTrue(staleRouteControl.Start());
+        await SendServerHeartbeatAsync(
+            staleRouteControl,
+            CreateServerHeartbeat(12, "server-route-fallback-stale", deadSocketServerPort));
+
+        using ControlServer healthyControl = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-route-fallback-healthy",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0
+            }
+        });
+        Assert.IsTrue(healthyControl.Start());
+
+        using SocketServerCluster servers = CreateStartedSocketServerCluster(11, "server-route-fallback");
+        servers.AttachReporters(new[] { new EndpointConfig { Host = "127.0.0.1", Port = healthyControl.Port } });
+        await servers.RegisterAsync();
+        await WaitForClusterAsync(
+            healthyControl,
+            status => status.ServerCount == 4 && status.TotalAvailableConnections == 40,
+            progress: progress,
+            operation: "healthy control sees fallback servers");
+
+        progress.Step("requesting route through dead, empty, then healthy ControlServer endpoints");
+        using TcpClient client = new(17, "client-17");
+        IPEndPoint[] controlEndpoints =
+        {
+            new(IPAddress.Loopback, deadControlPort),
+            new(IPAddress.Loopback, emptyControl.Port),
+            new(IPAddress.Loopback, staleRouteControl.Port),
+            new(IPAddress.Loopback, healthyControl.Port)
+        };
+        Assert.IsTrue(await client.ConnectViaControlServersAsync(controlEndpoints, maxRouteAttempts: 1));
+        Assert.IsTrue(await client.SendHealthCheckAsync());
+        (bool received, HealthCheckMessage message) = await WithTimeoutAsync(
+            client.TryReceiveHealthCheckAsync(),
+            progress: progress,
+            operation: "fallback-routed client receives healthcheck pong");
+
+        Assert.IsTrue(received);
+        Assert.AreEqual(HealthCheckMessageType.Pong, message.Type);
+
+        progress.Step("connecting registered session through the same fallback ControlServer endpoints");
+        using SocketClientSession session = new();
+        Assert.IsTrue(await session.ConnectAndRegisterAsync(
+            18,
+            "client-18",
+            controlEndpoints,
+            healthCheckIntervalSeconds: 30,
+            reconnectRetrySeconds: 1,
+            duplicateRejectBackoffSeconds: 1));
+        Assert.IsTrue(session.IsConnected);
+        Assert.IsTrue(session.IsRegistered);
+
+        ClusterStatusSnapshot routeStatus = await WaitForClusterAsync(
+            healthyControl,
+            status => status.TotalSessionCount == 2,
+            progress: progress,
+            operation: "healthy control sees fallback-routed session");
+        Assert.AreEqual(2, routeStatus.TotalSessionCount);
+    }
+
+    [TestMethod]
     public async Task PeerControlServerReceivesRegistryUpsertAndRoutesClientTest()
     {
         using ControlServer peerControl = new(new ControlServerConfigFile
@@ -1035,6 +1133,24 @@ public class ControlServerIntegrationTests
             },
             SentAt = DateTimeOffset.UtcNow
         };
+    }
+
+    private static async Task SendServerHeartbeatAsync(
+        ControlServer controlServer,
+        ServerHeartbeatRequest request)
+    {
+        using NetSocket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+        await SocketFactory.ConnectAsync(socket, IPAddress.Loopback, controlServer.Port);
+        using SecureSocketConnection connection =
+            await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketServer");
+
+        (bool success, _) = await ControlProtocol.SendAndReceiveAsync(
+            connection,
+            0,
+            ControlMessageIds.ServerHeartbeat,
+            request,
+            timeoutMilliseconds: 2000);
+        Assert.IsTrue(success);
     }
 
     private static async Task WaitForClientLocationCountAsync(

@@ -121,7 +121,7 @@ The default config uses `File`; tests/ephemeral runs use `InMemory`. The registr
   }
 }
 ```
-`controlEndpoints` may list multiple entries; on ControlServer failure the client can try the next endpoint for a route request.
+`controlEndpoints` may list multiple entries. Route resolution retries configured ControlServer endpoints when TCP connect, TLS authentication, timeout, stream failure, or an unusable route response occurs, so a client can still connect when one ControlServer is down or has no current server snapshot.
 
 ## Sample clients
 ```text
