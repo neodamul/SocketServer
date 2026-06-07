@@ -20,7 +20,7 @@ internal static class LoadTestUiHost
         builder.Services.AddSingleton(new LoadTestUiService(options));
 
         WebApplication app = builder.Build();
-        app.MapGet("/", () => Results.Content(RenderPage(), "text/html; charset=utf-8"));
+        app.MapGet("/", () => Results.Content(RenderPage(options), "text/html; charset=utf-8"));
         app.MapGet("/api/state", (LoadTestUiService service) => service.GetState());
         app.MapPost("/api/start", async (LoadTestUiStartRequest request, LoadTestUiService service) =>
         {
@@ -42,7 +42,7 @@ internal static class LoadTestUiHost
         await app.WaitForShutdownAsync();
     }
 
-    private static string RenderPage()
+    private static string RenderPage(LoadTestOptions options)
     {
         StringBuilder html = new();
         html.AppendLine("<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">");
@@ -64,13 +64,13 @@ internal static class LoadTestUiHost
         html.AppendLine("</style></head><body><main>");
         html.AppendLine("<div class=\"topbar\"><div class=\"brand-logo\"><svg viewBox=\"0 0 24 24\" fill=\"none\"><path d=\"M4 7l8-4 8 4-8 4-8-4z\" fill=\"#fff\" opacity=\".95\"/><path d=\"M4 12l8 4 8-4M4 17l8 4 8-4\" stroke=\"#fff\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\" opacity=\".8\"/></svg></div><div class=\"brand\"><h1>SocketLoadTest</h1><div class=\"sub\">Web UI · load generator</div></div></div>");
         html.AppendLine("<section class=\"band\"><div class=\"grid\">");
-        html.AppendLine("<div><label>Clients</label><input id=\"clients\" type=\"number\" min=\"1\" value=\"4\"></div>");
-        html.AppendLine("<div><label>Start Client ID</label><input id=\"startClientId\" type=\"number\" min=\"1\" value=\"1\"></div>");
-        html.AppendLine("<div><label>Batch Size</label><input id=\"batchSize\" type=\"number\" min=\"1\" value=\"4\"></div>");
-        html.AppendLine("<div><label>Host</label><input id=\"host\" value=\"127.0.0.1\"></div>");
-        html.AppendLine("<div><label>Port</label><input id=\"port\" type=\"number\" min=\"0\" max=\"65535\" value=\"10000\"></div>");
-        html.AppendLine("<div><label>Ramp Delay ms</label><input id=\"rampDelayMilliseconds\" type=\"number\" min=\"0\" value=\"0\"></div>");
-        html.AppendLine("<div><label>Use ControlServer</label><input id=\"useControlServer\" type=\"checkbox\" checked></div>");
+        html.AppendLine($"<div><label>Clients</label><input id=\"clients\" type=\"number\" min=\"1\" value=\"{options.Clients}\"></div>");
+        html.AppendLine($"<div><label>Start Client ID</label><input id=\"startClientId\" type=\"number\" min=\"1\" value=\"{options.StartClientId}\"></div>");
+        html.AppendLine($"<div><label>Batch Size</label><input id=\"batchSize\" type=\"number\" min=\"1\" value=\"{options.BatchSize}\"></div>");
+        html.AppendLine($"<div><label>Host</label><input id=\"host\" value=\"{WebUtility.HtmlEncode(options.Host)}\"></div>");
+        html.AppendLine($"<div><label>Port</label><input id=\"port\" type=\"number\" min=\"0\" max=\"65535\" value=\"{options.Port}\"></div>");
+        html.AppendLine($"<div><label>Ramp Delay ms</label><input id=\"rampDelayMilliseconds\" type=\"number\" min=\"0\" value=\"{options.RampDelayMilliseconds}\"></div>");
+        html.AppendLine($"<div><label>Use ControlServer</label><input id=\"useControlServer\" type=\"checkbox\"{(options.UseControlServer ? " checked" : string.Empty)}></div>");
         html.AppendLine("</div><div style=\"display:flex;gap:8px;margin-top:12px\"><button onclick=\"start()\">Start</button><button class=\"secondary\" onclick=\"stop()\">Stop</button><button class=\"secondary\" onclick=\"refresh()\">Refresh</button></div></section>");
         html.AppendLine("<section class=\"metrics\" id=\"metrics\"></section>");
         html.AppendLine("<section class=\"band\"><h2 style=\"font-size:16px;margin:0 0 10px\">Target Servers</h2><table><thead><tr><th>Target Server</th><th>Connected Clients</th></tr></thead><tbody id=\"targets\"></tbody></table></section>");

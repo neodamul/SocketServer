@@ -125,7 +125,7 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 1000 --ba
 UI mode:
 
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 10060 --clients 4 --start-client-id 201 --batch-size 4 --host 127.0.0.1 --port 10000 --use-control-server
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 10060 --clients 300 --start-client-id 301 --batch-size 100 --host 127.0.0.1 --port 10000 --use-control-server
 ```
 
 The UI shows connected clients, target server distribution, per-client connection state, counters, and metrics.

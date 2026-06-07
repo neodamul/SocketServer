@@ -36,7 +36,7 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --b
 
 UI mode starts/stops load clients and shows state in the browser:
 ```bash
-dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 10060 --clients 4 --start-client-id 201 --batch-size 4 --host 127.0.0.1 --port 10000 --use-control-server
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 10060 --clients 300 --start-client-id 301 --batch-size 100 --host 127.0.0.1 --port 10000 --use-control-server
 ```
 Options: `--profile`, `--clients`, `--start-client-id`, `--batch-size`, `--hold-seconds`, `--use-control-server`, `--message-test`, `--message-rounds`, `--ramp-delay-ms`, `--expected-connected`, `--healthcheck-timeout-seconds`, `--message-timeout-seconds`, `--report-file` (JSON of options, counters, elapsed time).
 

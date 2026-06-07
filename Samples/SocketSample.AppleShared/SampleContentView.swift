@@ -24,73 +24,13 @@ struct SampleContentView: View {
                 .font(.title2)
                 .fontWeight(.semibold)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    GroupBox {
-                        VStack(spacing: 10) {
-                            HStack {
-                                field("Client ID", text: Binding(
-                                    get: { String(config.clientId) },
-                                    set: { config.clientId = UInt32($0) ?? config.clientId }))
-                                field("Client Name", text: $config.clientName)
-                            }
-                            HStack {
-                                field("Host", text: $config.host)
-                                field("Port", text: Binding(
-                                    get: { String(config.port) },
-                                    set: { config.port = UInt16($0) ?? config.port }))
-                            }
-                            compactMultilineField("Control Endpoints", text: Binding(
-                                get: { config.controlEndpoints.map(\.displayValue).joined(separator: "\n") },
-                                set: { config.controlEndpoints = SampleConfig.parseControlEndpoints($0) }))
-                            HStack {
-                                Toggle("Use ControlServer route", isOn: $config.useControlServer)
-                                Toggle("Allow local self-signed certificate", isOn: $config.allowUntrustedLocalCertificate)
-                            }
-                            HStack {
-                                field("Transport", text: $config.transportMode)
-                                field("Message Secret", text: $config.messageEncryptionSecret)
-                            }
-                            HStack {
-                                Spacer()
-                                Button("Connect") { run { try await connect() } }
-                                Button("Disconnect") { disconnect() }
-                            }
-                        }
-                    }
+            controlsPanel
+                .layoutPriority(1)
 
-                    GroupBox {
-                        VStack(spacing: 10) {
-                            HStack {
-                                field("Target Client ID", text: $targetClientId)
-                                field("Message", text: $message)
-                            }
-                            HStack {
-                                Spacer()
-                                Button("Send") { run { try await send() } }
-                            }
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 430)
-
-            GroupBox("Status") {
-                ScrollView {
-                    Text(statusText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .lineLimit(nil)
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                }
-                .frame(minHeight: 150, maxHeight: 220)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .layoutPriority(1)
+            statusPanel
         }
         .padding()
-        .frame(minWidth: 640, minHeight: 640)
+        .frame(minWidth: 680, minHeight: 560)
         .onAppear {
             if config.autoConnect && !state.isConnected {
                 run {
@@ -100,15 +40,82 @@ struct SampleContentView: View {
         }
     }
 
-    private var statusText: String {
-        """
-        Status: \(state.status)
-        Connected: \(state.isConnected)
-        Registered: \(state.isRegistered)
-        Connected Server: \(state.connectedServer)
-        Last Received: \(lastReceivedDisplay)
-        Last Error: \(state.lastError)
-        """
+    private var controlsPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                connectionPanel
+                messagePanel
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var connectionPanel: some View {
+        GroupBox {
+            VStack(spacing: 10) {
+                HStack {
+                    field("Client ID", text: Binding(
+                        get: { String(config.clientId) },
+                        set: { config.clientId = UInt32($0) ?? config.clientId }))
+                    field("Client Name", text: $config.clientName)
+                }
+                HStack {
+                    field("Host", text: $config.host)
+                    field("Port", text: Binding(
+                        get: { String(config.port) },
+                        set: { config.port = UInt16($0) ?? config.port }))
+                }
+                compactMultilineField("Control Endpoints", text: Binding(
+                    get: { config.controlEndpoints.map(\.displayValue).joined(separator: "\n") },
+                    set: { config.controlEndpoints = SampleConfig.parseControlEndpoints($0) }))
+                HStack {
+                    Toggle("Use ControlServer route", isOn: $config.useControlServer)
+                    Toggle("Allow local self-signed certificate", isOn: $config.allowUntrustedLocalCertificate)
+                    Spacer()
+                }
+                HStack {
+                    field("Transport", text: $config.transportMode)
+                    field("Message Secret", text: $config.messageEncryptionSecret)
+                }
+                HStack {
+                    Spacer()
+                    Button("Connect") { run { try await connect() } }
+                    Button("Disconnect") { disconnect() }
+                }
+            }
+        }
+    }
+
+    private var messagePanel: some View {
+        GroupBox {
+            VStack(spacing: 10) {
+                HStack {
+                    field("Target Client ID", text: $targetClientId)
+                    field("Message", text: $message)
+                }
+                HStack {
+                    Spacer()
+                    Button("Send") { run { try await send() } }
+                }
+            }
+        }
+    }
+
+    private var statusPanel: some View {
+        GroupBox("Status") {
+            VStack(alignment: .leading, spacing: 6) {
+                statusRow("Status", state.status)
+                statusRow("Connected", String(state.isConnected))
+                statusRow("Registered", String(state.isRegistered))
+                statusRow("Server", state.connectedServer)
+                statusRow("Last Received", lastReceivedDisplay)
+                statusRow("Last Error", state.lastError)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var lastReceivedDisplay: String {
@@ -121,6 +128,22 @@ struct SampleContentView: View {
         }
 
         return "\(state.lastReceived) @ \(state.lastReceivedAt)"
+    }
+
+    private func statusRow(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .frame(width: 92, alignment: .leading)
+            Text(value.isEmpty ? "-" : value)
+                .font(.system(.caption, design: .monospaced))
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func field(_ title: String, text: Binding<String>) -> some View {
