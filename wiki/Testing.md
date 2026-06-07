@@ -59,4 +59,4 @@ cd Samples/SocketSample.Android
 ```
 
 ## Test ports
-Some legacy tests use `5001`. Default runtime ports are nginx `10000`, ControlServer from `10001`, SocketServer from `10100`. Integration tests prefer dynamic port `0` to reduce conflicts.
+Fixed-port tests use `25001`, outside the well-known port range and away from runtime defaults. Default runtime ports are nginx `10000`, ControlServer from `10001`, SocketServer from `10100`. Integration tests prefer dynamic port `0` to reduce conflicts.

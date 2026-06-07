@@ -21,7 +21,7 @@ public class SocketSampleClientTests
             ClientId = 12,
             ClientName = "sample",
             Host = "127.0.0.1",
-            Port = 5001,
+            Port = 25001,
             UseControlServer = false,
             ReceiveTimeoutSeconds = 3,
             HealthCheckIntervalSeconds = 5,

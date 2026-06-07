@@ -12,14 +12,14 @@ namespace SocketTests.Model;
 [TestClass]
 public class HelloWorldProtocolTests
 {
-    private const int TestPort = 5001;
+    private const int TestPort = 25001;
     private const uint TestClientId = 7;
     private Mutex? testPortMutex;
 
     [TestInitialize]
     public void Initialize()
     {
-        this.testPortMutex = new Mutex(false, "SocketServer.TestPort.5001");
+        this.testPortMutex = new Mutex(false, "SocketServer.TestPort.25001");
         this.testPortMutex.WaitOne();
     }
 
