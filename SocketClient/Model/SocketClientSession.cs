@@ -21,6 +21,7 @@ public sealed class SocketClientSession : IDisposable
     private Task reconnectTask;
     private ReconnectSettings reconnectSettings;
     private TimeSpan nextReconnectDelay = TimeSpan.FromSeconds(30);
+    private TimeSpan receiveHeaderTimeout = TimeSpan.FromSeconds(90);
     private bool registered;
     private bool reconnectEnabled;
     private bool intentionalDisconnect;
@@ -154,6 +155,7 @@ public sealed class SocketClientSession : IDisposable
             Math.Max(1, healthCheckIntervalSeconds),
             Math.Max(1, reconnectRetrySeconds),
             Math.Max(1, duplicateRejectBackoffSeconds));
+        this.receiveHeaderTimeout = CalculateReceiveHeaderTimeout(this.reconnectSettings.HealthCheckIntervalSeconds);
         this.nextReconnectDelay = TimeSpan.FromSeconds(this.reconnectSettings.ReconnectRetrySeconds);
         this.intentionalDisconnect = false;
         this.reconnectEnabled = true;
@@ -391,7 +393,9 @@ public sealed class SocketClientSession : IDisposable
 
             try
             {
-                (bool success, SocketMessageFrame frame) = await activeClient.TryReceiveFrameAsync();
+                (bool success, SocketMessageFrame frame) = await activeClient.TryReceiveFrameAsync(
+                    (int)this.receiveHeaderTimeout.TotalMilliseconds,
+                    SocketFactory.ReadTimeoutMilliseconds);
                 if (!success || frame == null)
                 {
                     break;
@@ -514,6 +518,13 @@ public sealed class SocketClientSession : IDisposable
         }
 
         return endpoints.ToArray();
+    }
+
+    private static TimeSpan CalculateReceiveHeaderTimeout(int healthCheckIntervalSeconds)
+    {
+        TimeSpan interval = TimeSpan.FromSeconds(Math.Max(1, healthCheckIntervalSeconds));
+        TimeSpan readTimeout = TimeSpan.FromMilliseconds(SocketFactory.ReadTimeoutMilliseconds);
+        return interval + readTimeout + TimeSpan.FromSeconds(5);
     }
 
 }
