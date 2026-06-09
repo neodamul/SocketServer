@@ -69,3 +69,5 @@ Sizing procedure:
 5. Node count = target concurrency / safe connections per node.
 ```
 Example: a validated 10,000 safe connections/node implies ≥30 SocketServer instances for 300,000. TLS handshake CPU is a transient spike for long-lived connections — measure restart/reconnect-storm scenarios separately.
+
+For control-plane / server-to-server relay message-size estimates and broadcast amplification at scale, see [Relay Traffic Sizing](RelayTrafficSizing.md).
