@@ -40,6 +40,50 @@ Relay-plane bandwidth ≈ `(R × 3/4) × 1.37 KB` (content 256 B), where R = tot
 | 1 / 10 s | 4,000/s | 3,000/s | ~4.1 MB/s (~33 Mbps) |
 | 1 / s | 40,000/s | 30,000/s | ~41 MB/s (~330 Mbps) |
 
+## Parametric model (content size × rate)
+Closed form (frame bytes), letting `C` = client message `content` size in bytes:
+
+```text
+SERVER_RELAY frame  ≈ 112 + C       (envelope ~100 B: cluster_id, source_instance_id,
+                                      message_token(32), src/tgt client_id, ttl, created_at)
+SERVER_RELAY_ACK    ≈ 91            SERVER_RELAY_ERROR ≈ 87
+Cross-server cost   B(N,C) = (N-1)·(112+C) + 91 + (N-2)·87      (broadcast to N-1, 1 ack, N-2 errors)
+                    B(4,C) = 601 + 3C
+Relay bandwidth     BW = R · (N-1)/N · B(N,C)        R = total client→client msgs/s
+```
+
+At the current N = 4 (cross fraction 3/4):
+
+| content C | relay frame (112+C) | B(4,C) per cross-msg | BW @ R=4,000/s | BW @ R=40,000/s |
+| --- | --- | --- | --- | --- |
+| 50 B | 162 B | 751 B | ~2.3 MB/s | ~22.5 MB/s |
+| 256 B | 368 B | 1,369 B | ~4.1 MB/s | ~41 MB/s |
+| 1024 B | 1,136 B | 3,673 B | ~11 MB/s | ~110 MB/s |
+| ~4000 B (≈ payload max) | ~4,112 B | ~12,601 B | ~38 MB/s | ~378 MB/s |
+
+Plug in real measured `content` and rate for exact figures; `BW` scales linearly in both `R` and (via `B`) `C`.
+
+## Broadcast vs targeted break-even
+The targeted fallback (ControlServer location lookup, then one direct relay) costs, **independent of N**:
+
+```text
+T_lookup(C) = 20 (LOCATION_REQUEST) + 80 (LOCATION_RESPONSE) + (112+C) (relay) + 91 (ack) = 303 + C
+T_cached(C) = (112+C) + 91 = 203 + C        (source already has the client location cached, no lookup)
+```
+
+Break-even `B(N,C) = T_lookup(C)` is at **N ≈ 2.2** (C = 256). So broadcast-first is byte-optimal only for **N = 2**; from **N ≥ 3 the targeted path sends fewer bytes**, and the gap grows ~linearly with N:
+
+| N (servers) | B(N,256) | vs T_lookup (559 B) |
+| --- | --- | --- |
+| 2 | 459 B | 0.82× (broadcast cheaper) |
+| 3 | 914 B | 1.6× |
+| 4 | 1,369 B | 2.4× |
+| 8 | 3,189 B | 5.7× |
+| 16 | 6,829 B | 12× |
+| 30 (300k target) | 13,199 B | 24× |
+
+So even at the current 4 nodes, broadcast already sends ~2.4× the bytes of a targeted relay per cross-server message. Broadcast is kept as the default for **latency/simplicity** — no ControlServer round-trip, location-free, parallel fan-out — i.e. it trades bytes for latency and control-plane load. At large N, prefer **targeted with client-location caching** (`T_cached` ≈ 203 + C, no lookup) to cut relay bytes ~10–24×; reserve broadcast for small clusters or as the cache-miss fallback.
+
 ## Side traffic (not the relay hot path)
 - **Connection setup (one-time, 40k connects)**: `SESSION_OPENED` 40,000 × 118 B × 2 ControlServers ≈ 9.4 MB, plus control-to-control `CLIENT_LOCATION_UPSERT` 40,000 × 103 B ≈ 4.1 MB → **~13–14 MB**, spread over the connection ramp.
 - **Steady-state heartbeat**: 4 × 202 B × 2 ControlServers / 30 s + periodic snapshot ≈ **~0.1 KB/s** — negligible.
