@@ -84,6 +84,34 @@ Break-even `B(N,C) = T_lookup(C)` is at **N ≈ 2.2** (C = 256). So broadcast-fi
 
 So even at the current 4 nodes, broadcast already sends ~2.4× the bytes of a targeted relay per cross-server message. Broadcast is kept as the default for **latency/simplicity** — no ControlServer round-trip, location-free, parallel fan-out — i.e. it trades bytes for latency and control-plane load. At large N, prefer **targeted with client-location caching** (`T_cached` ≈ 203 + C, no lookup) to cut relay bytes ~10–24×; reserve broadcast for small clusters or as the cache-miss fallback.
 
+## Wire-level overhead (TLS) — cached-target bandwidth
+All tables above are **application-frame** bytes (12 B header + protobuf plaintext, the app's byte-counter basis). On the wire each frame also carries transport overhead (see [Protocols → Transport security](Protocols.md#transport-security)):
+
+```text
+TLS 1.3 record   ≈ +22 B/frame   (5 B record header + 16 B AEAD tag + 1 B inner content type;
+                                   persistent relay channel → handshake amortized; within the
+                                   ~22-40 B/record range in Assumptions)
+MessageEncryption ≈ +61 B/frame  (version 1 + nonce 12 + AES-GCM tag 16 + HMAC 32)
+TCP/IP (optional) ≈ +40 B/segment (IPv4+TCP), if counting full on-wire bytes
+```
+
+A cached cross-server message is **2 frames** (one `SERVER_RELAY_MESSAGE` + one `SERVER_RELAY_ACK`), so over TLS:
+
+```text
+T_cached(wire) ≈ (203 + C) + 2×22 = 247 + C        (MessageEncryption: 203 + C + 2×61 = 325 + C)
+```
+
+Cached-target wire bandwidth (TLS, N = 4, `BW = R · 3/4 · (247 + C)`):
+
+| content C | per cross-msg (wire) | R=667/s | R=4,000/s | R=40,000/s |
+| --- | --- | --- | --- | --- |
+| 50 B | 297 B | ~0.15 MB/s | ~0.89 MB/s | ~8.9 MB/s (~71 Mbps) |
+| 256 B | 503 B | ~0.25 MB/s | ~1.5 MB/s | ~15.1 MB/s (~121 Mbps) |
+| 1024 B | 1,271 B | ~0.64 MB/s | ~3.8 MB/s | ~38.1 MB/s (~305 Mbps) |
+| ~4000 B (≈ payload max) | 4,247 B | ~2.1 MB/s | ~12.7 MB/s | ~127 MB/s (~1.0 Gbps) |
+
+TLS overhead is relatively larger for small messages (+17% at 50 B, +10% at 256 B) and negligible for large ones (~1% at 4 KB). To get the broadcast wire figures, add `+22 B` to each of its N−1 relay frames + 1 ack + N−2 error frames (i.e. `+22 B × (2N−2)` per cross-server message).
+
 ## Side traffic (not the relay hot path)
 - **Connection setup (one-time, 40k connects)**: `SESSION_OPENED` 40,000 × 118 B × 2 ControlServers ≈ 9.4 MB, plus control-to-control `CLIENT_LOCATION_UPSERT` 40,000 × 103 B ≈ 4.1 MB → **~13–14 MB**, spread over the connection ramp.
 - **Steady-state heartbeat**: 4 × 202 B × 2 ControlServers / 30 s + periodic snapshot ≈ **~0.1 KB/s** — negligible.
