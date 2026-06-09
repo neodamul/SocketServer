@@ -650,9 +650,9 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
-    public void BackendRegistryRejectsSameConnectionUpdateAfterCleanupTombstoneTest()
+    public void BackendRegistryRevivesSameConnectionWhenNewerUpdateArrivesAfterCleanupTombstoneTest()
     {
-        BackendServerRegistry registry = new(TimeSpan.FromMilliseconds(10));
+        BackendServerRegistry registry = new(TimeSpan.FromSeconds(30));
         registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
         registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 1, 100), "control-1", new ControlHealthThreshold());
         DateTimeOffset oldConnectedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
@@ -668,7 +668,14 @@ public class ControlProtocolTests
         lateUpdate.LastReceivedAt = DateTimeOffset.UtcNow;
         registry.UpsertSession(lateUpdate);
 
-        Assert.AreEqual(0, registry.GetStatus().TotalSessionCount);
+        Assert.AreEqual(1, registry.GetStatus().TotalSessionCount);
+
+        ClientLocationResponse location = registry.ResolveClientLocation(new ClientLocationRequest
+        {
+            SourceClientId = 1,
+            TargetClientId = 77
+        });
+        Assert.IsTrue(location.Success);
     }
 
     [TestMethod]

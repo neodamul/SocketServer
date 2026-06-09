@@ -1013,7 +1013,20 @@ public class BackendServerRegistry
     {
         if (session.ConnectedAt != default && tombstone.ConnectedAt != default)
         {
-            return session.ConnectedAt <= tombstone.ConnectedAt;
+            if (session.ConnectedAt < tombstone.ConnectedAt)
+            {
+                return true;
+            }
+
+            if (session.ConnectedAt > tombstone.ConnectedAt)
+            {
+                return false;
+            }
+
+            if (session.LastReceivedAt != default && tombstone.LastReceivedAt != default)
+            {
+                return session.LastReceivedAt <= tombstone.LastReceivedAt;
+            }
         }
 
         return tombstone.Version >= session.Version;
