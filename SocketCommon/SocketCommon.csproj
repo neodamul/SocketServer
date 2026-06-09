@@ -4,6 +4,7 @@
     <OutputType>Library</OutputType>
     <TargetFramework>net9.0</TargetFramework>
     <NoWarn>$(NoWarn);CS8981</NoWarn>
+    <Protobuf_ProtocFullPath Condition="'$(Protobuf_ProtocFullPath)' == '' and Exists('/opt/homebrew/bin/protoc')">/opt/homebrew/bin/protoc</Protobuf_ProtocFullPath>
   </PropertyGroup>
 
   <ItemGroup>

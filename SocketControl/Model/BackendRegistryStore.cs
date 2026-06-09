@@ -101,5 +101,7 @@ public sealed class BackendRegistryState
 
     public List<SessionEventMessage> Sessions { get; set; } = new();
 
+    public List<SessionEventMessage> SessionTombstones { get; set; } = new();
+
     public List<ClientLocationMessage> ClientLocations { get; set; } = new();
 }

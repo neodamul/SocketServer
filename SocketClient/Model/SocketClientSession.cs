@@ -8,6 +8,13 @@ using SocketCommon.Model;
 
 namespace SocketClient.Model;
 
+public enum SocketClientSessionFailure
+{
+    None = 0,
+    Connect = 1,
+    Register = 2
+}
+
 public sealed class SocketClientSession : IDisposable
 {
     private readonly object syncRoot = new();
@@ -25,6 +32,7 @@ public sealed class SocketClientSession : IDisposable
     private bool registered;
     private bool reconnectEnabled;
     private bool intentionalDisconnect;
+    private SocketClientSessionFailure lastFailure;
 
     public event Action<ClientMessageDelivery> MessageReceived;
 
@@ -65,6 +73,17 @@ public sealed class SocketClientSession : IDisposable
                 return this.client == null
                     ? ""
                     : $"{this.client.GetIpAddress()}:{this.client.GetPort()}";
+            }
+        }
+    }
+
+    public SocketClientSessionFailure LastFailure
+    {
+        get
+        {
+            lock (this.syncRoot)
+            {
+                return this.lastFailure;
             }
         }
     }
@@ -178,6 +197,7 @@ public sealed class SocketClientSession : IDisposable
         if (!connected)
         {
             nextClient.Dispose();
+            this.SetLastFailure(SocketClientSessionFailure.Connect);
             this.nextReconnectDelay = TimeSpan.FromSeconds(settings.ReconnectRetrySeconds);
             return false;
         }
@@ -186,6 +206,7 @@ public sealed class SocketClientSession : IDisposable
         if (!registerReceived || !registerAck.Success)
         {
             nextClient.Dispose();
+            this.SetLastFailure(SocketClientSessionFailure.Register);
             int delaySeconds = registerAck?.RetryAfterSeconds > 0
                 ? registerAck.RetryAfterSeconds
                 : settings.DuplicateRejectBackoffSeconds;
@@ -199,6 +220,7 @@ public sealed class SocketClientSession : IDisposable
             this.client?.Dispose();
             this.client = nextClient;
             this.registered = true;
+            this.lastFailure = SocketClientSessionFailure.None;
         }
 
         this.StartReceiveLoop();
@@ -332,6 +354,14 @@ public sealed class SocketClientSession : IDisposable
             this.reconnectCancellation?.Dispose();
             this.reconnectCancellation = null;
             this.reconnectTask = null;
+        }
+    }
+
+    private void SetLastFailure(SocketClientSessionFailure failure)
+    {
+        lock (this.syncRoot)
+        {
+            this.lastFailure = failure;
         }
     }
 
