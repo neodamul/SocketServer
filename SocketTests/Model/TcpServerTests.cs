@@ -511,6 +511,61 @@ public class TcpServerTests
     }
 
     [TestMethod()]
+    public async Task SocketClientSessionReceiveLoopDoesNotTimeoutBeforeHealthCheckTest()
+    {
+        SocketFactory.Configure(new SocketOperationConfig
+        {
+            ConnectTimeoutSeconds = 3,
+            ReadTimeoutSeconds = 1,
+            WriteTimeoutSeconds = 3
+        });
+        TcpServer server = new(
+            1,
+            "testServer",
+            "127.0.0.1",
+            TestPort,
+            maxConnections: 10,
+            pendingAcceptCount: 2,
+            idleTimeout: TimeSpan.FromSeconds(5),
+            idleScanInterval: TimeSpan.FromMilliseconds(50));
+        using SocketClientSession session = new();
+
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+            Assert.IsTrue(await session.ConnectAndRegisterAsync(
+                81,
+                "sessionKeepAliveClient",
+                "127.0.0.1",
+                TestPort,
+                useControlServer: false,
+                healthCheckIntervalSeconds: 2,
+                reconnectRetrySeconds: 1,
+                duplicateRejectBackoffSeconds: 1));
+
+            await Task.Delay(1500);
+            Assert.IsTrue(session.IsConnected);
+            Assert.IsTrue(session.IsRegistered);
+            Assert.AreEqual(1, server.GetStatus().ConnectedClientCount);
+
+            await Task.Delay(1800);
+            TcpServerStatus status = server.GetStatus();
+            Assert.IsTrue(session.IsConnected);
+            Assert.IsTrue(session.IsRegistered);
+            Assert.AreEqual(1, status.ConnectedClientCount);
+            Assert.AreEqual(0, status.TotalIdleTimeoutClients);
+            Assert.IsTrue(status.TotalReceivedMessages >= 2);
+            Assert.IsTrue(status.TotalSentMessages >= 2);
+        }
+        finally
+        {
+            session.Disconnect();
+            server.End();
+        }
+    }
+
+    [TestMethod()]
     public async Task CleanupSchedulerClosesInactiveClientAfterHealthCheckTimeoutTest()
     {
         TcpServer server = new(

@@ -598,6 +598,21 @@ public class TcpClient : IClient, IDisposable
         return await SocketMessageFrame.TryReceiveAsync(this.Connection);
     }
 
+    public async Task<(bool Success, SocketMessageFrame Frame)> TryReceiveFrameAsync(
+        int headerTimeoutMilliseconds,
+        int payloadTimeoutMilliseconds)
+    {
+        if (this.Connection == null)
+        {
+            return (false, null);
+        }
+
+        return await SocketMessageFrame.TryReceiveAsync(
+            this.Connection,
+            headerTimeoutMilliseconds,
+            payloadTimeoutMilliseconds);
+    }
+
     public async Task<(bool Success, ClientMessageDelivery Delivery)> TryReceiveClientMessageAsync()
     {
         if (this.Connection == null)
