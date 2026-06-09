@@ -261,6 +261,40 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void BackendRegistryServerRegisterDoesNotRefreshExpiredHeartbeatTest()
+    {
+        BackendServerRegistry registry = new(TimeSpan.FromSeconds(30));
+        ServerRegisterRequest register = CreateRegister(1, "server-1", 5101, 10);
+        register.StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+
+        BackendServerSnapshot registered = registry.Upsert(register, "control-1");
+        ClusterStatusSnapshot status = registry.GetStatus();
+
+        Assert.AreEqual(register.StartedAt, registered.LastHeartbeatAt);
+        Assert.AreEqual(0, status.HealthyServerCount);
+        Assert.AreEqual(0, status.TotalAvailableConnections);
+    }
+
+    [TestMethod]
+    public void BackendRegistryServerRegisterRefreshPreservesHeartbeatCountersTest()
+    {
+        BackendServerRegistry registry = new(TimeSpan.FromSeconds(90));
+        DateTimeOffset startedAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+        DateTimeOffset heartbeatAt = DateTimeOffset.UtcNow.AddSeconds(-10);
+        ServerRegisterRequest register = CreateRegister(1, "server-1", 5101, 10);
+        register.StartedAt = startedAt;
+
+        registry.Upsert(register, "control-1");
+        registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 8, 10, heartbeatAt), "control-1", new ControlHealthThreshold());
+        registry.Upsert(register, "control-1");
+
+        BackendServerSnapshot snapshot = registry.Servers.Single();
+        Assert.AreEqual(heartbeatAt, snapshot.LastHeartbeatAt);
+        Assert.AreEqual(8, snapshot.CurrentConnections);
+        Assert.AreEqual(2, snapshot.AvailableConnections);
+    }
+
+    [TestMethod]
     public void BackendRegistryRandomizesOnlyEqualScoreRouteCandidatesTest()
     {
         BackendServerSnapshot[] candidates =
