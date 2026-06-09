@@ -46,7 +46,7 @@ Relay-plane bandwidth ≈ `(R × 3/4) × 1.37 KB` (content 256 B), where R = tot
 
 ## Takeaways
 - Individual relay messages are tiny; load is driven by **message rate** and **broadcast amplification**, not message size.
-- **Broadcast amplification ∝ server count N**: each cross-server message costs ~(N−1) sends + (N−1) replies. At 4 nodes that is ~3.7× a single message; at **30 nodes (300k target) it is ~30×** → the same message rate produces ~8× the relay traffic.
+- **Broadcast amplification ∝ server count N**: each cross-server message costs ~(N−1) sends + (N−1) replies. At 4 nodes that is ~3.7× a single message; at **30 nodes (300k target) it is ~36×** → the same message rate produces ~9–10× the relay traffic of the 4-node case.
 - Beyond a handful of nodes the **targeted fallback** (one `CLIENT_LOCATION_REQUEST/RESPONSE` + one targeted `SERVER_RELAY` ≈ 0.5 KB, independent of N) is far cheaper than broadcast-first. This is the point to revisit the broadcast-first relay policy. See [Operations → Scale notes](Operations.md#scale-notes).
 
 > Method note: sizes are protobuf field-sum estimates (string fields use representative lengths: `cluster_id`≈16, `instance_id`≈22, `host`≈9, `message_token`≈32–36, `remote_end_point`≈20). Plug in real `content` size and message rate for exact figures.
