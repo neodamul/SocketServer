@@ -700,6 +700,54 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
+    public async Task ControlServerKeepsSocketServerReportChannelBeyondReadTimeoutTest()
+    {
+        SocketFactory.Configure(new SocketOperationConfig
+        {
+            ConnectTimeoutSeconds = 30,
+            ReadTimeoutSeconds = 1,
+            WriteTimeoutSeconds = 30
+        });
+
+        using ControlServer controlServer = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-report-channel-timeout",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0,
+                RouteReservationSeconds = 5,
+                HeartbeatTimeoutSeconds = 5,
+                DegradedCpuPercent = 101,
+                DegradedMemoryPercent = 101,
+                DegradedStoragePercent = 101
+            }
+        });
+        Assert.IsTrue(controlServer.Start());
+
+        using TcpServer socketServer = CreateStartedSocketServer(86, "server-report-channel-timeout");
+        using ControlServerReporter reporter = CreateReporter(
+            socketServer,
+            new[] { new EndpointConfig { Host = "127.0.0.1", Port = controlServer.Port } },
+            TimeSpan.FromSeconds(5));
+
+        reporter.StartHeartbeatLoop(TimeSpan.FromSeconds(2));
+        await WaitForClusterAsync(
+            controlServer,
+            status => status.ServerCount == 1 &&
+                status.HealthyServerCount == 1 &&
+                status.TotalAvailableConnections == 10,
+            timeoutSeconds: 10);
+
+        await Task.Delay(TimeSpan.FromMilliseconds(1500));
+        Assert.IsTrue(
+            controlServer.ActiveConnectionCount > 0,
+            "ControlServer must not close an idle SocketServer report channel at the generic read timeout when the heartbeat interval is longer.");
+    }
+
+    [TestMethod]
     public async Task ReporterHeartbeatLoopReportsServerStatusWithoutExplicitRegisterTest()
     {
         using ControlServerPair controls = CreateStartedControlPair("heartbeat-thread");
