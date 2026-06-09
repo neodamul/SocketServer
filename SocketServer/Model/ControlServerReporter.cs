@@ -21,6 +21,9 @@ public class ControlServerReporter : IDisposable
     private static readonly TimeSpan MetadataRegisterInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RelayRefreshInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan BroadcastCompletionGraceInterval = TimeSpan.FromSeconds(1);
+    private const int SessionReportChannelCount = 4;
+    private const int SessionReportWorkerCount = 4;
+    private const int SessionReportQueueCapacity = 10000;
 
     private readonly TcpServer server;
     private readonly IReadOnlyCollection<EndpointConfig> controlServers;
@@ -30,18 +33,12 @@ public class ControlServerReporter : IDisposable
     private readonly TimeSpan reportTimeout;
     private readonly ResourceUsageProvider resourceUsageProvider = new();
     private readonly IReadOnlyCollection<ControlEndpointConnection> connections;
-    private readonly IReadOnlyCollection<ControlEndpointConnection> sessionConnections;
+    private readonly IReadOnlyCollection<ControlEndpointConnectionGroup> sessionConnectionGroups;
     private readonly object relayRefreshLock = new();
-    private readonly Channel<ControlReportMessage> reportChannel = Channel.CreateBounded<ControlReportMessage>(
-        new BoundedChannelOptions(10000)
-        {
-            FullMode = BoundedChannelFullMode.Wait,
-            SingleReader = true,
-            SingleWriter = false
-        });
+    private readonly Channel<ControlReportMessage>[] reportChannels;
     private readonly CancellationTokenSource reportCancellation = new();
     private readonly CancellationTokenSource relayRefreshCancellation = new();
-    private readonly Task reportWorkerTask;
+    private readonly Task[] reportWorkerTasks;
     private CancellationTokenSource cancellation;
     private Task heartbeatTask;
     private DateTimeOffset lastRegisterSentAt = DateTimeOffset.MinValue;
@@ -63,12 +60,13 @@ public class ControlServerReporter : IDisposable
         this.portRangeEnd = portRangeEnd;
         this.reportTimeout = NormalizeReportTimeout(reportTimeout);
         this.connections = CreateConnections(controlServers, this.reportTimeout);
-        this.sessionConnections = CreateConnections(controlServers, this.reportTimeout);
+        this.sessionConnectionGroups = CreateConnectionGroups(controlServers, this.reportTimeout, SessionReportChannelCount);
+        this.reportChannels = CreateReportChannels(SessionReportWorkerCount);
         this.server.ConfigureControlRouting(this.controlServers, this.clusterId);
         this.server.SessionOpenedAsync += this.SendSessionOpenedAsync;
         this.server.SessionUpdatedAsync += this.SendSessionUpdatedAsync;
         this.server.SessionClosedAsync += this.SendSessionClosedAsync;
-        this.reportWorkerTask = DedicatedWorker.Start(this.RunReportWorkerAsync, this.reportCancellation.Token);
+        this.reportWorkerTasks = StartReportWorkers(this.reportChannels, this.reportCancellation.Token);
     }
 
     public async Task RegisterAsync()
@@ -129,9 +127,12 @@ public class ControlServerReporter : IDisposable
             connection.Close();
         }
 
-        foreach (ControlEndpointConnection connection in this.sessionConnections)
+        foreach (ControlEndpointConnectionGroup group in this.sessionConnectionGroups)
         {
-            connection.Close();
+            foreach (ControlEndpointConnection connection in group.Connections)
+            {
+                connection.Close();
+            }
         }
 
         this.relayRefreshCancellation.Cancel();
@@ -284,6 +285,18 @@ public class ControlServerReporter : IDisposable
         return SendSessionEventAsync(session, ControlMessageIds.SessionUpdated, "Updated");
     }
 
+    private Task[] StartReportWorkers(Channel<ControlReportMessage>[] channels, CancellationToken cancellationToken)
+    {
+        Task[] workers = new Task[channels.Length];
+        for (int i = 0; i < workers.Length; i++)
+        {
+            ChannelReader<ControlReportMessage> reader = channels[i].Reader;
+            workers[i] = DedicatedWorker.Start(token => this.RunReportWorkerAsync(reader, token), cancellationToken);
+        }
+
+        return workers;
+    }
+
     private Task SendSessionEventAsync(ConnectionSession session, uint messageId, string state)
     {
         SessionEventMessage message = new()
@@ -300,7 +313,8 @@ public class ControlServerReporter : IDisposable
             Version = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
 
-        if (!this.reportChannel.Writer.TryWrite(new ControlReportMessage(messageId, message)))
+        ChannelWriter<ControlReportMessage> writer = this.GetReportChannelWriter(message);
+        if (!writer.TryWrite(new ControlReportMessage(messageId, message)))
         {
             Logger.Warn($"ControlServer session event queue rejected item. instanceId={this.server.InstanceId}, messageId={messageId}, sessionId={session.Id}, clientId={session.ClientId}");
         }
@@ -312,11 +326,11 @@ public class ControlServerReporter : IDisposable
         return Task.CompletedTask;
     }
 
-    private async Task RunReportWorkerAsync(CancellationToken cancellationToken)
+    private async Task RunReportWorkerAsync(ChannelReader<ControlReportMessage> reader, CancellationToken cancellationToken)
     {
         try
         {
-            await foreach (ControlReportMessage report in this.reportChannel.Reader.ReadAllAsync(cancellationToken))
+            await foreach (ControlReportMessage report in reader.ReadAllAsync(cancellationToken))
             {
                 try
                 {
@@ -403,8 +417,10 @@ public class ControlServerReporter : IDisposable
         T payload)
     {
         List<Task<bool>> tasks = new();
-        foreach (ControlEndpointConnection connection in this.sessionConnections)
+        ulong partitionKey = GetSessionEventPartitionKey(clientId, payload);
+        foreach (ControlEndpointConnectionGroup group in this.sessionConnectionGroups)
         {
+            ControlEndpointConnection connection = group.GetConnection(partitionKey);
             tasks.Add(SendSessionEventToEndpointWithRetryAsync(connection, clientId, messageId, payload));
         }
 
@@ -419,6 +435,10 @@ public class ControlServerReporter : IDisposable
         if (successCount == 0)
         {
             Logger.Warn($"ControlServer session event completed without successful endpoint. messageId={messageId}, endpointCount={tasks.Count}");
+        }
+        else if (messageId == ControlMessageIds.SessionUpdated)
+        {
+            Logger.Debug($"ControlServer session event completed. messageId={messageId}, successEndpoints={successCount}, endpointCount={tasks.Count}");
         }
         else
         {
@@ -534,11 +554,15 @@ public class ControlServerReporter : IDisposable
             this.server.SessionOpenedAsync -= this.SendSessionOpenedAsync;
             this.server.SessionUpdatedAsync -= this.SendSessionUpdatedAsync;
             this.server.SessionClosedAsync -= this.SendSessionClosedAsync;
-            this.reportChannel.Writer.TryComplete();
+            foreach (Channel<ControlReportMessage> channel in this.reportChannels)
+            {
+                channel.Writer.TryComplete();
+            }
+
             this.reportCancellation.CancelAfter(TimeSpan.FromSeconds(5));
             try
             {
-                this.reportWorkerTask.Wait(TimeSpan.FromSeconds(5));
+                Task.WaitAll(this.reportWorkerTasks, TimeSpan.FromSeconds(5));
             }
             catch (AggregateException)
             {
@@ -551,9 +575,12 @@ public class ControlServerReporter : IDisposable
                 connection.Dispose();
             }
 
-            foreach (ControlEndpointConnection connection in this.sessionConnections)
+            foreach (ControlEndpointConnectionGroup group in this.sessionConnectionGroups)
             {
-                connection.Dispose();
+                foreach (ControlEndpointConnection connection in group.Connections)
+                {
+                    connection.Dispose();
+                }
             }
 
             this.disposedValue = true;
@@ -594,6 +621,87 @@ public class ControlServerReporter : IDisposable
         }
 
         return connections;
+    }
+
+    private static Channel<ControlReportMessage>[] CreateReportChannels(int workerCount)
+    {
+        int normalizedWorkerCount = Math.Max(2, workerCount);
+        Channel<ControlReportMessage>[] channels = new Channel<ControlReportMessage>[normalizedWorkerCount];
+        for (int i = 0; i < channels.Length; i++)
+        {
+            channels[i] = Channel.CreateBounded<ControlReportMessage>(
+                new BoundedChannelOptions(SessionReportQueueCapacity)
+                {
+                    FullMode = BoundedChannelFullMode.Wait,
+                    SingleReader = true,
+                    SingleWriter = false
+                });
+        }
+
+        return channels;
+    }
+
+    private ChannelWriter<ControlReportMessage> GetReportChannelWriter(SessionEventMessage message)
+    {
+        int index = GetPartitionIndex((ulong)message.SessionId, this.reportChannels.Length);
+        return this.reportChannels[index].Writer;
+    }
+
+    private static IReadOnlyCollection<ControlEndpointConnectionGroup> CreateConnectionGroups(
+        IReadOnlyCollection<EndpointConfig> endpoints,
+        TimeSpan reportTimeout,
+        int channelCount)
+    {
+        int normalizedChannelCount = Math.Max(2, channelCount);
+        List<ControlEndpointConnectionGroup> groups = new();
+        foreach (EndpointConfig endpoint in endpoints)
+        {
+            List<ControlEndpointConnection> connections = new();
+            for (int i = 0; i < normalizedChannelCount; i++)
+            {
+                connections.Add(new ControlEndpointConnection(endpoint, reportTimeout));
+            }
+
+            groups.Add(new ControlEndpointConnectionGroup(endpoint, connections));
+        }
+
+        return groups;
+    }
+
+    private static ulong GetSessionEventPartitionKey<T>(uint clientId, T payload)
+    {
+        if (payload is SessionEventMessage session && session.SessionId > 0)
+        {
+            return (ulong)session.SessionId;
+        }
+
+        return clientId;
+    }
+
+    private static int GetPartitionIndex(ulong partitionKey, int partitionCount)
+    {
+        return (int)(partitionKey % (ulong)partitionCount);
+    }
+
+    private sealed class ControlEndpointConnectionGroup
+    {
+        public ControlEndpointConnectionGroup(
+            EndpointConfig endpoint,
+            IReadOnlyList<ControlEndpointConnection> connections)
+        {
+            this.Endpoint = endpoint;
+            this.Connections = connections;
+        }
+
+        public EndpointConfig Endpoint { get; }
+
+        public IReadOnlyList<ControlEndpointConnection> Connections { get; }
+
+        public ControlEndpointConnection GetConnection(ulong partitionKey)
+        {
+            int index = GetPartitionIndex(partitionKey, this.Connections.Count);
+            return this.Connections[index];
+        }
     }
 
     private sealed class ControlEndpointConnection : IDisposable
