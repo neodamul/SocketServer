@@ -542,6 +542,23 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void BackendRegistryServerRegisterRefreshPreservesHeartbeatHealthTest()
+    {
+        BackendServerRegistry registry = new();
+        ServerRegisterRequest register = CreateRegister(1, "server-1", 5101, 100);
+        registry.Upsert(register, "control-1");
+        ServerHeartbeatRequest heartbeat = CreateHeartbeat(1, "server-1", 5101, 0, 100);
+        heartbeat.ResourceUsage.CpuUsagePercent = 95;
+        registry.Upsert(heartbeat, "control-1", new ControlHealthThreshold { DegradedCpuPercent = 85 });
+
+        registry.Upsert(register, "control-1");
+        RouteResponse response = registry.Resolve(new RouteRequest { ClientId = 1 }, "control-1", TimeSpan.FromSeconds(5));
+
+        Assert.IsFalse(response.Success);
+        Assert.AreEqual(ServerHealthState.Degraded, registry.Servers.Single().Health);
+    }
+
+    [TestMethod]
     public void BackendRegistryFileStoreRestoresServerReservationAndClientLocationTest()
     {
         string path = CreateRegistryPath();

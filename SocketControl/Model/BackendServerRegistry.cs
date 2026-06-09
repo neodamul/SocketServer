@@ -90,7 +90,11 @@ public class BackendServerRegistry
                 existing.PortRangeStart = request.PortRangeStart;
                 existing.PortRangeEnd = request.PortRangeEnd;
                 existing.MaxConnections = request.MaxConnections;
-                existing.Health = ServerHealthState.Healthy;
+                if (restarted)
+                {
+                    existing.Health = ServerHealthState.Healthy;
+                }
+
                 existing.StartedAt = request.StartedAt;
                 if (restarted || existing.LastHeartbeatAt == default)
                 {
