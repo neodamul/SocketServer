@@ -254,7 +254,10 @@ public class ControlServer : IDisposable
             this.activeConnectionsBySecureConnection[acceptedConnection] = activeConnection;
             while (true)
             {
-                (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(acceptedConnection);
+                (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(
+                    acceptedConnection,
+                    this.GetControlFrameHeaderReadTimeoutMilliseconds(),
+                    SocketFactory.ReadTimeoutMilliseconds);
                 if (!success)
                 {
                     break;
@@ -1031,6 +1034,12 @@ public class ControlServer : IDisposable
     private TimeSpan GetHeartbeatTimeout()
     {
         return TimeSpan.FromSeconds(this.config.HeartbeatTimeoutSeconds <= 0 ? 90 : this.config.HeartbeatTimeoutSeconds);
+    }
+
+    private int GetControlFrameHeaderReadTimeoutMilliseconds()
+    {
+        double timeoutMilliseconds = GetHeartbeatTimeout().TotalMilliseconds + TimeSpan.FromSeconds(5).TotalMilliseconds;
+        return Math.Max(SocketFactory.ReadTimeoutMilliseconds, (int)Math.Ceiling(timeoutMilliseconds));
     }
 
     private TimeSpan GetConnectionCleanupInterval()

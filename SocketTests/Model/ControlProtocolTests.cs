@@ -437,7 +437,7 @@ public class ControlProtocolTests
     {
         BackendServerRegistry registry = new();
         ServerRegisterRequest firstRegister = CreateRegister(1, "server-1", 5101, 100);
-        firstRegister.StartedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+        firstRegister.StartedAt = DateTimeOffset.UtcNow.AddSeconds(-10);
         registry.Upsert(firstRegister, "control-1");
         registry.UpsertSession(new SessionEventMessage
         {
