@@ -31,6 +31,22 @@ public class ResponseWorkerConfigurationTests
     }
 
     [TestMethod]
+    public void SocketServerSessionReportsUseMultiplePersistentChannelsPerEndpointTest()
+    {
+        Assert.AreEqual(4, ReadPrivateConstInt(typeof(ControlServerReporter), "SessionReportChannelCount"));
+        Assert.AreEqual(4, ReadPrivateConstInt(typeof(ControlServerReporter), "SessionReportWorkerCount"));
+
+        string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketServer/Model/ControlServerReporter.cs"));
+        Assert.IsTrue(source.Contains("reportChannels = CreateReportChannels(SessionReportWorkerCount)", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("SingleReader = true", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("Task[] workers = new Task[channels.Length]", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("CreateConnectionGroups(controlServers, this.reportTimeout, SessionReportChannelCount)", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("Math.Max(2, channelCount)", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("GetSessionEventPartitionKey(clientId, payload)", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("GetReportChannelWriter(message)", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void SocketServerSessionSendPreservesPerConnectionOrderTest()
     {
         string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketServer/Model/ConnectionSession.cs"));
