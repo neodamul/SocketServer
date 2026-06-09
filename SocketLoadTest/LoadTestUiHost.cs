@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Builder;
@@ -94,7 +95,7 @@ internal sealed class LoadTestUiService
 {
     private readonly object syncRoot = new();
     private readonly LoadTestOptions defaultOptions;
-    private readonly List<ConnectedLoadClient> connectedClients = new();
+    private readonly List<LoadTestUiConnectedClient> connectedClients = new();
     private LoadTestCounters counters = new();
     private CancellationTokenSource? cancellation;
     private Task? workerTask;
@@ -161,8 +162,8 @@ internal sealed class LoadTestUiService
             LoadTestUiClientState[] clients = this.connectedClients
                 .Select(client => new LoadTestUiClientState(
                     client.ClientId,
-                    client.Client.IsConnected(),
-                    $"{client.Client.GetIpAddress()}:{client.Client.GetPort()}"))
+                    client.Session.IsConnected && client.Session.IsRegistered,
+                    client.Session.ConnectedEndpoint))
                 .ToArray();
             LoadTestUiTargetState[] targets = clients
                 .Where(client => client.IsConnected)
@@ -192,15 +193,14 @@ internal sealed class LoadTestUiService
             for (int firstClientId = options.StartClientId; firstClientId <= lastClientId && !cancellationToken.IsCancellationRequested; firstClientId += options.BatchSize)
             {
                 int batchCount = Math.Min(options.BatchSize, lastClientId - firstClientId + 1);
-                ClientAttemptResult[] results = await this.ConnectBatchAsync(options, firstClientId, batchCount);
+                LoadTestUiClientAttemptResult[] results = await this.ConnectBatchAsync(options, firstClientId, batchCount);
                 lock (this.syncRoot)
                 {
-                    foreach (ClientAttemptResult result in results)
+                    foreach (LoadTestUiClientAttemptResult result in results)
                     {
-                        if (result.Client != null)
+                        if (result.Session != null)
                         {
-                            result.Client.StartHealthCheckLoop();
-                            this.connectedClients.Add(new ConnectedLoadClient(result.ClientId, result.Client));
+                            this.connectedClients.Add(new LoadTestUiConnectedClient(result.ClientId, result.Session));
                         }
                     }
 
@@ -228,9 +228,9 @@ internal sealed class LoadTestUiService
         }
     }
 
-    private async Task<ClientAttemptResult[]> ConnectBatchAsync(LoadTestOptions options, int firstClientId, int batchCount)
+    private async Task<LoadTestUiClientAttemptResult[]> ConnectBatchAsync(LoadTestOptions options, int firstClientId, int batchCount)
     {
-        Task<ClientAttemptResult>[] tasks = new Task<ClientAttemptResult>[batchCount];
+        Task<LoadTestUiClientAttemptResult>[] tasks = new Task<LoadTestUiClientAttemptResult>[batchCount];
         for (int index = 0; index < batchCount; index++)
         {
             int clientId = firstClientId + index;
@@ -240,46 +240,46 @@ internal sealed class LoadTestUiService
         return await Task.WhenAll(tasks);
     }
 
-    private async Task<ClientAttemptResult> ConnectClientAsync(LoadTestOptions options, int clientId)
+    private async Task<LoadTestUiClientAttemptResult> ConnectClientAsync(LoadTestOptions options, int clientId)
     {
         Interlocked.Increment(ref this.counters.Attempted);
-        TcpClient client = new(clientId, $"ui-client-{clientId}", options.Host, options.Port);
+        SocketClientSession session = new();
+        session.HealthCheckReceived += _ => Interlocked.Increment(ref this.counters.HealthCheckSuccess);
         try
         {
             bool connected = options.UseControlServer
-                ? await client.ConnectViaControlServerAsync(options.Host, options.Port)
-                : client.Connect();
+                ? await session.ConnectAndRegisterAsync(
+                    clientId,
+                    $"ui-client-{clientId}",
+                    options.Host,
+                    options.Port,
+                    true,
+                    HealthCheckProtocol.KeepAliveIntervalSeconds,
+                    30,
+                    90)
+                : await session.ConnectAndRegisterAsync(
+                    clientId,
+                    $"ui-client-{clientId}",
+                    options.Host,
+                    options.Port,
+                    false,
+                    HealthCheckProtocol.KeepAliveIntervalSeconds,
+                    30,
+                    90);
             if (!connected)
             {
                 Interlocked.Increment(ref this.counters.ConnectFail);
-                client.Dispose();
-                return ClientAttemptResult.Failed;
+                return new LoadTestUiClientAttemptResult(clientId, session);
             }
 
             Interlocked.Increment(ref this.counters.Connected);
-            (bool registerReceived, ClientRegisterAck registerAck) = await client.RegisterClientWithAckAsync();
-            if (!registerReceived || !registerAck.Success)
-            {
-                Interlocked.Increment(ref this.counters.RegisterFail);
-                client.Dispose();
-                return ClientAttemptResult.Failed;
-            }
-
-            if (!await SendAndReceiveHealthCheckAsync(client, options.HealthCheckTimeoutSeconds))
-            {
-                Interlocked.Increment(ref this.counters.HealthCheckFail);
-                client.Dispose();
-                return ClientAttemptResult.Failed;
-            }
-
-            Interlocked.Increment(ref this.counters.HealthCheckSuccess);
-            return new ClientAttemptResult(clientId, client);
+            return new LoadTestUiClientAttemptResult(clientId, session);
         }
-        catch (Exception exception) when (exception is TimeoutException or InvalidOperationException)
+        catch (Exception exception) when (exception is TimeoutException or InvalidOperationException or IOException)
         {
             Interlocked.Increment(ref this.counters.HealthCheckFail);
-            client.Dispose();
-            return ClientAttemptResult.Failed;
+            session.Dispose();
+            return LoadTestUiClientAttemptResult.Failed;
         }
     }
 
@@ -304,30 +304,12 @@ internal sealed class LoadTestUiService
 
     private void DisposeClients()
     {
-        foreach (ConnectedLoadClient client in this.connectedClients)
+        foreach (LoadTestUiConnectedClient client in this.connectedClients)
         {
-            client.Client.Dispose();
+            client.Session.Dispose();
         }
 
         this.connectedClients.Clear();
-    }
-
-    private static async Task<bool> SendAndReceiveHealthCheckAsync(TcpClient client, int timeoutSeconds)
-    {
-        if (!await client.SendHealthCheckAsync())
-        {
-            return false;
-        }
-
-        Task<(bool Success, HealthCheckMessage Message)> receiveTask = client.TryReceiveHealthCheckAsync();
-        Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(TimeSpan.FromSeconds(timeoutSeconds)));
-        if (completedTask != receiveTask)
-        {
-            return false;
-        }
-
-        (bool success, HealthCheckMessage message) = await receiveTask;
-        return success && message.Type == HealthCheckMessageType.Pong;
     }
 
     private static LoadTestUiCounters SnapshotCounters(LoadTestCounters counters)
@@ -344,6 +326,13 @@ internal sealed class LoadTestUiService
             Volatile.Read(ref counters.MessageFail));
     }
 }
+
+internal sealed record LoadTestUiClientAttemptResult(int ClientId, SocketClientSession? Session)
+{
+    public static LoadTestUiClientAttemptResult Failed { get; } = new(0, null);
+}
+
+internal sealed record LoadTestUiConnectedClient(int ClientId, SocketClientSession Session);
 
 internal sealed class LoadTestUiStartRequest
 {

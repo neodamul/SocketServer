@@ -29,7 +29,7 @@ Bulk-connection validation uses `SocketLoadTest` (see [Operations → Load test]
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k --use-control-server --report-file reports/soak-10k.json
 ```
 The base run aggregates connect, register, first healthcheck, and healthcheck-loop retention. `--message-test` splits connected clients into source/target pairs and verifies client-to-client delivery and source ack.
-LoadTest uses the same local mTLS client-certificate path as `SocketClient`; when SocketServer requires client certificates, load clients must present per-client certificates and complete register before they are counted as active sessions.
+LoadTest uses the same local mTLS client-certificate path as `SocketClient`; when SocketServer requires client certificates, load clients must present per-client certificates and complete register before they are counted as active sessions. UI mode keeps the requested client IDs in reconnect-capable `SocketClientSession` instances, so failed or disconnected clients keep retrying instead of requiring a fresh load-test start.
 
 ```bash
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 0 --use-control-server --message-test --message-rounds 1

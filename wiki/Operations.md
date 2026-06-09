@@ -35,6 +35,7 @@ Dashboard (`http://127.0.0.1:10050`):
 dotnet run --project SocketDashboard/SocketDashboard.csproj
 ```
 APIs: `GET /api/server/status`, `/health/live`, `/health/ready`, `/metrics`. With a ControlServer running, the dashboard shows the cluster registry snapshot; otherwise the local fallback SocketServer state. `/health/live` = dashboard process liveness, `/health/ready` = dashboard TCP server readiness, `/metrics` = cluster connection counters + local socket/pool counters. See [Architecture → Dashboard](Architecture.md#dashboard).
+Dashboard fixes its content root to the application output directory, so `appsettings.json` is read from the deployed dashboard directory even when the process is started from another working directory. Startup logs include the effective ControlServer endpoints; the local default must show `127.0.0.1:10001` and `127.0.0.1:10002`, not the nginx broker endpoint `127.0.0.1:10000`.
 
 ## Certificates
 Local certs are generated under the solution-root `Certificates/` by default. For per-host isolation, set `security.certificateDirectory` (per project `config.json`) or `SOCKET_CERTIFICATE_DIR`. The PFX password is read from the env var named by `security.certificatePasswordEnvironmentVariable` (default `SOCKET_CERTIFICATE_PASSWORD`), never hardcoded:

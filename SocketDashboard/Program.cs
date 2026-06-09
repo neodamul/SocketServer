@@ -19,6 +19,7 @@ string outputWebRootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot");
 WebApplicationBuilder builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,
+    ContentRootPath = AppContext.BaseDirectory,
     WebRootPath = Directory.Exists(outputWebRootPath) ? outputWebRootPath : "wwwroot"
 });
 
@@ -29,6 +30,7 @@ if (String.IsNullOrEmpty(builder.Configuration["urls"]) &&
 }
 
 IReadOnlyCollection<EndpointConfig> controlEndpoints = ReadControlEndpoints(builder);
+logger.Info($"Dashboard control endpoints configured: {String.Join(", ", controlEndpoints.Select(endpoint => $"{endpoint.Host}:{endpoint.Port}"))}");
 SocketSecurityConfig securityConfig = builder.Configuration
     .GetSection("dashboard:security")
     .Get<SocketSecurityConfig>() ?? new SocketSecurityConfig();
