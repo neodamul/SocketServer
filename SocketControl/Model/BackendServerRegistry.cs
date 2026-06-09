@@ -14,6 +14,8 @@ public class BackendServerRegistry
     private readonly ConcurrentDictionary<string, BackendServerSnapshot> servers = new();
     private readonly ConcurrentDictionary<string, RouteReservationMessage> reservations = new();
     private readonly ConcurrentDictionary<string, SessionEventMessage> sessions = new();
+    private readonly ConcurrentDictionary<string, SessionEventMessage> sessionTombstones = new();
+    private readonly ConcurrentDictionary<string, DateTimeOffset> zeroConnectionCutoffs = new();
     private readonly ConcurrentDictionary<uint, ClientLocationMessage> clientLocations = new();
     private readonly TimeSpan heartbeatTimeout;
     private readonly IBackendRegistryStore store;
@@ -186,6 +188,16 @@ public class BackendServerRegistry
             });
 
             snapshot.Health = EvaluateHealth(snapshot, threshold);
+            if (snapshot.CurrentConnections == 0)
+            {
+                MarkZeroConnectionCutoff(snapshot.InstanceId, snapshot.LastHeartbeatAt);
+                PruneInstanceSessions(snapshot.InstanceId);
+            }
+            else
+            {
+                ClearZeroConnectionCutoff(snapshot.InstanceId);
+            }
+
             RecalculateReservations();
             this.SaveState();
             return snapshot;
@@ -215,6 +227,16 @@ public class BackendServerRegistry
                 });
 
             this.version = Math.Max(this.version, stored.Version);
+            if (stored.CurrentConnections == 0)
+            {
+                MarkZeroConnectionCutoff(stored.InstanceId, stored.LastHeartbeatAt);
+                PruneInstanceSessions(stored.InstanceId);
+            }
+            else
+            {
+                ClearZeroConnectionCutoff(stored.InstanceId);
+            }
+
             RecalculateReservations();
             this.SaveState();
         }
@@ -387,7 +409,29 @@ public class BackendServerRegistry
     {
         lock (this.syncRoot)
         {
-            this.sessions[CreateSessionKey(session)] = session;
+            string sessionKey = CreateSessionKey(session);
+            if (IsBeforeZeroConnectionCutoff(session))
+            {
+                this.SaveState();
+                return;
+            }
+
+            if (this.sessionTombstones.TryGetValue(sessionKey, out SessionEventMessage? tombstone) &&
+                tombstone.Version >= session.Version)
+            {
+                this.SaveState();
+                return;
+            }
+
+            if (this.sessions.TryGetValue(sessionKey, out SessionEventMessage? existingSession) &&
+                existingSession.Version > session.Version)
+            {
+                this.SaveState();
+                return;
+            }
+
+            this.sessionTombstones.TryRemove(sessionKey, out _);
+            this.sessions[sessionKey] = session;
             if (session.ClientId == 0 || !this.servers.TryGetValue(session.InstanceId, out BackendServerSnapshot? server))
             {
                 this.SaveState();
@@ -415,7 +459,18 @@ public class BackendServerRegistry
     {
         lock (this.syncRoot)
         {
-            this.sessions.TryRemove(CreateSessionKey(session), out _);
+            string sessionKey = CreateSessionKey(session);
+            if (this.sessions.TryGetValue(sessionKey, out SessionEventMessage? existingSession) &&
+                existingSession.Version > session.Version)
+            {
+                return;
+            }
+
+            this.sessions.TryRemove(sessionKey, out _);
+            this.sessionTombstones.AddOrUpdate(
+                sessionKey,
+                session,
+                (_, existing) => session.Version >= existing.Version ? session : existing);
             if (session.ClientId > 0)
             {
                 RemoveClientLocation(session);
@@ -431,6 +486,19 @@ public class BackendServerRegistry
         {
             if (location.ClientId == 0)
             {
+                return;
+            }
+
+            if (IsSessionTombstoneCurrent(location.InstanceId, location.SessionId, location.Version))
+            {
+                this.SaveState();
+                return;
+            }
+
+            if (!this.sessions.ContainsKey(CreateSessionKey(location.InstanceId, location.SessionId)) &&
+                IsInstanceZeroConnectionCutoffActive(location.InstanceId))
+            {
+                this.SaveState();
                 return;
             }
 
@@ -494,11 +562,24 @@ public class BackendServerRegistry
     {
         lock (this.syncRoot)
         {
+            if (PruneExpiredSessions(DateTimeOffset.UtcNow))
+            {
+                this.SaveState();
+            }
+
             if (!this.clientLocations.TryGetValue(request.TargetClientId, out ClientLocationMessage? location) ||
+                IsSessionTombstoneCurrent(location.InstanceId, location.SessionId, location.Version) ||
+                !this.sessions.ContainsKey(CreateSessionKey(location.InstanceId, location.SessionId)) ||
                 !this.servers.TryGetValue(location.InstanceId, out BackendServerSnapshot? server) ||
                 server.Health != ServerHealthState.Healthy ||
                 IsHeartbeatExpired(server))
             {
+                if (location != null)
+                {
+                    this.clientLocations.TryRemove(request.TargetClientId, out _);
+                    this.SaveState();
+                }
+
                 return new ClientLocationResponse
                 {
                     Success = false,
@@ -583,7 +664,8 @@ public class BackendServerRegistry
             ExpireReservations();
             bool recalculated = RecalculateReservations();
             bool normalized = NormalizeExpiredServers();
-            if (recalculated || normalized)
+            bool pruned = PruneExpiredSessions(DateTimeOffset.UtcNow);
+            if (recalculated || normalized || pruned)
             {
                 this.SaveState();
             }
@@ -603,6 +685,10 @@ public class BackendServerRegistry
         {
             this.servers[server.InstanceId] = server;
             this.version = Math.Max(this.version, server.Version);
+            if (server.CurrentConnections == 0)
+            {
+                MarkZeroConnectionCutoff(server.InstanceId, server.LastHeartbeatAt);
+            }
         }
 
         DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -617,10 +703,21 @@ public class BackendServerRegistry
             this.version = Math.Max(this.version, session.Version);
         }
 
+        foreach (SessionEventMessage session in state.SessionTombstones ?? Enumerable.Empty<SessionEventMessage>())
+        {
+            this.sessionTombstones[CreateSessionKey(session)] = session;
+            this.version = Math.Max(this.version, session.Version);
+        }
+
         foreach (ClientLocationMessage location in state.ClientLocations ?? Enumerable.Empty<ClientLocationMessage>())
         {
             this.clientLocations[location.ClientId] = location;
             this.version = Math.Max(this.version, location.Version);
+        }
+
+        foreach (string instanceId in this.zeroConnectionCutoffs.Keys)
+        {
+            PruneInstanceSessions(instanceId);
         }
 
         this.version = Math.Max(this.version, state.Version);
@@ -640,7 +737,8 @@ public class BackendServerRegistry
             ExpireReservations();
             bool recalculated = RecalculateReservations();
             bool normalized = NormalizeExpiredServers();
-            if (recalculated || normalized)
+            bool pruned = PruneExpiredSessions(DateTimeOffset.UtcNow);
+            if (recalculated || normalized || pruned)
             {
                 this.SaveState();
             }
@@ -678,6 +776,68 @@ public class BackendServerRegistry
 
             ReleaseReservation(reservation.ReservationId);
         }
+    }
+
+    private bool PruneExpiredSessions(DateTimeOffset now)
+    {
+        bool changed = false;
+        DateTimeOffset expiresBefore = now - this.heartbeatTimeout;
+        foreach (SessionEventMessage session in this.sessions.Values)
+        {
+            if (session.LastReceivedAt == default || session.LastReceivedAt >= expiresBefore)
+            {
+                continue;
+            }
+
+            changed |= RemoveSessionWithTombstone(session, long.MaxValue);
+        }
+
+        return changed;
+    }
+
+    private bool PruneInstanceSessions(string instanceId)
+    {
+        bool changed = false;
+        foreach (SessionEventMessage session in this.sessions.Values.Where(item => item.InstanceId == instanceId))
+        {
+            changed |= RemoveSessionWithTombstone(session, long.MaxValue);
+        }
+
+        return changed;
+    }
+
+    private bool RemoveSessionWithTombstone(SessionEventMessage session, long tombstoneVersion)
+    {
+        SessionEventMessage tombstone = new()
+        {
+            ClusterId = session.ClusterId,
+            SessionId = session.SessionId,
+            ClientId = session.ClientId,
+            ServerId = session.ServerId,
+            InstanceId = session.InstanceId,
+            RemoteEndPoint = session.RemoteEndPoint,
+            ConnectedAt = session.ConnectedAt,
+            LastReceivedAt = session.LastReceivedAt,
+            State = "Closed",
+            Version = Math.Max(session.Version, tombstoneVersion)
+        };
+        int before = this.sessions.Count;
+        string sessionKey = CreateSessionKey(tombstone);
+        this.sessions.TryRemove(sessionKey, out _);
+        this.sessionTombstones.AddOrUpdate(
+            sessionKey,
+            tombstone,
+            (_, existing) => tombstone.Version >= existing.Version ? tombstone : existing);
+        if (tombstone.ClientId > 0 &&
+            this.clientLocations.TryGetValue(tombstone.ClientId, out ClientLocationMessage? location) &&
+            location.InstanceId == tombstone.InstanceId &&
+            location.SessionId == tombstone.SessionId &&
+            tombstone.Version >= location.Version)
+        {
+            this.clientLocations.TryRemove(tombstone.ClientId, out _);
+        }
+
+        return this.sessions.Count != before;
     }
 
     private bool RecalculateReservations()
@@ -755,28 +915,16 @@ public class BackendServerRegistry
             server.CurrentConnections = 0;
             server.ReservedConnections = 0;
             server.AvailableConnections = 0;
+            MarkZeroConnectionCutoff(server.InstanceId, now);
 
-            foreach (SessionEventMessage session in this.sessions.Values.Where(item => item.InstanceId == server.InstanceId))
+            if (PruneInstanceSessions(server.InstanceId))
             {
-                if (session.State != "ServerDisconnected")
-                {
-                    serverChanged = true;
-                }
-
-                session.State = "ServerDisconnected";
-                session.Version = Math.Max(session.Version, server.Version);
+                serverChanged = true;
             }
 
             foreach (ClientLocationMessage location in this.clientLocations.Values.Where(item => item.InstanceId == server.InstanceId))
             {
-                if (location.State != "ServerDisconnected")
-                {
-                    serverChanged = true;
-                }
-
-                location.State = "ServerDisconnected";
-                location.Version = Math.Max(location.Version, server.Version);
-                location.UpdatedAt = now;
+                serverChanged |= this.clientLocations.TryRemove(location.ClientId, out _);
             }
 
             foreach (RouteReservationMessage reservation in this.reservations.Values.Where(item => item.InstanceId == server.InstanceId))
@@ -788,16 +936,6 @@ public class BackendServerRegistry
             {
                 server.Version = Interlocked.Increment(ref this.version);
                 server.UpdatedAt = now;
-                foreach (SessionEventMessage session in this.sessions.Values.Where(item => item.InstanceId == server.InstanceId))
-                {
-                    session.Version = Math.Max(session.Version, server.Version);
-                }
-
-                foreach (ClientLocationMessage location in this.clientLocations.Values.Where(item => item.InstanceId == server.InstanceId))
-                {
-                    location.Version = Math.Max(location.Version, server.Version);
-                }
-
                 changed = true;
             }
         }
@@ -813,6 +951,7 @@ public class BackendServerRegistry
             Servers = this.servers.Values.ToList(),
             Reservations = this.reservations.Values.ToList(),
             Sessions = this.sessions.Values.ToList(),
+            SessionTombstones = this.sessionTombstones.Values.ToList(),
             ClientLocations = this.clientLocations.Values.ToList()
         };
     }
@@ -863,12 +1002,54 @@ public class BackendServerRegistry
             (candidate.Version == existing.Version && candidate.UpdatedAt >= existing.UpdatedAt);
     }
 
+    private bool IsSessionTombstoneCurrent(string instanceId, long sessionId, long version)
+    {
+        return this.sessionTombstones.TryGetValue(CreateSessionKey(instanceId, sessionId), out SessionEventMessage? tombstone) &&
+            tombstone.Version >= version;
+    }
+
+    private bool IsBeforeZeroConnectionCutoff(SessionEventMessage session)
+    {
+        if (!this.zeroConnectionCutoffs.TryGetValue(session.InstanceId, out DateTimeOffset cutoff))
+        {
+            return false;
+        }
+
+        return session.ConnectedAt == default || session.ConnectedAt <= cutoff;
+    }
+
+    private bool IsInstanceZeroConnectionCutoffActive(string instanceId)
+    {
+        return this.zeroConnectionCutoffs.ContainsKey(instanceId);
+    }
+
+    private void MarkZeroConnectionCutoff(string instanceId, DateTimeOffset cutoff)
+    {
+        DateTimeOffset normalizedCutoff = cutoff == default ? DateTimeOffset.UtcNow : cutoff;
+        this.zeroConnectionCutoffs.AddOrUpdate(
+            instanceId,
+            normalizedCutoff,
+            (_, existing) => normalizedCutoff > existing ? normalizedCutoff : existing);
+    }
+
+    private void ClearZeroConnectionCutoff(string instanceId)
+    {
+        this.zeroConnectionCutoffs.TryRemove(instanceId, out _);
+    }
+
     private void RemoveInstanceState(string instanceId)
     {
         foreach (SessionEventMessage session in this.sessions.Values.Where(item => item.InstanceId == instanceId))
         {
             this.sessions.TryRemove(CreateSessionKey(session), out _);
         }
+
+        foreach (SessionEventMessage session in this.sessionTombstones.Values.Where(item => item.InstanceId == instanceId))
+        {
+            this.sessionTombstones.TryRemove(CreateSessionKey(session), out _);
+        }
+
+        ClearZeroConnectionCutoff(instanceId);
 
         foreach (ClientLocationMessage location in this.clientLocations.Values.Where(item => item.InstanceId == instanceId))
         {
@@ -898,7 +1079,12 @@ public class BackendServerRegistry
 
     private static string CreateSessionKey(SessionEventMessage session)
     {
-        return $"{session.InstanceId}:{session.SessionId}";
+        return CreateSessionKey(session.InstanceId, session.SessionId);
+    }
+
+    private static string CreateSessionKey(string instanceId, long sessionId)
+    {
+        return $"{instanceId}:{sessionId}";
     }
 }
 

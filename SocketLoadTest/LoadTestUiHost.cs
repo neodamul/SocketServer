@@ -275,8 +275,17 @@ internal sealed class LoadTestUiService
                     90);
             if (!connected)
             {
-                Interlocked.Increment(ref this.counters.ConnectFail);
-                return new LoadTestUiClientAttemptResult(clientId, session);
+                if (session.LastFailure == SocketClientSessionFailure.Register)
+                {
+                    Interlocked.Increment(ref this.counters.RegisterFail);
+                }
+                else
+                {
+                    Interlocked.Increment(ref this.counters.ConnectFail);
+                }
+
+                session.Dispose();
+                return new LoadTestUiClientAttemptResult(clientId, null);
             }
 
             Interlocked.Increment(ref this.counters.Connected);
