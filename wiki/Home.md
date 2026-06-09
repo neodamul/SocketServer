@@ -8,6 +8,7 @@
 - [Protocols](Protocols.md) — common frame, transport security, message protocols, control plane.
 - [Configuration](Configuration.md) — config files, security, socket options, certificates, per-module settings.
 - [Operations](Operations.md) — build/run, local port map, certificates, load test, scale sizing.
+- [Relay Traffic Sizing](RelayTrafficSizing.md) — control/relay message sizes & broadcast amplification at a 40k-client example.
 - [Testing](Testing.md) — test suite scope, load test, log analysis, native samples.
 - [Open Source Libraries](OpenSourceLibraries.md) — NuGet dependencies and licenses.
 
