@@ -51,6 +51,8 @@ public class BackendServerRegistry
     {
         lock (this.syncRoot)
         {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTimeOffset registerHeartbeatAt = GetRegisterHeartbeatAt(request.StartedAt, now);
             BackendServerSnapshot snapshot = this.servers.AddOrUpdate(
             request.InstanceId,
             _ => new BackendServerSnapshot
@@ -67,13 +69,14 @@ public class BackendServerRegistry
                 MaxConnections = request.MaxConnections,
                 Health = ServerHealthState.Healthy,
                 StartedAt = request.StartedAt,
-                LastHeartbeatAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow,
+                LastHeartbeatAt = registerHeartbeatAt,
+                UpdatedAt = now,
                 Version = Interlocked.Increment(ref this.version)
             },
             (_, existing) =>
             {
-                if (request.StartedAt > existing.StartedAt)
+                bool restarted = request.StartedAt > existing.StartedAt;
+                if (restarted)
                 {
                     this.RemoveInstanceState(request.InstanceId);
                 }
@@ -87,10 +90,18 @@ public class BackendServerRegistry
                 existing.PortRangeStart = request.PortRangeStart;
                 existing.PortRangeEnd = request.PortRangeEnd;
                 existing.MaxConnections = request.MaxConnections;
-                existing.Health = ServerHealthState.Healthy;
+                if (restarted)
+                {
+                    existing.Health = ServerHealthState.Healthy;
+                }
+
                 existing.StartedAt = request.StartedAt;
-                existing.LastHeartbeatAt = DateTimeOffset.UtcNow;
-                existing.UpdatedAt = DateTimeOffset.UtcNow;
+                if (restarted || existing.LastHeartbeatAt == default)
+                {
+                    existing.LastHeartbeatAt = registerHeartbeatAt;
+                }
+
+                existing.UpdatedAt = now;
                 existing.Version = Interlocked.Increment(ref this.version);
                 return existing;
             });
@@ -810,6 +821,12 @@ public class BackendServerRegistry
     {
         return DateTimeOffset.UtcNow - snapshot.LastHeartbeatAt > this.heartbeatTimeout;
     }
+
+    private static DateTimeOffset GetRegisterHeartbeatAt(DateTimeOffset startedAt, DateTimeOffset fallback)
+    {
+        return startedAt == default ? fallback : startedAt;
+    }
+
     private static ServerHealthState EvaluateHealth(BackendServerSnapshot snapshot, ControlHealthThreshold threshold)
     {
         if (snapshot.ResourceUsage.CpuUsagePercent >= threshold.DegradedCpuPercent ||
