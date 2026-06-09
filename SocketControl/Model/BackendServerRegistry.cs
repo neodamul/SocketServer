@@ -417,14 +417,14 @@ public class BackendServerRegistry
             }
 
             if (this.sessionTombstones.TryGetValue(sessionKey, out SessionEventMessage? tombstone) &&
-                tombstone.Version >= session.Version)
+                IsTombstoneCurrentForSession(tombstone, session))
             {
                 this.SaveState();
                 return;
             }
 
             if (this.sessions.TryGetValue(sessionKey, out SessionEventMessage? existingSession) &&
-                existingSession.Version > session.Version)
+                IsExistingSessionNewer(existingSession, session))
             {
                 this.SaveState();
                 return;
@@ -461,7 +461,7 @@ public class BackendServerRegistry
         {
             string sessionKey = CreateSessionKey(session);
             if (this.sessions.TryGetValue(sessionKey, out SessionEventMessage? existingSession) &&
-                existingSession.Version > session.Version)
+                IsExistingSessionNewer(existingSession, session))
             {
                 return;
             }
@@ -495,8 +495,7 @@ public class BackendServerRegistry
                 return;
             }
 
-            if (!this.sessions.ContainsKey(CreateSessionKey(location.InstanceId, location.SessionId)) &&
-                IsInstanceZeroConnectionCutoffActive(location.InstanceId))
+            if (!TryGetMatchingSession(location, out _))
             {
                 this.SaveState();
                 return;
@@ -526,7 +525,8 @@ public class BackendServerRegistry
 
             if (existing.InstanceId == session.InstanceId &&
                 existing.SessionId == session.SessionId &&
-                session.Version >= existing.Version)
+                session.Version >= existing.Version &&
+                !HasNewerMatchingSession(existing, session))
             {
                 this.clientLocations.TryRemove(session.ClientId, out _);
                 this.SaveState();
@@ -550,7 +550,8 @@ public class BackendServerRegistry
 
             if (existing.InstanceId == location.InstanceId &&
                 existing.SessionId == location.SessionId &&
-                location.Version >= existing.Version)
+                location.Version >= existing.Version &&
+                !TryGetMatchingSession(existing, out _))
             {
                 this.clientLocations.TryRemove(location.ClientId, out _);
                 this.SaveState();
@@ -569,7 +570,7 @@ public class BackendServerRegistry
 
             if (!this.clientLocations.TryGetValue(request.TargetClientId, out ClientLocationMessage? location) ||
                 IsSessionTombstoneCurrent(location.InstanceId, location.SessionId, location.Version) ||
-                !this.sessions.ContainsKey(CreateSessionKey(location.InstanceId, location.SessionId)) ||
+                !TryGetMatchingSession(location, out _) ||
                 !this.servers.TryGetValue(location.InstanceId, out BackendServerSnapshot? server) ||
                 server.Health != ServerHealthState.Healthy ||
                 IsHeartbeatExpired(server))
@@ -789,7 +790,7 @@ public class BackendServerRegistry
                 continue;
             }
 
-            changed |= RemoveSessionWithTombstone(session, long.MaxValue);
+            changed |= RemoveSessionWithTombstone(session, session.Version);
         }
 
         return changed;
@@ -800,7 +801,7 @@ public class BackendServerRegistry
         bool changed = false;
         foreach (SessionEventMessage session in this.sessions.Values.Where(item => item.InstanceId == instanceId))
         {
-            changed |= RemoveSessionWithTombstone(session, long.MaxValue);
+            changed |= RemoveSessionWithTombstone(session, session.Version);
         }
 
         return changed;
@@ -1006,6 +1007,49 @@ public class BackendServerRegistry
     {
         return this.sessionTombstones.TryGetValue(CreateSessionKey(instanceId, sessionId), out SessionEventMessage? tombstone) &&
             tombstone.Version >= version;
+    }
+
+    private static bool IsTombstoneCurrentForSession(SessionEventMessage tombstone, SessionEventMessage session)
+    {
+        if (session.ConnectedAt != default && tombstone.ConnectedAt != default)
+        {
+            return session.ConnectedAt <= tombstone.ConnectedAt;
+        }
+
+        return tombstone.Version >= session.Version;
+    }
+
+    private static bool IsExistingSessionNewer(SessionEventMessage existing, SessionEventMessage incoming)
+    {
+        if (existing.ConnectedAt != default && incoming.ConnectedAt != default)
+        {
+            return existing.ConnectedAt > incoming.ConnectedAt ||
+                (existing.ConnectedAt == incoming.ConnectedAt && existing.Version > incoming.Version);
+        }
+
+        return existing.Version > incoming.Version;
+    }
+
+    private bool TryGetMatchingSession(ClientLocationMessage location, out SessionEventMessage? session)
+    {
+        if (!this.sessions.TryGetValue(CreateSessionKey(location.InstanceId, location.SessionId), out session))
+        {
+            return false;
+        }
+
+        return session.ClientId == location.ClientId;
+    }
+
+    private bool HasNewerMatchingSession(ClientLocationMessage existing, SessionEventMessage incoming)
+    {
+        if (!TryGetMatchingSession(existing, out SessionEventMessage? session))
+        {
+            return false;
+        }
+
+        return session!.ConnectedAt != default &&
+            incoming.ConnectedAt != default &&
+            session.ConnectedAt > incoming.ConnectedAt;
     }
 
     private bool IsBeforeZeroConnectionCutoff(SessionEventMessage session)

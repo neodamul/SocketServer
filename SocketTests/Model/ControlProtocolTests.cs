@@ -510,10 +510,19 @@ public class ControlProtocolTests
         BackendServerRegistry registry = new();
         registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
         registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 1, 100), "control-1", new ControlHealthThreshold());
-        registry.UpsertSession(CreateSessionEvent("server-1", 700, 77, "Updated", 1000));
-        registry.RemoveSession(CreateSessionEvent("server-1", 700, 77, "Closed", 2000));
-        registry.UpsertSession(CreateSessionEvent("server-1", 700, 78, "Updated", 2500));
-        registry.UpsertSession(CreateSessionEvent("server-1", 700, 77, "Updated", 1500));
+        DateTimeOffset oldConnectedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
+        SessionEventMessage oldSession = CreateSessionEvent("server-1", 700, 77, "Updated", 1000);
+        oldSession.ConnectedAt = oldConnectedAt;
+        registry.UpsertSession(oldSession);
+        SessionEventMessage oldClose = CreateSessionEvent("server-1", 700, 77, "Closed", 2000);
+        oldClose.ConnectedAt = oldConnectedAt;
+        registry.RemoveSession(oldClose);
+        SessionEventMessage newSession = CreateSessionEvent("server-1", 700, 78, "Updated", 2500);
+        newSession.ConnectedAt = DateTimeOffset.UtcNow;
+        registry.UpsertSession(newSession);
+        SessionEventMessage staleUpdate = CreateSessionEvent("server-1", 700, 77, "Updated", 1500);
+        staleUpdate.ConnectedAt = oldConnectedAt;
+        registry.UpsertSession(staleUpdate);
 
         ClusterStatusSnapshot status = registry.GetStatus();
         ClientLocationResponse location = registry.ResolveClientLocation(new ClientLocationRequest
@@ -593,7 +602,10 @@ public class ControlProtocolTests
         registry.UpsertSession(expired);
 
         Assert.AreEqual(0, registry.GetStatus().TotalSessionCount);
-        registry.UpsertSession(CreateSessionEvent("server-1", 700, 77, "Updated", 1500));
+        SessionEventMessage staleUpdate = CreateSessionEvent("server-1", 700, 77, "Updated", 1500);
+        staleUpdate.ConnectedAt = expired.ConnectedAt;
+        staleUpdate.LastReceivedAt = expired.LastReceivedAt;
+        registry.UpsertSession(staleUpdate);
         ClientLocationResponse location = registry.ResolveClientLocation(new ClientLocationRequest
         {
             SourceClientId = 1,
@@ -601,6 +613,184 @@ public class ControlProtocolTests
         });
 
         Assert.IsFalse(location.Success);
+    }
+
+    [TestMethod]
+    public void BackendRegistryAllowsFutureSessionAfterMaxVersionTombstoneTest()
+    {
+        BackendServerRegistry registry = new();
+        registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
+        registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 1, 100), "control-1", new ControlHealthThreshold());
+
+        DateTimeOffset oldConnectedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
+        SessionEventMessage oldSession = CreateSessionEvent("server-1", 700, 77, "Updated", 1000);
+        oldSession.ConnectedAt = oldConnectedAt;
+        oldSession.LastReceivedAt = oldConnectedAt.AddSeconds(30);
+        registry.UpsertSession(oldSession);
+
+        SessionEventMessage oldClose = CreateSessionEvent("server-1", 700, 77, "Closed", long.MaxValue);
+        oldClose.ConnectedAt = oldSession.ConnectedAt;
+        oldClose.LastReceivedAt = oldSession.LastReceivedAt;
+        registry.RemoveSession(oldClose);
+
+        SessionEventMessage newSession = CreateSessionEvent("server-1", 700, 78, "Updated", 1500);
+        newSession.ConnectedAt = DateTimeOffset.UtcNow;
+        newSession.LastReceivedAt = newSession.ConnectedAt;
+        registry.UpsertSession(newSession);
+
+        ClusterStatusSnapshot status = registry.GetStatus();
+        ClientLocationResponse location = registry.ResolveClientLocation(new ClientLocationRequest
+        {
+            SourceClientId = 1,
+            TargetClientId = 78
+        });
+
+        Assert.AreEqual(1, status.TotalSessionCount);
+        Assert.IsTrue(location.Success);
+    }
+
+    [TestMethod]
+    public void BackendRegistryRejectsSameConnectionUpdateAfterCleanupTombstoneTest()
+    {
+        BackendServerRegistry registry = new(TimeSpan.FromMilliseconds(10));
+        registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
+        registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 1, 100), "control-1", new ControlHealthThreshold());
+        DateTimeOffset oldConnectedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
+        SessionEventMessage expired = CreateSessionEvent("server-1", 700, 77, "Updated", 1000);
+        expired.ConnectedAt = oldConnectedAt;
+        expired.LastReceivedAt = oldConnectedAt.AddSeconds(30);
+        registry.UpsertSession(expired);
+
+        Assert.AreEqual(0, registry.GetStatus().TotalSessionCount);
+
+        SessionEventMessage lateUpdate = CreateSessionEvent("server-1", 700, 77, "Updated", 999999);
+        lateUpdate.ConnectedAt = expired.ConnectedAt;
+        lateUpdate.LastReceivedAt = DateTimeOffset.UtcNow;
+        registry.UpsertSession(lateUpdate);
+
+        Assert.AreEqual(0, registry.GetStatus().TotalSessionCount);
+    }
+
+    [TestMethod]
+    public void BackendRegistryKeepsReusedSessionWhenOldConnectionEventsArriveLateTest()
+    {
+        BackendServerRegistry registry = new();
+        registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
+        registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 1, 100), "control-1", new ControlHealthThreshold());
+
+        DateTimeOffset oldConnectedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
+        SessionEventMessage oldSession = CreateSessionEvent("server-1", 700, 77, "Updated", 1000);
+        oldSession.ConnectedAt = oldConnectedAt;
+        oldSession.LastReceivedAt = oldConnectedAt.AddSeconds(30);
+        registry.UpsertSession(oldSession);
+
+        SessionEventMessage oldClose = CreateSessionEvent("server-1", 700, 77, "Closed", 2000);
+        oldClose.ConnectedAt = oldSession.ConnectedAt;
+        oldClose.LastReceivedAt = oldSession.LastReceivedAt;
+        registry.RemoveSession(oldClose);
+
+        SessionEventMessage newSession = CreateSessionEvent("server-1", 700, 78, "Updated", 1500);
+        newSession.ConnectedAt = DateTimeOffset.UtcNow;
+        newSession.LastReceivedAt = newSession.ConnectedAt;
+        registry.UpsertSession(newSession);
+
+        SessionEventMessage lateOldUpdate = CreateSessionEvent("server-1", 700, 77, "Updated", 999999);
+        lateOldUpdate.ConnectedAt = oldSession.ConnectedAt;
+        lateOldUpdate.LastReceivedAt = DateTimeOffset.UtcNow;
+        registry.UpsertSession(lateOldUpdate);
+        SessionEventMessage lateOldClose = CreateSessionEvent("server-1", 700, 77, "Closed", 1000000);
+        lateOldClose.ConnectedAt = oldSession.ConnectedAt;
+        lateOldClose.LastReceivedAt = lateOldUpdate.LastReceivedAt;
+        registry.RemoveSession(lateOldClose);
+
+        ClusterStatusSnapshot status = registry.GetStatus();
+        ClientLocationResponse oldLocation = registry.ResolveClientLocation(new ClientLocationRequest
+        {
+            SourceClientId = 1,
+            TargetClientId = 77
+        });
+        ClientLocationResponse newLocation = registry.ResolveClientLocation(new ClientLocationRequest
+        {
+            SourceClientId = 1,
+            TargetClientId = 78
+        });
+
+        Assert.AreEqual(1, status.TotalSessionCount);
+        Assert.IsFalse(oldLocation.Success);
+        Assert.IsTrue(newLocation.Success);
+    }
+
+    [TestMethod]
+    public void BackendRegistryRejectsStaleRelayedLocationAfterSessionReuseTest()
+    {
+        BackendServerRegistry registry = new();
+        registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
+        registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 1, 100), "control-1", new ControlHealthThreshold());
+
+        SessionEventMessage newSession = CreateSessionEvent("server-1", 700, 78, "Updated", 1500);
+        newSession.ConnectedAt = DateTimeOffset.UtcNow;
+        registry.UpsertSession(newSession);
+
+        registry.UpsertClientLocation(new ClientLocationMessage
+        {
+            ClusterId = "socket-cluster-1",
+            ClientId = 77,
+            ServerId = 1,
+            InstanceId = "server-1",
+            Host = "127.0.0.1",
+            Port = 5101,
+            SessionId = 700,
+            State = "Updated",
+            Version = 999999,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+
+        ClientLocationResponse oldLocation = registry.ResolveClientLocation(new ClientLocationRequest
+        {
+            SourceClientId = 1,
+            TargetClientId = 77
+        });
+        ClientLocationResponse newLocation = registry.ResolveClientLocation(new ClientLocationRequest
+        {
+            SourceClientId = 1,
+            TargetClientId = 78
+        });
+
+        Assert.IsFalse(oldLocation.Success);
+        Assert.IsTrue(newLocation.Success);
+    }
+
+    [TestMethod]
+    public void BackendRegistryIgnoresStaleRelayedLocationRemoveForLiveSessionTest()
+    {
+        BackendServerRegistry registry = new();
+        registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
+        registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 1, 100), "control-1", new ControlHealthThreshold());
+
+        SessionEventMessage newSession = CreateSessionEvent("server-1", 700, 77, "Updated", 1500);
+        newSession.ConnectedAt = DateTimeOffset.UtcNow;
+        registry.UpsertSession(newSession);
+        registry.RemoveClientLocation(new ClientLocationMessage
+        {
+            ClusterId = "socket-cluster-1",
+            ClientId = 77,
+            ServerId = 1,
+            InstanceId = "server-1",
+            Host = "127.0.0.1",
+            Port = 5101,
+            SessionId = 700,
+            State = "Closed",
+            Version = 999999,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+
+        ClientLocationResponse location = registry.ResolveClientLocation(new ClientLocationRequest
+        {
+            SourceClientId = 1,
+            TargetClientId = 77
+        });
+
+        Assert.IsTrue(location.Success);
     }
 
     [TestMethod]
