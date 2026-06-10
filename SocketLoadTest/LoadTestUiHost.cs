@@ -113,6 +113,7 @@ internal sealed class LoadTestUiService
     private string errorMessage = "";
     private int runGeneration;
     private LoadTestOptions? runOptions;
+    private HashSet<int>? desiredIds;
     private readonly SemaphoreSlim applyGate = new(1, 1);
 
     public LoadTestUiService(LoadTestOptions defaultOptions)
@@ -138,6 +139,7 @@ internal sealed class LoadTestUiService
             this.cancellation = new CancellationTokenSource();
             LoadTestOptions options = this.CreateOptions(request);
             this.runOptions = options;
+            this.desiredIds = BuildClientIdSet(options);
             int generation = ++this.runGeneration;
             LoadTestCounters runCounters = new();
             this.counters = runCounters;
@@ -179,12 +181,7 @@ internal sealed class LoadTestUiService
             }
 
             // Incremental: same transport, only count/batch/ramp differ.
-            int lastClientId = options.StartClientId + options.Clients - 1;
-            HashSet<int> targetIds = new();
-            for (int clientId = options.StartClientId; clientId <= lastClientId; clientId++)
-            {
-                targetIds.Add(clientId);
-            }
+            HashSet<int> targetIds = BuildClientIdSet(options);
 
             bool startFresh = false;
             int[] currentIds = Array.Empty<int>();
@@ -214,6 +211,7 @@ internal sealed class LoadTestUiService
                     runCounters = this.counters;
                     cancellationToken = this.cancellation?.Token ?? CancellationToken.None;
                     this.runOptions = options;
+                    this.desiredIds = targetIds;
                     this.status = "Holding";
                 }
             }
@@ -263,6 +261,7 @@ internal sealed class LoadTestUiService
             this.DisposeClients();
             this.workerTask = null;
             this.runOptions = null;
+            this.desiredIds = null;
             this.status = "Stopped";
             this.stoppedAt = DateTimeOffset.UtcNow;
         }
@@ -395,7 +394,10 @@ internal sealed class LoadTestUiService
                 continue;
             }
 
-            if (this.connectedClients.Any(client => client.ClientId == result.ClientId))
+            // Drop sessions whose clientId is no longer desired (e.g. a concurrent decrement
+            // removed it while the initial ramp was still connecting it) or already present.
+            if ((this.desiredIds != null && !this.desiredIds.Contains(result.ClientId))
+                || this.connectedClients.Any(client => client.ClientId == result.ClientId))
             {
                 result.Session.Dispose();
             }
@@ -404,6 +406,18 @@ internal sealed class LoadTestUiService
                 this.connectedClients.Add(new LoadTestUiConnectedClient(result.ClientId, result.Session));
             }
         }
+    }
+
+    private static HashSet<int> BuildClientIdSet(LoadTestOptions options)
+    {
+        HashSet<int> ids = new();
+        int lastClientId = options.StartClientId + options.Clients - 1;
+        for (int clientId = options.StartClientId; clientId <= lastClientId; clientId++)
+        {
+            ids.Add(clientId);
+        }
+
+        return ids;
     }
 
     private async Task ConnectAndRegisterClientsAsync(
