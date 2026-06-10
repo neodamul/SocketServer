@@ -47,6 +47,17 @@ public class ResponseWorkerConfigurationTests
     }
 
     [TestMethod]
+    public void SocketServerHeartbeatUsesObservedStatusTimestampTest()
+    {
+        string serverSource = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketServer/Model/TcpServer.cs"));
+        string reporterSource = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketServer/Model/ControlServerReporter.cs"));
+
+        Assert.IsTrue(serverSource.Contains("DateTimeOffset observedAt = DateTimeOffset.UtcNow", StringComparison.Ordinal));
+        Assert.IsTrue(serverSource.Contains("ObservedAt = observedAt", StringComparison.Ordinal));
+        Assert.IsTrue(reporterSource.Contains("SentAt = status.ObservedAt == default ? DateTimeOffset.UtcNow : status.ObservedAt", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void SocketServerSessionSendPreservesPerConnectionOrderTest()
     {
         string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketServer/Model/ConnectionSession.cs"));

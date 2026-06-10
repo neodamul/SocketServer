@@ -455,6 +455,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     public TcpServerStatus GetStatus()
     {
+        DateTimeOffset observedAt = DateTimeOffset.UtcNow;
         return new TcpServerStatus
         {
             ServerId = this.serverId,
@@ -490,7 +491,8 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             SocketAsyncEventArgsBufferSlabCount = SocketAsyncEventArgsFactory.BufferSlabCount,
             SocketAsyncEventArgsBufferBytesAllocated = SocketAsyncEventArgsFactory.BufferBytesAllocated,
             StartedAt = this.startedAt,
-            UpdatedAt = DateTimeOffset.UtcNow
+            ObservedAt = observedAt,
+            UpdatedAt = observedAt
         };
     }
 
