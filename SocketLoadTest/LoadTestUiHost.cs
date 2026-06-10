@@ -111,6 +111,7 @@ internal sealed class LoadTestUiService
     private DateTimeOffset? stoppedAt;
     private string status = "Idle";
     private string errorMessage = "";
+    private int runGeneration;
 
     public LoadTestUiService(LoadTestOptions defaultOptions)
     {
@@ -127,7 +128,6 @@ internal sealed class LoadTestUiService
             }
 
             this.DisposeClients();
-            this.counters = new LoadTestCounters();
             this.startedAt = DateTimeOffset.UtcNow;
             this.stoppedAt = null;
             this.status = "Starting";
@@ -135,7 +135,10 @@ internal sealed class LoadTestUiService
             this.cancellation?.Dispose();
             this.cancellation = new CancellationTokenSource();
             LoadTestOptions options = this.CreateOptions(request);
-            this.workerTask = Task.Run(() => this.RunAsync(options, this.cancellation.Token));
+            int generation = ++this.runGeneration;
+            LoadTestCounters runCounters = new();
+            this.counters = runCounters;
+            this.workerTask = Task.Run(() => this.RunAsync(options, runCounters, this.cancellation.Token, generation));
             return Task.CompletedTask;
         }
     }
@@ -146,6 +149,7 @@ internal sealed class LoadTestUiService
         lock (this.syncRoot)
         {
             this.status = "Stopping";
+            this.runGeneration++;
             this.cancellation?.Cancel();
             task = this.workerTask;
         }
@@ -157,7 +161,13 @@ internal sealed class LoadTestUiService
 
         lock (this.syncRoot)
         {
+            if (this.workerTask != task)
+            {
+                return;
+            }
+
             this.DisposeClients();
+            this.workerTask = null;
             this.status = "Stopped";
             this.stoppedAt = DateTimeOffset.UtcNow;
         }
@@ -193,7 +203,11 @@ internal sealed class LoadTestUiService
         }
     }
 
-    private async Task RunAsync(LoadTestOptions options, CancellationToken cancellationToken)
+    private async Task RunAsync(
+        LoadTestOptions options,
+        LoadTestCounters runCounters,
+        CancellationToken cancellationToken,
+        int generation)
     {
         try
         {
@@ -201,9 +215,21 @@ internal sealed class LoadTestUiService
             for (int firstClientId = options.StartClientId; firstClientId <= lastClientId && !cancellationToken.IsCancellationRequested; firstClientId += options.BatchSize)
             {
                 int batchCount = Math.Min(options.BatchSize, lastClientId - firstClientId + 1);
-                LoadTestUiClientAttemptResult[] results = await this.ConnectBatchAsync(options, firstClientId, batchCount);
+                LoadTestUiClientAttemptResult[] results = await this.ConnectBatchAsync(
+                    options,
+                    runCounters,
+                    firstClientId,
+                    batchCount,
+                    generation,
+                    cancellationToken);
                 lock (this.syncRoot)
                 {
+                    if (!this.IsActiveRun(generation) || cancellationToken.IsCancellationRequested)
+                    {
+                        DisposeAttemptResults(results);
+                        return;
+                    }
+
                     foreach (LoadTestUiClientAttemptResult result in results)
                     {
                         if (result.Session != null)
@@ -221,6 +247,14 @@ internal sealed class LoadTestUiService
                 }
             }
 
+            lock (this.syncRoot)
+            {
+                if (!this.IsActiveRun(generation))
+                {
+                    return;
+                }
+            }
+
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
         catch (TaskCanceledException)
@@ -230,29 +264,50 @@ internal sealed class LoadTestUiService
         {
             lock (this.syncRoot)
             {
+                if (!this.IsActiveRun(generation))
+                {
+                    return;
+                }
+
                 this.status = "Failed";
                 this.errorMessage = exception.Message;
             }
         }
     }
 
-    private async Task<LoadTestUiClientAttemptResult[]> ConnectBatchAsync(LoadTestOptions options, int firstClientId, int batchCount)
+    private async Task<LoadTestUiClientAttemptResult[]> ConnectBatchAsync(
+        LoadTestOptions options,
+        LoadTestCounters runCounters,
+        int firstClientId,
+        int batchCount,
+        int generation,
+        CancellationToken cancellationToken)
     {
         Task<LoadTestUiClientAttemptResult>[] tasks = new Task<LoadTestUiClientAttemptResult>[batchCount];
         for (int index = 0; index < batchCount; index++)
         {
             int clientId = firstClientId + index;
-            tasks[index] = Task.Run(() => this.ConnectClientAsync(options, clientId));
+            tasks[index] = Task.Run(() => this.ConnectClientAsync(
+                options,
+                runCounters,
+                clientId,
+                generation,
+                cancellationToken));
         }
 
         return await Task.WhenAll(tasks);
     }
 
-    private async Task<LoadTestUiClientAttemptResult> ConnectClientAsync(LoadTestOptions options, int clientId)
+    private async Task<LoadTestUiClientAttemptResult> ConnectClientAsync(
+        LoadTestOptions options,
+        LoadTestCounters runCounters,
+        int clientId,
+        int generation,
+        CancellationToken cancellationToken)
     {
-        Interlocked.Increment(ref this.counters.Attempted);
+        Interlocked.Increment(ref runCounters.Attempted);
         SocketClientSession session = new();
-        session.HealthCheckReceived += _ => Interlocked.Increment(ref this.counters.HealthCheckSuccess);
+        session.HealthCheckReceived += _ => Interlocked.Increment(ref runCounters.HealthCheckSuccess);
         try
         {
             bool connected = options.UseControlServer
@@ -278,23 +333,29 @@ internal sealed class LoadTestUiService
             {
                 if (session.LastFailure == SocketClientSessionFailure.Register)
                 {
-                    Interlocked.Increment(ref this.counters.RegisterFail);
+                    Interlocked.Increment(ref runCounters.RegisterFail);
                 }
                 else
                 {
-                    Interlocked.Increment(ref this.counters.ConnectFail);
+                    Interlocked.Increment(ref runCounters.ConnectFail);
                 }
 
                 session.Dispose();
                 return new LoadTestUiClientAttemptResult(clientId, null);
             }
 
-            Interlocked.Increment(ref this.counters.Connected);
+            Interlocked.Increment(ref runCounters.Connected);
+            if (cancellationToken.IsCancellationRequested || !this.IsActiveRun(generation))
+            {
+                session.Dispose();
+                return new LoadTestUiClientAttemptResult(clientId, null);
+            }
+
             return new LoadTestUiClientAttemptResult(clientId, session);
         }
         catch (Exception exception) when (exception is TimeoutException or InvalidOperationException or IOException)
         {
-            Interlocked.Increment(ref this.counters.HealthCheckFail);
+            Interlocked.Increment(ref runCounters.HealthCheckFail);
             session.Dispose();
             return LoadTestUiClientAttemptResult.Failed;
         }
@@ -327,6 +388,19 @@ internal sealed class LoadTestUiService
         }
 
         this.connectedClients.Clear();
+    }
+
+    private bool IsActiveRun(int generation)
+    {
+        return this.runGeneration == generation;
+    }
+
+    private static void DisposeAttemptResults(IEnumerable<LoadTestUiClientAttemptResult> results)
+    {
+        foreach (LoadTestUiClientAttemptResult result in results)
+        {
+            result.Session?.Dispose();
+        }
     }
 
     private static LoadTestUiCounters SnapshotCounters(LoadTestCounters counters)

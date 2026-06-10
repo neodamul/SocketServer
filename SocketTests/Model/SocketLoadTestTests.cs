@@ -1,7 +1,11 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using SocketCommon.Configuration;
 using SocketCommon.Model;
@@ -170,6 +174,49 @@ public class SocketLoadTestTests
     }
 
     [TestMethod]
+    public async Task LoadTestUiStopInvalidatesPendingRunTest()
+    {
+        using TcpListenerScope listener = new();
+        Assert.IsTrue(LoadTestOptions.TryParse(
+            new[]
+            {
+                "--ui",
+                "--clients", "20",
+                "--batch-size", "20",
+                "--host", "127.0.0.1",
+                "--port", listener.Port.ToString(),
+                "--external-server"
+            },
+            out LoadTestOptions options,
+            out string error));
+        Assert.AreEqual(string.Empty, error);
+
+        LoadTestUiService service = new(options);
+        await service.StartAsync(new LoadTestUiStartRequest());
+        await Task.Delay(250);
+
+        await service.StopAsync();
+        LoadTestUiState stopped = service.GetState();
+
+        Assert.IsFalse(stopped.IsRunning);
+        Assert.AreEqual("Stopped", stopped.Status);
+
+        await service.StartAsync(new LoadTestUiStartRequest
+        {
+            Clients = 1,
+            BatchSize = 1,
+            Host = "127.0.0.1",
+            Port = 1,
+            UseControlServer = false
+        });
+
+        LoadTestUiState restarted = service.GetState();
+        Assert.IsTrue(restarted.IsRunning);
+
+        await service.StopAsync();
+    }
+
+    [TestMethod]
     public async Task RunMessageLoadTestWithTwoClientsTest()
     {
         int exitCode = await Program.RunAsync(new[]
@@ -217,6 +264,69 @@ public class SocketLoadTestTests
             if (File.Exists(reportFile))
             {
                 File.Delete(reportFile);
+            }
+        }
+    }
+
+    private sealed class TcpListenerScope : IDisposable
+    {
+        private readonly TcpListener listener;
+        private readonly CancellationTokenSource cancellation = new();
+        private readonly List<System.Net.Sockets.TcpClient> clients = new();
+        private readonly Task acceptTask;
+
+        public TcpListenerScope()
+        {
+            this.listener = new TcpListener(IPAddress.Loopback, 0);
+            this.listener.Start();
+            this.Port = ((IPEndPoint)this.listener.LocalEndpoint).Port;
+            this.acceptTask = Task.Run(() => this.AcceptLoopAsync(this.cancellation.Token));
+        }
+
+        public int Port { get; }
+
+        public void Dispose()
+        {
+            this.cancellation.Cancel();
+            this.listener.Stop();
+            lock (this.clients)
+            {
+                foreach (System.Net.Sockets.TcpClient client in this.clients)
+                {
+                    client.Dispose();
+                }
+
+                this.clients.Clear();
+            }
+
+            this.acceptTask.Wait(TimeSpan.FromSeconds(1));
+            this.cancellation.Dispose();
+        }
+
+        private async Task AcceptLoopAsync(CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    System.Net.Sockets.TcpClient client = await this.listener.AcceptTcpClientAsync(cancellationToken);
+                    lock (this.clients)
+                    {
+                        this.clients.Add(client);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (SocketException)
+                {
+                    return;
+                }
+                catch (ObjectDisposedException)
+                {
+                    return;
+                }
             }
         }
     }
