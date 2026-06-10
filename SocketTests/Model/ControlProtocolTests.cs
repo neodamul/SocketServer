@@ -472,9 +472,13 @@ public class ControlProtocolTests
         BackendServerRegistry registry = new();
         registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
         registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 0, 100), "control-1", new ControlHealthThreshold());
+        DateTimeOffset connectedAt = DateTimeOffset.UtcNow.AddMinutes(-1);
         SessionEventMessage opened = CreateSessionEvent("server-1", 700, 77, "Updated", 1000);
         SessionEventMessage closed = CreateSessionEvent("server-1", 700, 77, "Closed", 2000);
         SessionEventMessage lateUpdate = CreateSessionEvent("server-1", 700, 77, "Updated", 1500);
+        opened.ConnectedAt = connectedAt;
+        closed.ConnectedAt = connectedAt;
+        lateUpdate.ConnectedAt = connectedAt;
 
         registry.UpsertSession(opened);
         registry.RemoveSession(closed);
@@ -537,14 +541,73 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
-    public void BackendRegistryHeartbeatWithZeroCurrentConnectionsPrunesInstanceSessionsTest()
+    public void BackendRegistryZeroHeartbeatOnlyPrunesSessionsInactiveBeforeCutoffTest()
     {
         BackendServerRegistry registry = new();
         registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
-        registry.UpsertSession(CreateSessionEvent("server-1", 700, 77, "Updated", 1000));
+        DateTimeOffset cutoff = DateTimeOffset.UtcNow;
+        SessionEventMessage oldSession = CreateSessionEvent("server-1", 700, 77, "Updated", 1000);
+        oldSession.LastReceivedAt = cutoff.AddSeconds(-1);
+        registry.UpsertSession(oldSession);
 
-        registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 0, 100), "control-1", new ControlHealthThreshold());
-        registry.UpsertSession(CreateSessionEvent("server-1", 700, 77, "Updated", 1500));
+        registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 0, 100, cutoff), "control-1", new ControlHealthThreshold());
+        SessionEventMessage staleUpdate = CreateSessionEvent("server-1", 700, 77, "Updated", 1500);
+        staleUpdate.LastReceivedAt = cutoff.AddTicks(-1);
+        registry.UpsertSession(staleUpdate);
+
+        Assert.AreEqual(0, registry.GetStatus().TotalSessionCount);
+        SessionEventMessage activeUpdate = CreateSessionEvent("server-1", 701, 77, "Updated", 2000);
+        activeUpdate.LastReceivedAt = cutoff;
+        registry.UpsertSession(activeUpdate);
+
+        ClusterStatusSnapshot status = registry.GetStatus();
+        ClientLocationResponse location = registry.ResolveClientLocation(new ClientLocationRequest
+        {
+            SourceClientId = 1,
+            TargetClientId = 77
+        });
+        Assert.AreEqual(1, status.TotalSessionCount);
+        Assert.IsTrue(location.Success);
+    }
+
+    [TestMethod]
+    public void BackendRegistryPeerZeroSnapshotOnlyPrunesSessionsInactiveBeforeCutoffTest()
+    {
+        BackendServerRegistry registry = new();
+        registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
+        DateTimeOffset cutoff = DateTimeOffset.UtcNow;
+        SessionEventMessage oldSession = CreateSessionEvent("server-1", 700, 77, "Updated", 1000);
+        oldSession.LastReceivedAt = cutoff.AddSeconds(-1);
+        registry.UpsertSession(oldSession);
+
+        BackendServerSnapshot zeroSnapshot = CreateSnapshot(1, "server-1", 100, 0);
+        zeroSnapshot.LastHeartbeatAt = cutoff;
+        registry.ImportSnapshot(new ClusterStatusSnapshot
+        {
+            Servers = new[] { zeroSnapshot }
+        });
+        SessionEventMessage activeUpdate = CreateSessionEvent("server-1", 700, 77, "Updated", 1500);
+        activeUpdate.LastReceivedAt = cutoff.AddSeconds(1);
+        registry.UpsertSession(activeUpdate);
+
+        Assert.AreEqual(1, registry.GetStatus().TotalSessionCount);
+    }
+
+    [TestMethod]
+    public void BackendRegistryPeerZeroSnapshotRejectsUnknownSessionBeforeCutoffTest()
+    {
+        BackendServerRegistry registry = new();
+        DateTimeOffset cutoff = DateTimeOffset.UtcNow;
+        BackendServerSnapshot zeroSnapshot = CreateSnapshot(1, "server-1", 100, 0);
+        zeroSnapshot.LastHeartbeatAt = cutoff;
+        registry.ImportSnapshot(new ClusterStatusSnapshot
+        {
+            Servers = new[] { zeroSnapshot }
+        });
+
+        SessionEventMessage staleUpdate = CreateSessionEvent("server-1", 700, 77, "Updated", 1500);
+        staleUpdate.LastReceivedAt = cutoff.AddTicks(-1);
+        registry.UpsertSession(staleUpdate);
 
         Assert.AreEqual(0, registry.GetStatus().TotalSessionCount);
         ClientLocationResponse location = registry.ResolveClientLocation(new ClientLocationRequest
@@ -553,42 +616,12 @@ public class ControlProtocolTests
             TargetClientId = 77
         });
         Assert.IsFalse(location.Success);
-    }
 
-    [TestMethod]
-    public void BackendRegistryPeerSnapshotWithZeroCurrentConnectionsPrunesInstanceSessionsTest()
-    {
-        BackendServerRegistry registry = new();
-        registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
-        registry.UpsertSession(CreateSessionEvent("server-1", 700, 77, "Updated", 1000));
+        SessionEventMessage boundaryUpdate = CreateSessionEvent("server-1", 701, 78, "Updated", 1500);
+        boundaryUpdate.LastReceivedAt = cutoff;
+        registry.UpsertSession(boundaryUpdate);
 
-        registry.ImportSnapshot(new ClusterStatusSnapshot
-        {
-            Servers = new[] { CreateSnapshot(1, "server-1", 100, 0) }
-        });
-        registry.UpsertSession(CreateSessionEvent("server-1", 700, 77, "Updated", 1500));
-
-        Assert.AreEqual(0, registry.GetStatus().TotalSessionCount);
-    }
-
-    [TestMethod]
-    public void BackendRegistryPeerZeroSnapshotRejectsUnknownStaleSessionUpsertTest()
-    {
-        BackendServerRegistry registry = new();
-        registry.ImportSnapshot(new ClusterStatusSnapshot
-        {
-            Servers = new[] { CreateSnapshot(1, "server-1", 100, 0) }
-        });
-
-        registry.UpsertSession(CreateSessionEvent("server-1", 700, 77, "Updated", 1500));
-
-        Assert.AreEqual(0, registry.GetStatus().TotalSessionCount);
-        ClientLocationResponse location = registry.ResolveClientLocation(new ClientLocationRequest
-        {
-            SourceClientId = 1,
-            TargetClientId = 77
-        });
-        Assert.IsFalse(location.Success);
+        Assert.AreEqual(1, registry.GetStatus().TotalSessionCount);
     }
 
     [TestMethod]
@@ -809,11 +842,18 @@ public class ControlProtocolTests
             BackendServerRegistry registry = new(TimeSpan.FromSeconds(90), new FileBackendRegistryStore(path));
             registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
             registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 0, 100), "control-1", new ControlHealthThreshold());
-            registry.UpsertSession(CreateSessionEvent("server-1", 700, 77, "Updated", 1000));
-            registry.RemoveSession(CreateSessionEvent("server-1", 700, 77, "Closed", 2000));
+            DateTimeOffset connectedAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+            SessionEventMessage opened = CreateSessionEvent("server-1", 700, 77, "Updated", 1000);
+            opened.ConnectedAt = connectedAt;
+            registry.UpsertSession(opened);
+            SessionEventMessage closed = CreateSessionEvent("server-1", 700, 77, "Closed", 2000);
+            closed.ConnectedAt = connectedAt;
+            registry.RemoveSession(closed);
 
             BackendServerRegistry restored = new(TimeSpan.FromSeconds(90), new FileBackendRegistryStore(path));
-            restored.UpsertSession(CreateSessionEvent("server-1", 700, 77, "Updated", 1500));
+            SessionEventMessage lateUpdate = CreateSessionEvent("server-1", 700, 77, "Updated", 1500);
+            lateUpdate.ConnectedAt = connectedAt;
+            restored.UpsertSession(lateUpdate);
 
             Assert.AreEqual(0, restored.GetStatus().TotalSessionCount);
         }

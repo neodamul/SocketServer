@@ -70,5 +70,7 @@ public class TcpServerStatus
 
     public DateTimeOffset? StartedAt { get; init; }
 
+    public DateTimeOffset ObservedAt { get; init; }
+
     public DateTimeOffset UpdatedAt { get; init; }
 }

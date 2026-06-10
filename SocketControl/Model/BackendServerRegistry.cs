@@ -191,7 +191,7 @@ public class BackendServerRegistry
             if (snapshot.CurrentConnections == 0)
             {
                 MarkZeroConnectionCutoff(snapshot.InstanceId, snapshot.LastHeartbeatAt);
-                PruneInstanceSessions(snapshot.InstanceId);
+                PruneInstanceSessionsBefore(snapshot.InstanceId, snapshot.LastHeartbeatAt);
             }
             else
             {
@@ -230,7 +230,7 @@ public class BackendServerRegistry
             if (stored.CurrentConnections == 0)
             {
                 MarkZeroConnectionCutoff(stored.InstanceId, stored.LastHeartbeatAt);
-                PruneInstanceSessions(stored.InstanceId);
+                PruneInstanceSessionsBefore(stored.InstanceId, stored.LastHeartbeatAt);
             }
             else
             {
@@ -716,9 +716,9 @@ public class BackendServerRegistry
             this.version = Math.Max(this.version, location.Version);
         }
 
-        foreach (string instanceId in this.zeroConnectionCutoffs.Keys)
+        foreach (KeyValuePair<string, DateTimeOffset> cutoff in this.zeroConnectionCutoffs)
         {
-            PruneInstanceSessions(instanceId);
+            PruneInstanceSessionsBefore(cutoff.Key, cutoff.Value);
         }
 
         this.version = Math.Max(this.version, state.Version);
@@ -800,6 +800,20 @@ public class BackendServerRegistry
     {
         bool changed = false;
         foreach (SessionEventMessage session in this.sessions.Values.Where(item => item.InstanceId == instanceId))
+        {
+            changed |= RemoveSessionWithTombstone(session, session.Version);
+        }
+
+        return changed;
+    }
+
+    private bool PruneInstanceSessionsBefore(string instanceId, DateTimeOffset cutoff)
+    {
+        bool changed = false;
+        foreach (SessionEventMessage session in this.sessions.Values.Where(item =>
+            item.InstanceId == instanceId &&
+            item.LastReceivedAt != default &&
+            item.LastReceivedAt < cutoff))
         {
             changed |= RemoveSessionWithTombstone(session, session.Version);
         }
@@ -1025,7 +1039,8 @@ public class BackendServerRegistry
 
             if (session.LastReceivedAt != default && tombstone.LastReceivedAt != default)
             {
-                return session.LastReceivedAt <= tombstone.LastReceivedAt;
+                return session.Version < tombstone.Version ||
+                    session.LastReceivedAt <= tombstone.LastReceivedAt;
             }
         }
 
@@ -1072,7 +1087,10 @@ public class BackendServerRegistry
             return false;
         }
 
-        return session.ConnectedAt == default || session.ConnectedAt <= cutoff;
+        DateTimeOffset activityAt = session.LastReceivedAt != default
+            ? session.LastReceivedAt
+            : session.ConnectedAt;
+        return activityAt == default || activityAt < cutoff;
     }
 
     private bool IsInstanceZeroConnectionCutoffActive(string instanceId)

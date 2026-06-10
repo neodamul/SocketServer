@@ -124,6 +124,8 @@ public class TcpServerTests
             Assert.IsTrue(status.SocketAsyncEventArgsHighWatermarkInUseCount >= 0);
             Assert.IsTrue(status.SocketAsyncEventArgsGrowthCount >= 1);
             Assert.IsNotNull(status.StartedAt);
+            Assert.AreNotEqual(default, status.ObservedAt);
+            Assert.AreEqual(status.ObservedAt, status.UpdatedAt);
         }
         finally
         {

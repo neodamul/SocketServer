@@ -220,7 +220,7 @@ public class ControlServerReporter : IDisposable
             SocketAsyncEventArgsInUseCount = status.SocketAsyncEventArgsInUseCount,
             SocketAsyncEventArgsHighWatermarkInUseCount = status.SocketAsyncEventArgsHighWatermarkInUseCount,
             SocketAsyncEventArgsGrowthCount = status.SocketAsyncEventArgsGrowthCount,
-            SentAt = DateTimeOffset.UtcNow
+            SentAt = status.ObservedAt == default ? DateTimeOffset.UtcNow : status.ObservedAt
         };
 
         int successCount = await BroadcastAsync(0, ControlMessageIds.ServerHeartbeat, heartbeat);
