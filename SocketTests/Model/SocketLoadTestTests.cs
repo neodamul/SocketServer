@@ -2,6 +2,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -10,6 +11,7 @@ using System.Threading.Tasks;
 using SocketCommon.Configuration;
 using SocketCommon.Model;
 using SocketLoadTest;
+using SocketServer.Model;
 
 namespace SocketTests.Model;
 
@@ -266,6 +268,115 @@ public class SocketLoadTestTests
                 File.Delete(reportFile);
             }
         }
+    }
+
+    [TestMethod]
+    public async Task LoadTestUiApplyScalesClientsIncrementallyTest()
+    {
+        TcpServer server = new(1, "loadtest-ui-server", "127.0.0.1", 0);
+        Assert.IsTrue(server.BindInPortRange(0, 0));
+        Assert.IsTrue(server.Listen());
+        Assert.IsTrue(server.StartClientAcceptLoop());
+        int port = server.GetPort();
+
+        Assert.IsTrue(LoadTestOptions.TryParse(new[] { "--ui" }, out LoadTestOptions options, out string error));
+        Assert.AreEqual(string.Empty, error);
+        LoadTestUiService service = new(options);
+
+        try
+        {
+            // Initial run: connect clients 1-2.
+            await service.ApplyAsync(Request(port, clients: 2));
+            await WaitForConnectedAsync(service, 2);
+            CollectionAssert.AreEquivalent(new[] { 1, 2 }, ConnectedIds(service));
+
+            // Increase to 4: only 3-4 are added; 1-2 stay connected (not churned).
+            await service.ApplyAsync(Request(port, clients: 4));
+            await WaitForConnectedAsync(service, 4);
+            CollectionAssert.AreEquivalent(new[] { 1, 2, 3, 4 }, ConnectedIds(service));
+
+            // Decrease to 1: only the surplus 2-4 are removed.
+            await service.ApplyAsync(Request(port, clients: 1));
+            await WaitForConnectedAsync(service, 1);
+            CollectionAssert.AreEquivalent(new[] { 1 }, ConnectedIds(service));
+        }
+        finally
+        {
+            await service.StopAsync();
+            server.End();
+        }
+    }
+
+    [TestMethod]
+    public async Task LoadTestUiApplyTransportChangeRestartsRunTest()
+    {
+        TcpServer first = new(1, "loadtest-ui-server-a", "127.0.0.1", 0);
+        Assert.IsTrue(first.BindInPortRange(0, 0));
+        Assert.IsTrue(first.Listen());
+        Assert.IsTrue(first.StartClientAcceptLoop());
+        TcpServer second = new(2, "loadtest-ui-server-b", "127.0.0.1", 0);
+        Assert.IsTrue(second.BindInPortRange(0, 0));
+        Assert.IsTrue(second.Listen());
+        Assert.IsTrue(second.StartClientAcceptLoop());
+
+        Assert.IsTrue(LoadTestOptions.TryParse(new[] { "--ui" }, out LoadTestOptions options, out _));
+        LoadTestUiService service = new(options);
+
+        try
+        {
+            await service.ApplyAsync(Request(first.GetPort(), clients: 2));
+            await WaitForConnectedAsync(service, 2);
+
+            // Changing the target port cannot migrate live connections -> full restart on the new server.
+            await service.ApplyAsync(Request(second.GetPort(), clients: 3));
+            await WaitForConnectedAsync(service, 3);
+            CollectionAssert.AreEquivalent(new[] { 1, 2, 3 }, ConnectedIds(service));
+        }
+        finally
+        {
+            await service.StopAsync();
+            first.End();
+            second.End();
+        }
+    }
+
+    private static LoadTestUiStartRequest Request(int port, int clients)
+    {
+        return new LoadTestUiStartRequest
+        {
+            Clients = clients,
+            StartClientId = 1,
+            BatchSize = clients,
+            Host = "127.0.0.1",
+            Port = port,
+            UseControlServer = false,
+            RampDelayMilliseconds = 0
+        };
+    }
+
+    private static int[] ConnectedIds(LoadTestUiService service)
+    {
+        return service.GetState().Clients
+            .Where(client => client.IsConnected)
+            .Select(client => client.ClientId)
+            .OrderBy(id => id)
+            .ToArray();
+    }
+
+    private static async Task WaitForConnectedAsync(LoadTestUiService service, int expected)
+    {
+        for (int attempt = 0; attempt < 150; attempt++)
+        {
+            LoadTestUiState state = service.GetState();
+            if (state.Clients.Count == expected && state.Clients.Count(client => client.IsConnected) == expected)
+            {
+                return;
+            }
+
+            await Task.Delay(100);
+        }
+
+        Assert.Fail($"Expected {expected} connected clients, observed {service.GetState().Clients.Count}.");
     }
 
     private sealed class TcpListenerScope : IDisposable

@@ -25,7 +25,7 @@ internal static class LoadTestUiHost
         app.MapGet("/api/state", (LoadTestUiService service) => service.GetState());
         app.MapPost("/api/start", async (LoadTestUiStartRequest request, LoadTestUiService service) =>
         {
-            await service.StartAsync(request);
+            await service.ApplyAsync(request);
             return service.GetState();
         });
         app.MapPost("/api/stop", async (LoadTestUiService service) =>
@@ -112,6 +112,9 @@ internal sealed class LoadTestUiService
     private string status = "Idle";
     private string errorMessage = "";
     private int runGeneration;
+    private LoadTestOptions? runOptions;
+    private HashSet<int>? desiredIds;
+    private readonly SemaphoreSlim applyGate = new(1, 1);
 
     public LoadTestUiService(LoadTestOptions defaultOptions)
     {
@@ -135,11 +138,100 @@ internal sealed class LoadTestUiService
             this.cancellation?.Dispose();
             this.cancellation = new CancellationTokenSource();
             LoadTestOptions options = this.CreateOptions(request);
+            this.runOptions = options;
+            this.desiredIds = BuildClientIdSet(options);
             int generation = ++this.runGeneration;
             LoadTestCounters runCounters = new();
             this.counters = runCounters;
             this.workerTask = Task.Run(() => this.RunAsync(options, runCounters, this.cancellation.Token, generation));
             return Task.CompletedTask;
+        }
+    }
+
+    public async Task ApplyAsync(LoadTestUiStartRequest request)
+    {
+        await this.applyGate.WaitAsync();
+        try
+        {
+            LoadTestOptions options = this.CreateOptions(request);
+
+            bool running;
+            LoadTestOptions? current;
+            lock (this.syncRoot)
+            {
+                running = this.workerTask != null && !this.workerTask.IsCompleted;
+                current = this.runOptions;
+            }
+
+            // Idle (or no active run) -> normal initial start.
+            if (!running || current == null)
+            {
+                await this.StartAsync(request);
+                return;
+            }
+
+            // Transport/identity change cannot be applied to live connections -> full restart.
+            if (!string.Equals(current.Host, options.Host, StringComparison.Ordinal)
+                || current.Port != options.Port
+                || current.UseControlServer != options.UseControlServer)
+            {
+                await this.StopAsync();
+                await this.StartAsync(request);
+                return;
+            }
+
+            // Incremental: same transport, only count/batch/ramp differ.
+            HashSet<int> targetIds = BuildClientIdSet(options);
+
+            bool startFresh = false;
+            int[] currentIds = Array.Empty<int>();
+            int generation = 0;
+            LoadTestCounters runCounters = this.counters;
+            CancellationToken cancellationToken = CancellationToken.None;
+            lock (this.syncRoot)
+            {
+                if (this.workerTask == null || this.workerTask.IsCompleted)
+                {
+                    startFresh = true;
+                }
+                else
+                {
+                    currentIds = this.connectedClients.Select(client => client.ClientId).ToArray();
+                    HashSet<int> removeSet = new(currentIds.Where(id => !targetIds.Contains(id)));
+                    for (int index = this.connectedClients.Count - 1; index >= 0; index--)
+                    {
+                        if (removeSet.Contains(this.connectedClients[index].ClientId))
+                        {
+                            this.connectedClients[index].Session.Dispose();
+                            this.connectedClients.RemoveAt(index);
+                        }
+                    }
+
+                    generation = this.runGeneration;
+                    runCounters = this.counters;
+                    cancellationToken = this.cancellation?.Token ?? CancellationToken.None;
+                    this.runOptions = options;
+                    this.desiredIds = targetIds;
+                    this.status = "Holding";
+                }
+            }
+
+            if (startFresh)
+            {
+                await this.StartAsync(request);
+                return;
+            }
+
+            HashSet<int> currentSet = new(currentIds);
+            int[] toAdd = targetIds.Where(id => !currentSet.Contains(id)).OrderBy(id => id).ToArray();
+            if (toAdd.Length > 0)
+            {
+                await this.ConnectAndRegisterClientsAsync(options, runCounters, toAdd, generation, cancellationToken);
+            }
+        }
+        finally
+        {
+            this.applyGate.Release();
         }
     }
 
@@ -168,6 +260,8 @@ internal sealed class LoadTestUiService
 
             this.DisposeClients();
             this.workerTask = null;
+            this.runOptions = null;
+            this.desiredIds = null;
             this.status = "Stopped";
             this.stoppedAt = DateTimeOffset.UtcNow;
         }
@@ -230,14 +324,7 @@ internal sealed class LoadTestUiService
                         return;
                     }
 
-                    foreach (LoadTestUiClientAttemptResult result in results)
-                    {
-                        if (result.Session != null)
-                        {
-                            this.connectedClients.Add(new LoadTestUiConnectedClient(result.ClientId, result.Session));
-                        }
-                    }
-
+                    this.AddConnectedResultsLocked(results);
                     this.status = "Holding";
                 }
 
@@ -296,6 +383,84 @@ internal sealed class LoadTestUiService
         }
 
         return await Task.WhenAll(tasks);
+    }
+
+    private void AddConnectedResultsLocked(LoadTestUiClientAttemptResult[] results)
+    {
+        foreach (LoadTestUiClientAttemptResult result in results)
+        {
+            if (result.Session == null)
+            {
+                continue;
+            }
+
+            // Drop sessions whose clientId is no longer desired (e.g. a concurrent decrement
+            // removed it while the initial ramp was still connecting it) or already present.
+            if ((this.desiredIds != null && !this.desiredIds.Contains(result.ClientId))
+                || this.connectedClients.Any(client => client.ClientId == result.ClientId))
+            {
+                result.Session.Dispose();
+            }
+            else
+            {
+                this.connectedClients.Add(new LoadTestUiConnectedClient(result.ClientId, result.Session));
+            }
+        }
+    }
+
+    private static HashSet<int> BuildClientIdSet(LoadTestOptions options)
+    {
+        HashSet<int> ids = new();
+        int lastClientId = options.StartClientId + options.Clients - 1;
+        for (int clientId = options.StartClientId; clientId <= lastClientId; clientId++)
+        {
+            ids.Add(clientId);
+        }
+
+        return ids;
+    }
+
+    private async Task ConnectAndRegisterClientsAsync(
+        LoadTestOptions options,
+        LoadTestCounters runCounters,
+        int[] clientIds,
+        int generation,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            for (int offset = 0; offset < clientIds.Length && !cancellationToken.IsCancellationRequested; offset += options.BatchSize)
+            {
+                int batchCount = Math.Min(options.BatchSize, clientIds.Length - offset);
+                Task<LoadTestUiClientAttemptResult>[] tasks = new Task<LoadTestUiClientAttemptResult>[batchCount];
+                for (int index = 0; index < batchCount; index++)
+                {
+                    int clientId = clientIds[offset + index];
+                    tasks[index] = Task.Run(() => this.ConnectClientAsync(options, runCounters, clientId, generation, cancellationToken));
+                }
+
+                LoadTestUiClientAttemptResult[] results = await Task.WhenAll(tasks);
+                lock (this.syncRoot)
+                {
+                    if (!this.IsActiveRun(generation) || cancellationToken.IsCancellationRequested)
+                    {
+                        DisposeAttemptResults(results);
+                        return;
+                    }
+
+                    this.AddConnectedResultsLocked(results);
+                    this.status = "Holding";
+                }
+
+                if (options.RampDelayMilliseconds > 0)
+                {
+                    await Task.Delay(options.RampDelayMilliseconds, cancellationToken);
+                }
+            }
+        }
+        catch (TaskCanceledException)
+        {
+        }
     }
 
     private async Task<LoadTestUiClientAttemptResult> ConnectClientAsync(
