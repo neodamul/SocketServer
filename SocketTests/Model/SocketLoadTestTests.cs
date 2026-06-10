@@ -8,6 +8,7 @@ using System.Net.Sockets;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using SocketClient.Model;
 using SocketCommon.Configuration;
 using SocketCommon.Model;
 using SocketLoadTest;
@@ -219,6 +220,97 @@ public class SocketLoadTestTests
     }
 
     [TestMethod]
+    public async Task LoadTestUiRetriesTransientConnectFailuresTest()
+    {
+        Assert.IsTrue(LoadTestOptions.TryParse(
+            new[]
+            {
+                "--ui",
+                "--clients", "1",
+                "--batch-size", "1",
+                "--host", "127.0.0.1",
+                "--port", "1",
+                "--external-server"
+            },
+            out LoadTestOptions options,
+            out string error));
+        Assert.AreEqual(string.Empty, error);
+
+        LoadTestUiService service = new(options);
+        await service.StartAsync(new LoadTestUiStartRequest());
+
+        LoadTestUiState retrying = await WaitForStateAsync(
+            service,
+            state => state.Counters.Attempted >= 2,
+            TimeSpan.FromSeconds(5));
+
+        Assert.IsTrue(retrying.IsRunning);
+        Assert.AreEqual("Starting", retrying.Status);
+        Assert.AreEqual(0, retrying.Counters.Connected);
+        Assert.AreEqual(0, retrying.Counters.ConnectFail);
+        Assert.AreEqual(0, retrying.Counters.RegisterFail);
+        Assert.AreEqual(0, retrying.Counters.HealthCheckFail);
+
+        await service.StopAsync();
+    }
+
+    [TestMethod]
+    public async Task LoadTestUiCountsRegisterRejectionAsFinalFailureTest()
+    {
+        TcpServer server = new(1, "load-ui-test-server", "127.0.0.1", 0);
+        SocketClientSession existing = new();
+        try
+        {
+            Assert.IsTrue(server.Start());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+            Assert.IsTrue(await existing.ConnectAndRegisterAsync(
+                900,
+                "existing-900",
+                "127.0.0.1",
+                server.GetPort(),
+                false,
+                HealthCheckProtocol.KeepAliveIntervalSeconds,
+                30,
+                90));
+
+            Assert.IsTrue(LoadTestOptions.TryParse(
+                new[]
+                {
+                    "--ui",
+                    "--clients", "1",
+                    "--start-client-id", "900",
+                    "--batch-size", "1",
+                    "--host", "127.0.0.1",
+                    "--port", server.GetPort().ToString(),
+                    "--external-server"
+                },
+                out LoadTestOptions options,
+                out string error));
+            Assert.AreEqual(string.Empty, error);
+
+            LoadTestUiService service = new(options);
+            await service.StartAsync(new LoadTestUiStartRequest());
+
+            LoadTestUiState rejected = await WaitForStateAsync(
+                service,
+                state => state.Counters.RegisterFail >= 1,
+                TimeSpan.FromSeconds(10));
+
+            Assert.IsTrue(rejected.IsRunning);
+            Assert.AreEqual(0, rejected.ConnectedNow);
+            Assert.AreEqual(0, rejected.Counters.ConnectFail);
+            Assert.AreEqual(1, rejected.Counters.RegisterFail);
+
+            await service.StopAsync();
+        }
+        finally
+        {
+            existing.Dispose();
+            server.End();
+        }
+    }
+
+    [TestMethod]
     public async Task RunMessageLoadTestWithTwoClientsTest()
     {
         int exitCode = await Program.RunAsync(new[]
@@ -308,6 +400,111 @@ public class SocketLoadTestTests
     }
 
     [TestMethod]
+    public async Task LoadTestUiScaleDownStopsPendingRetriesForRemovedClientsTest()
+    {
+        int port = GetAvailablePort();
+        Assert.IsTrue(LoadTestOptions.TryParse(new[] { "--ui" }, out LoadTestOptions options, out string error));
+        Assert.AreEqual(string.Empty, error);
+        LoadTestUiService service = new(options);
+        TcpServer? server = null;
+
+        try
+        {
+            await service.ApplyAsync(Request(port, clients: 2));
+            await WaitForStateAsync(
+                service,
+                state => state.Counters.Attempted >= 2,
+                TimeSpan.FromSeconds(5));
+
+            await service.ApplyAsync(Request(port, clients: 1));
+
+            server = new TcpServer(1, "loadtest-ui-server", "127.0.0.1", 0);
+            Assert.IsTrue(server.BindInPortRange(port, port));
+            Assert.IsTrue(server.Listen());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+
+            await WaitForConnectedAsync(service, 1);
+            await Task.Delay(TimeSpan.FromSeconds(2));
+
+            LoadTestUiState state = service.GetState();
+            Assert.AreEqual(1, state.ConnectedNow);
+            Assert.AreEqual(1, state.Counters.Connected);
+            CollectionAssert.AreEquivalent(new[] { 1 }, ConnectedIds(service));
+        }
+        finally
+        {
+            await service.StopAsync();
+            server?.End();
+        }
+    }
+
+    [TestMethod]
+    public async Task LoadTestUiScaleUpWithPendingRetriesDoesNotBlockLaterApplyTest()
+    {
+        int port = GetAvailablePort();
+        Assert.IsTrue(LoadTestOptions.TryParse(new[] { "--ui" }, out LoadTestOptions options, out string error));
+        Assert.AreEqual(string.Empty, error);
+        LoadTestUiService service = new(options);
+
+        try
+        {
+            await service.ApplyAsync(Request(port, clients: 1));
+            await WaitForStateAsync(
+                service,
+                state => state.Counters.Attempted >= 1,
+                TimeSpan.FromSeconds(5));
+
+            await AssertCompletesAsync(service.ApplyAsync(Request(port, clients: 2)), TimeSpan.FromSeconds(2));
+            await AssertCompletesAsync(service.ApplyAsync(Request(port, clients: 1)), TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            await service.StopAsync();
+        }
+    }
+
+    [TestMethod]
+    public async Task LoadTestUiRapidScaleDownAndUpDoesNotDuplicatePendingRetriesTest()
+    {
+        int port = GetAvailablePort();
+        Assert.IsTrue(LoadTestOptions.TryParse(new[] { "--ui" }, out LoadTestOptions options, out string error));
+        Assert.AreEqual(string.Empty, error);
+        LoadTestUiService service = new(options);
+        TcpServer? server = null;
+
+        try
+        {
+            await service.ApplyAsync(Request(port, clients: 2));
+            await WaitForStateAsync(
+                service,
+                state => state.Counters.Attempted >= 2,
+                TimeSpan.FromSeconds(5));
+
+            await service.ApplyAsync(Request(port, clients: 1));
+            await service.ApplyAsync(Request(port, clients: 2));
+
+            server = new TcpServer(1, "loadtest-ui-server", "127.0.0.1", 0);
+            Assert.IsTrue(server.BindInPortRange(port, port));
+            Assert.IsTrue(server.Listen());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+
+            await WaitForConnectedAsync(service, 2);
+            await Task.Delay(TimeSpan.FromSeconds(2));
+
+            LoadTestUiState state = service.GetState();
+            Assert.AreEqual(2, state.ConnectedNow);
+            Assert.AreEqual(2, state.Counters.Connected);
+            Assert.AreEqual(0, state.Counters.RegisterFail);
+            CollectionAssert.AreEquivalent(new[] { 1, 2 }, ConnectedIds(service));
+        }
+        finally
+        {
+            await service.StopAsync();
+            server?.End();
+        }
+    }
+
+    [TestMethod]
     public async Task LoadTestUiApplyTransportChangeRestartsRunTest()
     {
         TcpServer first = new(1, "loadtest-ui-server-a", "127.0.0.1", 0);
@@ -363,6 +560,15 @@ public class SocketLoadTestTests
             .ToArray();
     }
 
+    private static int GetAvailablePort()
+    {
+        TcpListener listener = new(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
     private static async Task WaitForConnectedAsync(LoadTestUiService service, int expected)
     {
         for (int attempt = 0; attempt < 150; attempt++)
@@ -377,6 +583,35 @@ public class SocketLoadTestTests
         }
 
         Assert.Fail($"Expected {expected} connected clients, observed {service.GetState().Clients.Count}.");
+    }
+
+    private static async Task AssertCompletesAsync(Task task, TimeSpan timeout)
+    {
+        Task completed = await Task.WhenAny(task, Task.Delay(timeout));
+        Assert.AreSame(task, completed);
+        await task;
+    }
+
+    private static async Task<LoadTestUiState> WaitForStateAsync(
+        LoadTestUiService service,
+        Func<LoadTestUiState, bool> predicate,
+        TimeSpan timeout)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + timeout;
+        LoadTestUiState state;
+        do
+        {
+            state = service.GetState();
+            if (predicate(state))
+            {
+                return state;
+            }
+
+            await Task.Delay(100);
+        }
+        while (DateTimeOffset.UtcNow < deadline);
+
+        return state;
     }
 
     private sealed class TcpListenerScope : IDisposable
