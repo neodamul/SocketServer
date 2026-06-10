@@ -101,6 +101,8 @@ internal static class LoadTestUiHost
 
 internal sealed class LoadTestUiService
 {
+    private static readonly TimeSpan ConnectRetryDelay = TimeSpan.FromSeconds(1);
+
     private readonly object syncRoot = new();
     private readonly LoadTestOptions defaultOptions;
     private readonly List<LoadTestUiConnectedClient> connectedClients = new();
@@ -114,6 +116,8 @@ internal sealed class LoadTestUiService
     private int runGeneration;
     private LoadTestOptions? runOptions;
     private HashSet<int>? desiredIds;
+    private readonly Dictionary<int, int> pendingClientGenerations = new();
+    private readonly HashSet<int> pendingClientReschedules = new();
     private readonly SemaphoreSlim applyGate = new(1, 1);
 
     public LoadTestUiService(LoadTestOptions defaultOptions)
@@ -140,6 +144,8 @@ internal sealed class LoadTestUiService
             LoadTestOptions options = this.CreateOptions(request);
             this.runOptions = options;
             this.desiredIds = BuildClientIdSet(options);
+            this.pendingClientGenerations.Clear();
+            this.pendingClientReschedules.Clear();
             int generation = ++this.runGeneration;
             LoadTestCounters runCounters = new();
             this.counters = runCounters;
@@ -185,6 +191,7 @@ internal sealed class LoadTestUiService
 
             bool startFresh = false;
             int[] currentIds = Array.Empty<int>();
+            HashSet<int> previousDesiredIds = new();
             int generation = 0;
             LoadTestCounters runCounters = this.counters;
             CancellationToken cancellationToken = CancellationToken.None;
@@ -197,6 +204,9 @@ internal sealed class LoadTestUiService
                 else
                 {
                     currentIds = this.connectedClients.Select(client => client.ClientId).ToArray();
+                    previousDesiredIds = this.desiredIds != null
+                        ? new HashSet<int>(this.desiredIds)
+                        : new HashSet<int>(currentIds);
                     HashSet<int> removeSet = new(currentIds.Where(id => !targetIds.Contains(id)));
                     for (int index = this.connectedClients.Count - 1; index >= 0; index--)
                     {
@@ -222,11 +232,18 @@ internal sealed class LoadTestUiService
                 return;
             }
 
-            HashSet<int> currentSet = new(currentIds);
+            HashSet<int> currentSet = previousDesiredIds.Count > 0
+                ? previousDesiredIds
+                : new HashSet<int>(currentIds);
             int[] toAdd = targetIds.Where(id => !currentSet.Contains(id)).OrderBy(id => id).ToArray();
             if (toAdd.Length > 0)
             {
-                await this.ConnectAndRegisterClientsAsync(options, runCounters, toAdd, generation, cancellationToken);
+                _ = Task.Run(() => this.ConnectAndRegisterClientsAsync(
+                    options,
+                    runCounters,
+                    toAdd,
+                    generation,
+                    cancellationToken));
             }
         }
         finally
@@ -262,6 +279,8 @@ internal sealed class LoadTestUiService
             this.workerTask = null;
             this.runOptions = null;
             this.desiredIds = null;
+            this.pendingClientGenerations.Clear();
+            this.pendingClientReschedules.Clear();
             this.status = "Stopped";
             this.stoppedAt = DateTimeOffset.UtcNow;
         }
@@ -374,12 +393,14 @@ internal sealed class LoadTestUiService
         for (int index = 0; index < batchCount; index++)
         {
             int clientId = firstClientId + index;
-            tasks[index] = Task.Run(() => this.ConnectClientAsync(
-                options,
-                runCounters,
-                clientId,
-                generation,
-                cancellationToken));
+            tasks[index] = this.TryMarkPendingClient(clientId, generation, requestRescheduleIfPending: false)
+                ? Task.Run(() => this.ConnectClientAsync(
+                    options,
+                    runCounters,
+                    clientId,
+                    generation,
+                    cancellationToken))
+                : Task.FromResult(LoadTestUiClientAttemptResult.Failed);
         }
 
         return await Task.WhenAll(tasks);
@@ -436,7 +457,9 @@ internal sealed class LoadTestUiService
                 for (int index = 0; index < batchCount; index++)
                 {
                     int clientId = clientIds[offset + index];
-                    tasks[index] = Task.Run(() => this.ConnectClientAsync(options, runCounters, clientId, generation, cancellationToken));
+                    tasks[index] = this.TryMarkPendingClient(clientId, generation, requestRescheduleIfPending: true)
+                        ? Task.Run(() => this.ConnectClientAsync(options, runCounters, clientId, generation, cancellationToken))
+                        : Task.FromResult(LoadTestUiClientAttemptResult.Failed);
                 }
 
                 LoadTestUiClientAttemptResult[] results = await Task.WhenAll(tasks);
@@ -470,59 +493,199 @@ internal sealed class LoadTestUiService
         int generation,
         CancellationToken cancellationToken)
     {
-        Interlocked.Increment(ref runCounters.Attempted);
-        SocketClientSession session = new();
-        session.HealthCheckReceived += _ => Interlocked.Increment(ref runCounters.HealthCheckSuccess);
+        bool returnedConnectedSession = false;
+        bool terminalRegisterFailure = false;
         try
         {
-            bool connected = options.UseControlServer
-                ? await session.ConnectAndRegisterAsync(
-                    clientId,
-                    $"ui-client-{clientId}",
-                    options.Host,
-                    options.Port,
-                    true,
-                    HealthCheckProtocol.KeepAliveIntervalSeconds,
-                    30,
-                    90)
-                : await session.ConnectAndRegisterAsync(
-                    clientId,
-                    $"ui-client-{clientId}",
-                    options.Host,
-                    options.Port,
-                    false,
-                    HealthCheckProtocol.KeepAliveIntervalSeconds,
-                    30,
-                    90);
-            if (!connected)
+            while (!cancellationToken.IsCancellationRequested &&
+                this.IsActiveRun(generation) &&
+                this.IsDesiredClient(clientId))
             {
-                if (session.LastFailure == SocketClientSessionFailure.Register)
+                Interlocked.Increment(ref runCounters.Attempted);
+                SocketClientSession session = new();
+                session.HealthCheckReceived += _ => Interlocked.Increment(ref runCounters.HealthCheckSuccess);
+                try
                 {
-                    Interlocked.Increment(ref runCounters.RegisterFail);
+                    bool connected = options.UseControlServer
+                        ? await session.ConnectAndRegisterAsync(
+                            clientId,
+                            $"ui-client-{clientId}",
+                            options.Host,
+                            options.Port,
+                            true,
+                            HealthCheckProtocol.KeepAliveIntervalSeconds,
+                            30,
+                            90)
+                        : await session.ConnectAndRegisterAsync(
+                            clientId,
+                            $"ui-client-{clientId}",
+                            options.Host,
+                            options.Port,
+                            false,
+                            HealthCheckProtocol.KeepAliveIntervalSeconds,
+                            30,
+                            90);
+                    if (connected)
+                    {
+                        if (!this.IsDesiredClient(clientId))
+                        {
+                            session.Dispose();
+                            return new LoadTestUiClientAttemptResult(clientId, null);
+                        }
+
+                        Interlocked.Increment(ref runCounters.Connected);
+                        if (cancellationToken.IsCancellationRequested || !this.IsActiveRun(generation))
+                        {
+                            session.Dispose();
+                            return new LoadTestUiClientAttemptResult(clientId, null);
+                        }
+
+                        returnedConnectedSession = true;
+                        return new LoadTestUiClientAttemptResult(clientId, session);
+                    }
+
+                    if (session.LastFailure == SocketClientSessionFailure.Register)
+                    {
+                        Interlocked.Increment(ref runCounters.RegisterFail);
+                        terminalRegisterFailure = true;
+                        session.Dispose();
+                        return new LoadTestUiClientAttemptResult(clientId, null);
+                    }
+
+                    session.Dispose();
                 }
-                else
+                catch (Exception exception) when (exception is TimeoutException or InvalidOperationException or IOException)
                 {
-                    Interlocked.Increment(ref runCounters.ConnectFail);
+                    session.Dispose();
                 }
 
-                session.Dispose();
-                return new LoadTestUiClientAttemptResult(clientId, null);
+                try
+                {
+                    await Task.Delay(ConnectRetryDelay, cancellationToken);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
             }
 
-            Interlocked.Increment(ref runCounters.Connected);
-            if (cancellationToken.IsCancellationRequested || !this.IsActiveRun(generation))
-            {
-                session.Dispose();
-                return new LoadTestUiClientAttemptResult(clientId, null);
-            }
-
-            return new LoadTestUiClientAttemptResult(clientId, session);
-        }
-        catch (Exception exception) when (exception is TimeoutException or InvalidOperationException or IOException)
-        {
-            Interlocked.Increment(ref runCounters.HealthCheckFail);
-            session.Dispose();
             return LoadTestUiClientAttemptResult.Failed;
+        }
+        finally
+        {
+            bool canReschedule = !returnedConnectedSession &&
+                !terminalRegisterFailure &&
+                !cancellationToken.IsCancellationRequested &&
+                this.IsActiveRun(generation);
+            if (this.ClearPendingClient(clientId, generation, canReschedule) &&
+                this.TryMarkPendingClient(clientId, generation, requestRescheduleIfPending: false))
+            {
+                _ = Task.Run(() => this.ConnectAndStoreClientAsync(
+                    options,
+                    runCounters,
+                    clientId,
+                    generation,
+                    cancellationToken));
+            }
+        }
+    }
+
+    private async Task ConnectAndStoreClientAsync(
+        LoadTestOptions options,
+        LoadTestCounters runCounters,
+        int clientId,
+        int generation,
+        CancellationToken cancellationToken)
+    {
+        LoadTestUiClientAttemptResult result;
+        try
+        {
+            result = await this.ConnectClientAsync(options, runCounters, clientId, generation, cancellationToken);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            lock (this.syncRoot)
+            {
+                if (!this.IsActiveRun(generation))
+                {
+                    return;
+                }
+
+                this.status = "Failed";
+                this.errorMessage = exception.Message;
+            }
+
+            return;
+        }
+
+        lock (this.syncRoot)
+        {
+            if (!this.IsActiveRun(generation) || cancellationToken.IsCancellationRequested)
+            {
+                result.Session?.Dispose();
+                return;
+            }
+
+            this.AddConnectedResultsLocked(new[] { result });
+            this.status = "Holding";
+        }
+    }
+
+    private bool IsDesiredClient(int clientId)
+    {
+        lock (this.syncRoot)
+        {
+            return this.desiredIds == null || this.desiredIds.Contains(clientId);
+        }
+    }
+
+    private bool TryMarkPendingClient(int clientId, int generation, bool requestRescheduleIfPending)
+    {
+        lock (this.syncRoot)
+        {
+            if (this.pendingClientGenerations.TryGetValue(clientId, out int pendingGeneration) &&
+                pendingGeneration == generation)
+            {
+                if (requestRescheduleIfPending)
+                {
+                    this.pendingClientReschedules.Add(clientId);
+                }
+
+                return false;
+            }
+
+            this.pendingClientGenerations[clientId] = generation;
+            this.pendingClientReschedules.Remove(clientId);
+            return true;
+        }
+    }
+
+    private bool ClearPendingClient(int clientId, int generation, bool canReschedule)
+    {
+        lock (this.syncRoot)
+        {
+            if (this.pendingClientGenerations.TryGetValue(clientId, out int pendingGeneration) &&
+                pendingGeneration == generation)
+            {
+                this.pendingClientGenerations.Remove(clientId);
+                bool shouldReschedule = canReschedule &&
+                    this.runGeneration == generation &&
+                    this.desiredIds != null &&
+                    this.desiredIds.Contains(clientId) &&
+                    this.pendingClientReschedules.Remove(clientId);
+                if (!shouldReschedule)
+                {
+                    this.pendingClientReschedules.Remove(clientId);
+                }
+
+                return shouldReschedule;
+            }
+
+            return false;
         }
     }
 
