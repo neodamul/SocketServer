@@ -184,6 +184,8 @@ public class TcpClient : IClient, IDisposable
         {
             string serverHost;
             int serverPort;
+            string serverInstanceId;
+            string reservationId;
             Logger.Info($"ControlServer route request started. clientId={this.ClientId}, endpoint={endpoint}");
             using (Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family))
             {
@@ -208,11 +210,13 @@ public class TcpClient : IClient, IDisposable
                     return false;
                 }
 
-                Logger.Info($"ControlServer route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={response.InstanceId}, serverEndpoint={response.Host}:{response.Port}, reservationId={response.ReservationId}");
                 serverHost = response.Host;
                 serverPort = response.Port;
+                serverInstanceId = response.InstanceId;
+                reservationId = response.ReservationId;
             }
 
+            Logger.Info($"ControlServer route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={serverInstanceId}, serverEndpoint={serverHost}:{serverPort}, reservationId={reservationId}");
             this.SetIpAddress(serverHost);
             this.SetPort(serverPort);
             return this.Connect();
