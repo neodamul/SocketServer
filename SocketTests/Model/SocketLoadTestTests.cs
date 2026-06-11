@@ -166,6 +166,18 @@ public class SocketLoadTestTests
     }
 
     [TestMethod]
+    public void LoadTestUiConnectRetryDelayBacksOffToThirtySecondsTest()
+    {
+        Assert.AreEqual(TimeSpan.FromSeconds(1), LoadTestUiService.GetConnectRetryDelay(1));
+        Assert.AreEqual(TimeSpan.FromSeconds(2), LoadTestUiService.GetConnectRetryDelay(2));
+        Assert.AreEqual(TimeSpan.FromSeconds(4), LoadTestUiService.GetConnectRetryDelay(3));
+        Assert.AreEqual(TimeSpan.FromSeconds(8), LoadTestUiService.GetConnectRetryDelay(4));
+        Assert.AreEqual(TimeSpan.FromSeconds(16), LoadTestUiService.GetConnectRetryDelay(5));
+        Assert.AreEqual(TimeSpan.FromSeconds(30), LoadTestUiService.GetConnectRetryDelay(6));
+        Assert.AreEqual(TimeSpan.FromSeconds(30), LoadTestUiService.GetConnectRetryDelay(10));
+    }
+
+    [TestMethod]
     public void DefaultSecurityRequiresClientCertificateTest()
     {
         SocketSecurityConfig security = Program.CreateDefaultSecurityConfig();
@@ -456,6 +468,50 @@ public class SocketLoadTestTests
 
             await AssertCompletesAsync(service.ApplyAsync(Request(port, clients: 2)), TimeSpan.FromSeconds(2));
             await AssertCompletesAsync(service.ApplyAsync(Request(port, clients: 1)), TimeSpan.FromSeconds(2));
+        }
+        finally
+        {
+            await service.StopAsync();
+        }
+    }
+
+    [TestMethod]
+    public async Task LoadTestUiScaleUpKeepsSingleRunWideConnectAttemptLimitTest()
+    {
+        int port = GetAvailablePort();
+        Assert.IsTrue(LoadTestOptions.TryParse(new[] { "--ui" }, out LoadTestOptions options, out string error));
+        Assert.AreEqual(string.Empty, error);
+        LoadTestUiService service = new(options);
+
+        try
+        {
+            await service.ApplyAsync(new LoadTestUiStartRequest
+            {
+                Clients = 2,
+                StartClientId = 1,
+                BatchSize = 2,
+                Host = "127.0.0.1",
+                Port = port,
+                UseControlServer = false
+            });
+            await WaitForStateAsync(
+                service,
+                state => state.Counters.Attempted >= 2,
+                TimeSpan.FromSeconds(5));
+
+            Assert.AreEqual(2, service.ConnectAttemptLimit);
+
+            await service.ApplyAsync(new LoadTestUiStartRequest
+            {
+                Clients = 4,
+                StartClientId = 1,
+                BatchSize = 10,
+                Host = "127.0.0.1",
+                Port = port,
+                UseControlServer = false
+            });
+
+            Assert.AreEqual(2, service.ConnectAttemptLimit);
         }
         finally
         {
