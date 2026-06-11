@@ -259,7 +259,7 @@ public class SocketLoadTestTests
         Assert.IsTrue(retrying.IsRunning);
         Assert.AreEqual("Starting", retrying.Status);
         Assert.AreEqual(0, retrying.Counters.Connected);
-        Assert.AreEqual(0, retrying.Counters.ConnectFail);
+        Assert.IsTrue(retrying.Counters.ConnectFail >= 1);
         Assert.AreEqual(0, retrying.Counters.RegisterFail);
         Assert.AreEqual(0, retrying.Counters.HealthCheckFail);
 

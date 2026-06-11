@@ -1001,6 +1001,31 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void BackendRegistryCoalescesRepeatedSessionUpdateSavesTest()
+    {
+        CountingBackendRegistryStore store = new();
+        BackendServerRegistry registry = new(TimeSpan.FromSeconds(90), store);
+        registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
+        registry.Upsert(CreateHeartbeat(1, "server-1", 5101, 1, 100), "control-1", new ControlHealthThreshold());
+        registry.UpsertSession(CreateSessionEvent("server-1", 700, 77, "opened", 1));
+        int saveCountAfterOpen = store.SaveCount;
+
+        for (int version = 2; version < 100; version++)
+        {
+            registry.UpsertSession(CreateSessionEvent("server-1", 700, 77, "updated", version));
+        }
+
+        ClientLocationResponse location = registry.ResolveClientLocation(new ClientLocationRequest
+        {
+            SourceClientId = 1,
+            TargetClientId = 77
+        });
+
+        Assert.IsTrue(location.Success);
+        Assert.AreEqual(saveCountAfterOpen, store.SaveCount);
+    }
+
+    [TestMethod]
     public void BackendRegistryFileStoreNormalizesExpiredServersOnRestoreTest()
     {
         string path = CreateRegistryPath();
@@ -1369,6 +1394,21 @@ public class ControlProtocolTests
         if (File.Exists(temporaryPath))
         {
             File.Delete(temporaryPath);
+        }
+    }
+
+    private sealed class CountingBackendRegistryStore : IBackendRegistryStore
+    {
+        public int SaveCount { get; private set; }
+
+        public BackendRegistryState Load()
+        {
+            return new BackendRegistryState();
+        }
+
+        public void Save(BackendRegistryState state)
+        {
+            this.SaveCount++;
         }
     }
 }

@@ -71,3 +71,8 @@ Sizing procedure:
 Example: a validated 10,000 safe connections/node implies ≥30 SocketServer instances for 300,000. TLS handshake CPU is a transient spike for long-lived connections — measure restart/reconnect-storm scenarios separately.
 
 For control-plane / server-to-server relay message-size estimates and broadcast amplification at scale, see [Relay Traffic Sizing](RelayTrafficSizing.md).
+
+## Session heartbeat scale
+Client healthcheck pings refresh session liveness in the ControlServer registry, but high-frequency `SessionUpdated` events are treated as an in-memory freshness path. `SessionOpened` and `SessionClosed` are persisted and peer-relayed immediately; repeated `SessionUpdated` events are coalesced for file persistence and are not individually peer-relayed because active-active SocketServers report to both ControlServers directly and periodic snapshot sync repairs missed freshness.
+
+This prevents a small healthcheck frame from amplifying into thousands of full registry JSON writes and peer relay messages during 3k/10k client ramps. If ControlServer session counts diverge from SocketServer current connections, inspect registry save/relay latency before increasing worker counts.
