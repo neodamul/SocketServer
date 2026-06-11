@@ -182,32 +182,39 @@ public class TcpClient : IClient, IDisposable
         string endpoint = $"{controlHost}:{controlPort}";
         try
         {
+            string serverHost;
+            int serverPort;
             Logger.Info($"ControlServer route request started. clientId={this.ClientId}, endpoint={endpoint}");
-            using Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family);
-            await SocketFactory.ConnectAsync(controlSocket, controlHost, controlPort);
-            using SecureSocketConnection controlConnection =
-                await SecureSocketConnection.AuthenticateClientAsync(controlSocket, this.GetCertificateModuleName());
-            (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
-                controlConnection,
-                this.ClientId,
-                ControlMessageIds.RouteRequest,
-                new RouteRequest
-                {
-                    ClientId = this.ClientId,
-                    RoutingPolicy = "MostAvailableConnections"
-                });
-
-            if (!success ||
-                !ControlProtocol.TryDecode(frame, ControlMessageIds.RouteResponse, out RouteResponse response) ||
-                !response.Success)
+            using (Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family))
             {
-                Logger.Warn($"ControlServer route request did not return usable server. clientId={this.ClientId}, endpoint={endpoint}, success={success}");
-                return false;
+                await SocketFactory.ConnectAsync(controlSocket, controlHost, controlPort);
+                using SecureSocketConnection controlConnection =
+                    await SecureSocketConnection.AuthenticateClientAsync(controlSocket, this.GetCertificateModuleName());
+                (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
+                    controlConnection,
+                    this.ClientId,
+                    ControlMessageIds.RouteRequest,
+                    new RouteRequest
+                    {
+                        ClientId = this.ClientId,
+                        RoutingPolicy = "MostAvailableConnections"
+                    });
+
+                if (!success ||
+                    !ControlProtocol.TryDecode(frame, ControlMessageIds.RouteResponse, out RouteResponse response) ||
+                    !response.Success)
+                {
+                    Logger.Warn($"ControlServer route request did not return usable server. clientId={this.ClientId}, endpoint={endpoint}, success={success}");
+                    return false;
+                }
+
+                Logger.Info($"ControlServer route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={response.InstanceId}, serverEndpoint={response.Host}:{response.Port}, reservationId={response.ReservationId}");
+                serverHost = response.Host;
+                serverPort = response.Port;
             }
 
-            Logger.Info($"ControlServer route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={response.InstanceId}, serverEndpoint={response.Host}:{response.Port}, reservationId={response.ReservationId}");
-            this.SetIpAddress(response.Host);
-            this.SetPort(response.Port);
+            this.SetIpAddress(serverHost);
+            this.SetPort(serverPort);
             return this.Connect();
         }
         catch (SocketException exception)
