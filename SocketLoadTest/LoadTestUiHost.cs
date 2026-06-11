@@ -520,10 +520,12 @@ internal sealed class LoadTestUiService
                         return new LoadTestUiClientAttemptResult(clientId, null);
                     }
 
+                    Interlocked.Increment(ref runCounters.ConnectFail);
                     session.Dispose();
                 }
                 catch (Exception exception) when (exception is TimeoutException or InvalidOperationException or IOException)
                 {
+                    Interlocked.Increment(ref runCounters.ConnectFail);
                     session.Dispose();
                 }
                 finally

@@ -13,10 +13,12 @@ public class ResponseWorkerConfigurationTests
     [TestMethod]
     public void SocketServerClientResponsesUseMultipleWorkersTest()
     {
-        Assert.AreEqual(4, ReadPrivateConstInt(typeof(TcpServer), "ClientResponseWorkerCount"));
+        Assert.AreEqual(4, InvokePrivateStaticInt(typeof(TcpServer), "CalculateWorkerCount", 100, 500, 4, 64));
+        Assert.AreEqual(20, InvokePrivateStaticInt(typeof(TcpServer), "CalculateWorkerCount", 10000, 500, 4, 64));
 
         string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketServer/Model/TcpServer.cs"));
         Assert.IsTrue(source.Contains("clientResponseChannel = Channel.CreateUnbounded<ClientResponseCommand>", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("GetClientResponseWorkerCount()", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("SingleReader = false", StringComparison.Ordinal));
     }
 
@@ -33,14 +35,14 @@ public class ResponseWorkerConfigurationTests
     [TestMethod]
     public void SocketServerSessionReportsUseMultiplePersistentChannelsPerEndpointTest()
     {
-        Assert.AreEqual(4, ReadPrivateConstInt(typeof(ControlServerReporter), "SessionReportChannelCount"));
-        Assert.AreEqual(4, ReadPrivateConstInt(typeof(ControlServerReporter), "SessionReportWorkerCount"));
+        Assert.AreEqual(4, InvokePrivateStaticInt(typeof(ControlServerReporter), "CalculateSessionReportWorkerCount", 100));
+        Assert.AreEqual(20, InvokePrivateStaticInt(typeof(ControlServerReporter), "CalculateSessionReportWorkerCount", 10000));
 
         string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketServer/Model/ControlServerReporter.cs"));
-        Assert.IsTrue(source.Contains("reportChannels = CreateReportChannels(SessionReportWorkerCount)", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("reportChannels = CreateReportChannels(sessionReportWorkerCount)", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("SingleReader = true", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("Task[] workers = new Task[channels.Length]", StringComparison.Ordinal));
-        Assert.IsTrue(source.Contains("CreateConnectionGroups(controlServers, this.reportTimeout, SessionReportChannelCount)", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("CreateConnectionGroups(controlServers, this.reportTimeout, sessionReportWorkerCount)", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("Math.Max(2, channelCount)", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("GetSessionEventPartitionKey(clientId, payload)", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("GetReportChannelWriter(message)", StringComparison.Ordinal));
@@ -80,6 +82,13 @@ public class ResponseWorkerConfigurationTests
         FieldInfo field = type.GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Static)!;
         Assert.IsNotNull(field);
         return (int)field.GetRawConstantValue()!;
+    }
+
+    private static int InvokePrivateStaticInt(Type type, string methodName, params object[] args)
+    {
+        MethodInfo method = type.GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!;
+        Assert.IsNotNull(method);
+        return (int)method.Invoke(null, args)!;
     }
 
     private static string FindRepositoryRoot()

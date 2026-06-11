@@ -21,8 +21,9 @@ public class ControlServerReporter : IDisposable
     private static readonly TimeSpan MetadataRegisterInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RelayRefreshInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan BroadcastCompletionGraceInterval = TimeSpan.FromSeconds(1);
-    private const int SessionReportChannelCount = 4;
-    private const int SessionReportWorkerCount = 4;
+    private const int MinimumSessionReportWorkerCount = 4;
+    private const int MaximumSessionReportWorkerCount = 64;
+    private const int ConnectionsPerSessionReportWorker = 500;
     private const int SessionReportQueueCapacity = 10000;
 
     private readonly TcpServer server;
@@ -59,9 +60,10 @@ public class ControlServerReporter : IDisposable
         this.portRangeStart = portRangeStart;
         this.portRangeEnd = portRangeEnd;
         this.reportTimeout = NormalizeReportTimeout(reportTimeout);
+        int sessionReportWorkerCount = CalculateSessionReportWorkerCount(server.GetStatus().MaxConnections);
         this.connections = CreateConnections(controlServers, this.reportTimeout);
-        this.sessionConnectionGroups = CreateConnectionGroups(controlServers, this.reportTimeout, SessionReportChannelCount);
-        this.reportChannels = CreateReportChannels(SessionReportWorkerCount);
+        this.sessionConnectionGroups = CreateConnectionGroups(controlServers, this.reportTimeout, sessionReportWorkerCount);
+        this.reportChannels = CreateReportChannels(sessionReportWorkerCount);
         this.server.ConfigureControlRouting(this.controlServers, this.clusterId);
         this.server.SessionOpenedAsync += this.SendSessionOpenedAsync;
         this.server.SessionUpdatedAsync += this.SendSessionUpdatedAsync;
@@ -666,6 +668,13 @@ public class ControlServerReporter : IDisposable
         }
 
         return groups;
+    }
+
+    private static int CalculateSessionReportWorkerCount(int connectionLimit)
+    {
+        int normalizedConnections = Math.Max(1, connectionLimit);
+        int calculated = (int)Math.Ceiling(normalizedConnections / (double)ConnectionsPerSessionReportWorker);
+        return Math.Min(Math.Max(MinimumSessionReportWorkerCount, calculated), MaximumSessionReportWorkerCount);
     }
 
     private static ulong GetSessionEventPartitionKey<T>(uint clientId, T payload)

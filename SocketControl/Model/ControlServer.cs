@@ -587,8 +587,6 @@ public class ControlServer : IDisposable
             RelayLogger.Debug($"Session summary upsert started. event=updated, controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}, version={sessionEvent.Version}");
             this.registry.UpsertSession(sessionEvent);
             releasedReservation = this.registry.ReleaseReservationFor(sessionEvent.ClientId, sessionEvent.InstanceId);
-            await PublishSessionAsync(sessionEvent, ControlMessageIds.SessionSummaryUpsert);
-            await PublishClientLocationAsync(sessionEvent, ControlMessageIds.ClientLocationUpsert);
             if (releasedReservation != null)
             {
                 RelayLogger.Info($"Route reservation released by session update. controlNodeId={this.config.NodeId}, reservationId={releasedReservation.ReservationId}, clientId={releasedReservation.ClientId}, instanceId={releasedReservation.InstanceId}");

@@ -25,8 +25,11 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<TcpServer>();
     private static readonly SocketLogger RelayLogger = SocketLogManager.GetRelayLogger<TcpServer>();
-    private const int ClientCommandWorkerCount = 4;
-    private const int ClientResponseWorkerCount = 4;
+    private const int MinimumClientCommandWorkerCount = 4;
+    private const int MinimumClientResponseWorkerCount = 4;
+    private const int MaximumClientWorkerCount = 64;
+    private const int ConnectionsPerClientCommandWorker = 1000;
+    private const int ConnectionsPerClientResponseWorker = 500;
     private const int ServerRelayWorkerCount = 8;
     private const int MinimumServerRelayChannelCount = 2;
 
@@ -428,12 +431,14 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         this.acceptLoopCancellation?.Dispose();
         this.acceptLoopCancellation = new CancellationTokenSource();
+        int clientCommandWorkerCount = this.GetClientCommandWorkerCount();
+        int clientResponseWorkerCount = this.GetClientResponseWorkerCount();
         this.clientCommandWorkerTasks = DedicatedWorker.StartMany(
-            ClientCommandWorkerCount,
+            clientCommandWorkerCount,
             this.RunClientCommandRequestLoopAsync,
             this.acceptLoopCancellation.Token);
         this.clientResponseWorkerTasks = DedicatedWorker.StartMany(
-            ClientResponseWorkerCount,
+            clientResponseWorkerCount,
             this.RunClientResponseLoopAsync,
             this.acceptLoopCancellation.Token);
         this.serverRelayWorkerTasks = DedicatedWorker.StartMany(
@@ -444,8 +449,34 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             this.RunServerRelayResponseLoopAsync,
             this.acceptLoopCancellation.Token);
         this.acceptLoopTask = DedicatedWorker.Start(this.RunClientAcceptLoopAsync, this.acceptLoopCancellation.Token);
-        Logger.Info($"Accept loop started. endpoint={this.GetIpAddress()}:{this.GetPort()}, commandWorkers={ClientCommandWorkerCount}, responseWorkers={ClientResponseWorkerCount}, relayWorkers={ServerRelayWorkerCount}");
+        Logger.Info($"Accept loop started. endpoint={this.GetIpAddress()}:{this.GetPort()}, commandWorkers={clientCommandWorkerCount}, responseWorkers={clientResponseWorkerCount}, relayWorkers={ServerRelayWorkerCount}");
         return true;
+    }
+
+    private int GetClientCommandWorkerCount()
+    {
+        return CalculateWorkerCount(
+            this.maxConnections,
+            ConnectionsPerClientCommandWorker,
+            MinimumClientCommandWorkerCount,
+            MaximumClientWorkerCount);
+    }
+
+    private int GetClientResponseWorkerCount()
+    {
+        return CalculateWorkerCount(
+            this.maxConnections,
+            ConnectionsPerClientResponseWorker,
+            MinimumClientResponseWorkerCount,
+            MaximumClientWorkerCount);
+    }
+
+    private static int CalculateWorkerCount(int connectionLimit, int connectionsPerWorker, int minimum, int maximum)
+    {
+        int normalizedConnections = Math.Max(1, connectionLimit);
+        int normalizedConnectionsPerWorker = Math.Max(1, connectionsPerWorker);
+        int calculated = (int)Math.Ceiling(normalizedConnections / (double)normalizedConnectionsPerWorker);
+        return Math.Min(Math.Max(minimum, calculated), maximum);
     }
 
     public int GetConnectedClientCount()

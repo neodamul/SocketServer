@@ -10,6 +10,7 @@ namespace SocketControl.Model;
 
 public class BackendServerRegistry
 {
+    private static readonly TimeSpan SessionUpdateSaveInterval = TimeSpan.FromSeconds(1);
     private readonly object syncRoot = new();
     private readonly ConcurrentDictionary<string, BackendServerSnapshot> servers = new();
     private readonly ConcurrentDictionary<string, RouteReservationMessage> reservations = new();
@@ -20,6 +21,8 @@ public class BackendServerRegistry
     private readonly TimeSpan heartbeatTimeout;
     private readonly IBackendRegistryStore store;
     private long version;
+    private DateTimeOffset lastStateSavedAt = DateTimeOffset.MinValue;
+    private bool hasDeferredStateSave;
     private static readonly Func<int, int> DefaultTieBreakerIndexSelector = RandomNumberGenerator.GetInt32;
 
     public BackendServerRegistry()
@@ -412,33 +415,31 @@ public class BackendServerRegistry
             string sessionKey = CreateSessionKey(session);
             if (IsBeforeZeroConnectionCutoff(session))
             {
-                this.SaveState();
                 return;
             }
 
             if (this.sessionTombstones.TryGetValue(sessionKey, out SessionEventMessage? tombstone) &&
                 IsTombstoneCurrentForSession(tombstone, session))
             {
-                this.SaveState();
                 return;
             }
 
             if (this.sessions.TryGetValue(sessionKey, out SessionEventMessage? existingSession) &&
                 IsExistingSessionNewer(existingSession, session))
             {
-                this.SaveState();
                 return;
             }
 
+            bool highFrequencyUpdate = IsHighFrequencySessionUpdate(session) && existingSession != null;
             this.sessionTombstones.TryRemove(sessionKey, out _);
             this.sessions[sessionKey] = session;
             if (session.ClientId == 0 || !this.servers.TryGetValue(session.InstanceId, out BackendServerSnapshot? server))
             {
-                this.SaveState();
+                this.SaveStateForSession(highFrequencyUpdate);
                 return;
             }
 
-            UpsertClientLocation(new ClientLocationMessage
+            UpsertClientLocationCore(new ClientLocationMessage
             {
                 ClusterId = session.ClusterId,
                 ClientId = session.ClientId,
@@ -451,7 +452,7 @@ public class BackendServerRegistry
                 Version = session.Version,
                 UpdatedAt = DateTimeOffset.UtcNow
             });
-            this.SaveState();
+            this.SaveStateForSession(highFrequencyUpdate);
         }
     }
 
@@ -484,29 +485,41 @@ public class BackendServerRegistry
     {
         lock (this.syncRoot)
         {
-            if (location.ClientId == 0)
-            {
-                return;
-            }
-
-            if (IsSessionTombstoneCurrent(location.InstanceId, location.SessionId, location.Version))
+            if (UpsertClientLocationCore(location))
             {
                 this.SaveState();
-                return;
             }
-
-            if (!TryGetMatchingSession(location, out _))
-            {
-                this.SaveState();
-                return;
-            }
-
-            this.clientLocations.AddOrUpdate(
-                location.ClientId,
-                location,
-                (_, existing) => IsNewer(location, existing) ? location : existing);
-            this.SaveState();
         }
+    }
+
+    private bool UpsertClientLocationCore(ClientLocationMessage location)
+    {
+        if (location.ClientId == 0 ||
+            IsSessionTombstoneCurrent(location.InstanceId, location.SessionId, location.Version) ||
+            !TryGetMatchingSession(location, out _))
+        {
+            return false;
+        }
+
+        bool changed = false;
+        this.clientLocations.AddOrUpdate(
+            location.ClientId,
+            _ =>
+            {
+                changed = true;
+                return location;
+            },
+            (_, existing) =>
+            {
+                if (!IsNewer(location, existing))
+                {
+                    return existing;
+                }
+
+                changed = true;
+                return location;
+            });
+        return changed;
     }
 
     public void RemoveClientLocation(SessionEventMessage session)
@@ -729,12 +742,51 @@ public class BackendServerRegistry
     private void SaveState()
     {
         this.store.Save(CreateState());
+        this.lastStateSavedAt = DateTimeOffset.UtcNow;
+        this.hasDeferredStateSave = false;
+    }
+
+    private void SaveStateForSession(bool deferSave)
+    {
+        if (!deferSave)
+        {
+            this.SaveState();
+            return;
+        }
+
+        this.SaveStateDeferred();
+    }
+
+    private void SaveStateDeferred()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (now - this.lastStateSavedAt >= SessionUpdateSaveInterval)
+        {
+            this.SaveState();
+            return;
+        }
+
+        this.hasDeferredStateSave = true;
+    }
+
+    private void SaveDeferredStateIfDue()
+    {
+        if (!this.hasDeferredStateSave)
+        {
+            return;
+        }
+
+        if (DateTimeOffset.UtcNow - this.lastStateSavedAt >= SessionUpdateSaveInterval)
+        {
+            this.SaveState();
+        }
     }
 
     public ClusterStatusSnapshot GetStatus()
     {
         lock (this.syncRoot)
         {
+            this.SaveDeferredStateIfDue();
             ExpireReservations();
             bool recalculated = RecalculateReservations();
             bool normalized = NormalizeExpiredServers();
@@ -979,6 +1031,11 @@ public class BackendServerRegistry
     private static DateTimeOffset GetRegisterHeartbeatAt(DateTimeOffset startedAt, DateTimeOffset fallback)
     {
         return startedAt == default ? fallback : startedAt;
+    }
+
+    private static bool IsHighFrequencySessionUpdate(SessionEventMessage session)
+    {
+        return string.Equals(session.State, "updated", StringComparison.OrdinalIgnoreCase);
     }
 
     private static ServerHealthState EvaluateHealth(BackendServerSnapshot snapshot, ControlHealthThreshold threshold)
