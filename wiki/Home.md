@@ -13,3 +13,5 @@
 - [Open Source Libraries](OpenSourceLibraries.md) — NuGet dependencies and licenses.
 
 README keeps only quick-start/essentials; durable knowledge lives here.
+
+> Open work / handoff: [TODO.md](TODO.md) (transient task list for agents; not a concept page).
