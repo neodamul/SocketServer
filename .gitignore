@@ -378,3 +378,6 @@ control-registry*.json
 **/.gradle/
 **/build/
 !**/build.gradle.kts
+
+# Local working TODO (handoff scratch; durable items live in wiki/*.md + agentmemory)
+wiki/TODO.md
