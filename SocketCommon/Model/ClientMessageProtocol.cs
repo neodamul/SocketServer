@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 
@@ -19,6 +21,8 @@ public static class ServerRelayMessageIds
     public const uint ServerRelayMessage = 2100;
     public const uint ServerRelayAck = 2101;
     public const uint ServerRelayError = 2102;
+    public const uint ServerRelayBatch = 2103;
+    public const uint ServerRelayBatchResult = 2104;
 }
 
 public class ClientRegisterRequest
@@ -114,6 +118,33 @@ public class ServerRelayMessage
     public string Content { get; set; } = "";
 
     public int TtlSeconds { get; set; } = 10;
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class ServerRelayBatchMessage
+{
+    public List<ServerRelayMessage> Items { get; set; } = new();
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class ServerRelayBatchResultItem
+{
+    public string MessageToken { get; set; } = "";
+
+    public bool Success { get; set; }
+
+    public string TargetInstanceId { get; set; } = "";
+
+    public string ErrorCode { get; set; } = "";
+
+    public string ErrorMessage { get; set; } = "";
+}
+
+public class ServerRelayBatchResult
+{
+    public List<ServerRelayBatchResultItem> Items { get; set; } = new();
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
@@ -225,6 +256,12 @@ public static class ClientMessageProtocol
         return SendAsync(connection, relay.SourceClientId, ServerRelayMessageIds.ServerRelayMessage, relay);
     }
 
+    public static Task<bool> SendRelayBatchAsync(SecureSocketConnection connection, ServerRelayBatchMessage batch)
+    {
+        uint clientId = batch?.Items.FirstOrDefault()?.SourceClientId ?? 0;
+        return SendAsync(connection, clientId, ServerRelayMessageIds.ServerRelayBatch, batch);
+    }
+
     public static bool TryDecodeRegister(SocketMessageFrame frame, out ClientRegisterRequest request)
     {
         return TryDecode(frame, ClientMessageIds.ClientRegister, out request);
@@ -258,6 +295,37 @@ public static class ClientMessageProtocol
     public static bool TryDecodeRelay(SocketMessageFrame frame, out ServerRelayMessage relay)
     {
         return TryDecode(frame, ServerRelayMessageIds.ServerRelayMessage, out relay);
+    }
+
+    public static bool TryDecodeRelayBatch(SocketMessageFrame frame, out ServerRelayBatchMessage batch)
+    {
+        return TryDecode(frame, ServerRelayMessageIds.ServerRelayBatch, out batch);
+    }
+
+    public static bool TryDecodeRelayBatchResult(SocketMessageFrame frame, out ServerRelayBatchResult result)
+    {
+        return TryDecode(frame, ServerRelayMessageIds.ServerRelayBatchResult, out result);
+    }
+
+    public static async Task<(bool Success, SocketMessageFrame Frame)> SendRelayBatchAndReceiveAsync(
+        SecureSocketConnection connection,
+        ServerRelayBatchMessage batch,
+        int timeoutMilliseconds = 0)
+    {
+        if (!await SendRelayBatchAsync(connection, batch))
+        {
+            return (false, null);
+        }
+
+        timeoutMilliseconds = NormalizeTimeout(timeoutMilliseconds);
+        Task<(bool Success, SocketMessageFrame Frame)> receiveTask = SocketMessageFrame.TryReceiveAsync(connection);
+        Task completedTask = await Task.WhenAny(receiveTask, Task.Delay(timeoutMilliseconds));
+        if (completedTask != receiveTask)
+        {
+            return (false, null);
+        }
+
+        return await receiveTask;
     }
 
     public static async Task<(bool Success, SocketMessageFrame Frame)> SendRelayAndReceiveAsync(

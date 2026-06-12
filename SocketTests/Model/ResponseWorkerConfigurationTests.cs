@@ -77,6 +77,20 @@ public class ResponseWorkerConfigurationTests
     }
 
     [TestMethod]
+    public void RelayWorkersBatchRepeatedMessagesTest()
+    {
+        string controlSource = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketControl/Model/ControlServer.cs"));
+        string serverSource = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketServer/Model/TcpServer.cs"));
+
+        Assert.IsTrue(controlSource.Contains("PeerRelayBatchFlushIntervalMilliseconds", StringComparison.Ordinal));
+        Assert.IsTrue(controlSource.Contains("ControlMessageIds.ControlRelayBatch", StringComparison.Ordinal));
+        Assert.IsTrue(controlSource.Contains("CollectPeerRelayBatchAsync", StringComparison.Ordinal));
+        Assert.IsTrue(serverSource.Contains("ServerRelayBatchFlushIntervalMilliseconds", StringComparison.Ordinal));
+        Assert.IsTrue(serverSource.Contains("ServerRelayMessageIds.ServerRelayBatch", StringComparison.Ordinal));
+        Assert.IsTrue(serverSource.Contains("CollectServerRelaySendBatchAsync", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
     public void SocketServerSessionSendPreservesPerConnectionOrderTest()
     {
         string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketServer/Model/ConnectionSession.cs"));

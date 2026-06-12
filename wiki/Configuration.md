@@ -16,6 +16,8 @@ Per-project `log4net.config` files exist for SocketCommon/Client/Control/Server/
 - relay: `logs/<project>.relay.log`
 General logs cover lifecycle, connection, healthcheck, route, cleanup, test progress. The relay log (`SocketRelay` logger) covers ControlServer peer relay/snapshot sync, SocketServer relay refresh, client-to-client relay, target-location lookups, and broadcast/targeted relay results. Default appenders write INFO+ to avoid turning high-load runs into log-I/O tests. Per-client route/register/session logs are DEBUG and can be enabled by lowering the relevant appender threshold during a focused diagnostic run.
 
+SocketServer reports control-plane state directly to ControlServer A/B endpoints (`10001`, `10002` in the local default config). Port `10000` is reserved for the client-facing control ingress/reverse proxy and should not be used as the SocketServer heartbeat/report endpoint.
+
 ## Security
 Executable projects apply transport security via `security` (default TLS). Profiles are described in [Architecture → Security profiles](Architecture.md#security-profiles).
 ```json
@@ -124,6 +126,8 @@ The default config uses `File`; tests/ephemeral runs use `InMemory`. The registr
 }
 ```
 `controlEndpoints` may list multiple entries. Route resolution retries configured ControlServer endpoints when TCP connect, TLS authentication, timeout, stream failure, or an unusable route response occurs, so a client can still connect when one ControlServer is down or has no current server snapshot.
+
+`clientLocationCache` controls the SocketServer in-process cache used by cross-server client-message relay. Defaults: `enabled=true`, `ttlSeconds=60`, `maxEntries=200000`. A cache hit skips ControlServer client-location lookup and targets the cached SocketServer directly; stale relay failures invalidate the entry and fall back to lookup/broadcast.
 
 ## Sample clients
 ```text

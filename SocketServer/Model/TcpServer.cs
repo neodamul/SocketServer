@@ -32,12 +32,15 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     private const int ConnectionsPerClientResponseWorker = 500;
     private const int ServerRelayWorkerCount = 8;
     private const int MinimumServerRelayChannelCount = 2;
+    private const int ServerRelayBatchFlushIntervalMilliseconds = 20;
+    private const int ServerRelayBatchMaxItems = 256;
 
     private readonly ConcurrentDictionary<long, ConnectionSession> connectedClients = new();
     private readonly ConcurrentDictionary<uint, ConnectionSession> connectedClientsById = new();
     private readonly ConcurrentDictionary<string, BackendServerSnapshot> relayServers = new();
     private readonly ConcurrentDictionary<string, PersistentSecureChannel> controlCommandChannels = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, PersistentSecureChannelPool> serverRelayChannelPools = new(StringComparer.Ordinal);
+    private ClientLocationCache clientLocationCache = new();
     private readonly Channel<ClientCommandRequest> clientCommandRequestChannel = Channel.CreateUnbounded<ClientCommandRequest>(
         new UnboundedChannelOptions
         {
@@ -151,6 +154,11 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     public int ServerId => this.serverId;
 
     public string InstanceId => this.instanceId;
+
+    public void ConfigureClientLocationCache(ClientLocationCacheConfig config)
+    {
+        this.clientLocationCache = new ClientLocationCache(config);
+    }
 
     public int RelayServerCount => this.relayServers.Count;
 
@@ -744,6 +752,15 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                     continue;
                 }
 
+                if (ClientMessageProtocol.TryDecodeRelayBatch(frame, out ServerRelayBatchMessage relayBatch))
+                {
+                    session.MarkReceived(frame.ClientId);
+                    Interlocked.Increment(ref this.totalReceivedMessages);
+                    this.AddReceivedMessageBytes(frame);
+                    await this.EnqueueServerRelayBatchReceiveAsync(session, relayBatch);
+                    continue;
+                }
+
                 if (!this.IsClientFrameAuthorized(session, frame.ClientId))
                 {
                     break;
@@ -1001,6 +1018,12 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             return false;
         }
 
+        if (ClientMessageProtocol.TryDecodeRelayBatch(frame, out ServerRelayBatchMessage relayBatch))
+        {
+            await this.EnqueueServerRelayBatchReceiveAsync(session, relayBatch);
+            return false;
+        }
+
         return false;
     }
 
@@ -1024,6 +1047,21 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         RelayLogger.Debug(() => $"Client message local delivery missed. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
         string relayErrorMessage = "";
+        if (this.clientLocationCache.TryGet(request.TargetClientId, out CachedClientLocation cachedLocation))
+        {
+            RelayLogger.Debug(() => $"Client location cache hit. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, targetInstanceId={cachedLocation.InstanceId}");
+            (bool cacheSuccess, string cacheTargetInstanceId, string cacheErrorMessage) = await this.RelayToRemoteServerAsync(cachedLocation, request);
+            if (cacheSuccess)
+            {
+                RelayLogger.Info($"Client message delivered by cached targeted relay. sourceInstanceId={this.instanceId}, targetInstanceId={cacheTargetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
+                return await this.SendClientMessageAckAsync(sourceSession, request, cacheTargetInstanceId);
+            }
+
+            this.clientLocationCache.Invalidate(request.TargetClientId);
+            relayErrorMessage = cacheErrorMessage;
+            RelayLogger.Warn($"Client location cache stale or failed. sourceInstanceId={this.instanceId}, targetInstanceId={cacheTargetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, error={cacheErrorMessage}");
+        }
+
         ClientLocationResponse location = await this.ResolveClientLocationAsync(request.SourceClientId, request.TargetClientId);
         if (location != null && location.Success && location.InstanceId == this.instanceId)
         {
@@ -1036,8 +1074,14 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             (bool success, string targetInstanceId, string errorMessage) = await this.RelayToRemoteServerAsync(location, request);
             if (success)
             {
+                this.clientLocationCache.Set(request.TargetClientId, location);
                 RelayLogger.Info($"Client message delivered by targeted relay. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
                 return await this.SendClientMessageAckAsync(sourceSession, request, targetInstanceId);
+            }
+
+            if (IsTargetNotConnectedError(errorMessage))
+            {
+                this.clientLocationCache.Invalidate(request.TargetClientId);
             }
 
             relayErrorMessage = errorMessage;
@@ -1048,6 +1092,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             await this.BroadcastRelayToKnownServersAsync(request);
         if (broadcastSuccess)
         {
+            this.CacheBroadcastRelayTarget(request.TargetClientId, broadcastTargetInstanceId);
             RelayLogger.Info($"Client message delivered by broadcast relay. sourceInstanceId={this.instanceId}, targetInstanceId={broadcastTargetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
             return await this.SendClientMessageAckAsync(sourceSession, request, broadcastTargetInstanceId);
         }
@@ -1066,7 +1111,89 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     private async Task HandleServerRelayAsync(ConnectionSession relaySession, ServerRelayMessage relayMessage)
     {
         RelayLogger.Info($"Server relay received. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={relayMessage.MessageToken}, sourceClientId={relayMessage.SourceClientId}, targetClientId={relayMessage.TargetClientId}, ttlSeconds={relayMessage.TtlSeconds}");
-        ClientMessageSendRequest request = new()
+        ServerRelayBatchResultItem result = await this.ApplyServerRelayMessageAsync(relayMessage);
+        ClientMessageSendRequest request = CreateClientMessageRequest(relayMessage);
+        uint messageId = result.Success
+            ? ServerRelayMessageIds.ServerRelayAck
+            : ServerRelayMessageIds.ServerRelayError;
+        object payload = result.Success
+            ? CreateClientMessageAck(request, this.instanceId)
+            : CreateClientMessageError(request, result.ErrorCode, result.ErrorMessage);
+        await this.EnqueueClientResponseAsync(
+            relaySession,
+            ClientMessageProtocol.CreateFrame(request.SourceClientId, messageId, payload),
+            result.Success ? "ServerRelayAck" : "ServerRelayError");
+        if (result.Success)
+        {
+            RelayLogger.Info($"Server relay delivered. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
+        }
+    }
+
+    private async Task HandleServerRelayBatchAsync(ConnectionSession relaySession, ServerRelayBatchMessage relayBatch)
+    {
+        ServerRelayBatchResult result = new()
+        {
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+
+        foreach (ServerRelayMessage relayMessage in relayBatch.Items)
+        {
+            result.Items.Add(await this.ApplyServerRelayMessageAsync(relayMessage));
+        }
+
+        await this.EnqueueClientResponseAsync(
+            relaySession,
+            ClientMessageProtocol.CreateFrame(
+                relayBatch.Items.FirstOrDefault()?.SourceClientId ?? 0,
+                ServerRelayMessageIds.ServerRelayBatchResult,
+                result),
+            "ServerRelayBatchResult");
+        RelayLogger.Info($"Server relay batch processed. receiverInstanceId={this.instanceId}, count={relayBatch.Items.Count}, successCount={result.Items.Count(item => item.Success)}");
+    }
+
+    private async Task<ServerRelayBatchResultItem> ApplyServerRelayMessageAsync(ServerRelayMessage relayMessage)
+    {
+        ClientMessageSendRequest request = CreateClientMessageRequest(relayMessage);
+
+        if (DateTimeOffset.UtcNow - request.CreatedAt > TimeSpan.FromSeconds(Math.Max(1, request.TtlSeconds)))
+        {
+            string errorMessage = "Relay message ttl expired.";
+            RelayLogger.Warn($"Server relay expired. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
+            return new ServerRelayBatchResultItem
+            {
+                MessageToken = request.MessageToken,
+                Success = false,
+                TargetInstanceId = this.instanceId,
+                ErrorCode = "MessageExpired",
+                ErrorMessage = errorMessage
+            };
+        }
+
+        if (!await this.DeliverToLocalClientAsync(request))
+        {
+            string errorMessage = "Target client is not connected to this server.";
+            RelayLogger.Debug(() => $"Server relay target not connected. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
+            return new ServerRelayBatchResultItem
+            {
+                MessageToken = request.MessageToken,
+                Success = false,
+                TargetInstanceId = this.instanceId,
+                ErrorCode = "TargetNotConnected",
+                ErrorMessage = errorMessage
+            };
+        }
+
+        return new ServerRelayBatchResultItem
+        {
+            MessageToken = request.MessageToken,
+            Success = true,
+            TargetInstanceId = this.instanceId
+        };
+    }
+
+    private static ClientMessageSendRequest CreateClientMessageRequest(ServerRelayMessage relayMessage)
+    {
+        return new ClientMessageSendRequest
         {
             MessageToken = relayMessage.MessageToken,
             SourceClientId = relayMessage.SourceClientId,
@@ -1075,41 +1202,6 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             TtlSeconds = relayMessage.TtlSeconds,
             CreatedAt = relayMessage.CreatedAt
         };
-
-        if (DateTimeOffset.UtcNow - request.CreatedAt > TimeSpan.FromSeconds(Math.Max(1, request.TtlSeconds)))
-        {
-            RelayLogger.Warn($"Server relay expired. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
-            await this.EnqueueClientResponseAsync(
-                relaySession,
-                ClientMessageProtocol.CreateFrame(
-                    request.SourceClientId,
-                    ServerRelayMessageIds.ServerRelayError,
-                    CreateClientMessageError(request, "MessageExpired", "Relay message ttl expired.")),
-                "ServerRelayExpired");
-            return;
-        }
-
-        if (!await this.DeliverToLocalClientAsync(request))
-        {
-            RelayLogger.Debug(() => $"Server relay target not connected. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
-            await this.EnqueueClientResponseAsync(
-                relaySession,
-                ClientMessageProtocol.CreateFrame(
-                    request.SourceClientId,
-                    ServerRelayMessageIds.ServerRelayError,
-                    CreateClientMessageError(request, "TargetNotConnected", "Target client is not connected to this server.")),
-                "ServerRelayTargetNotConnected");
-            return;
-        }
-
-        await this.EnqueueClientResponseAsync(
-            relaySession,
-            ClientMessageProtocol.CreateFrame(
-                request.SourceClientId,
-                ServerRelayMessageIds.ServerRelayAck,
-                CreateClientMessageAck(request, this.instanceId)),
-            "ServerRelayAck");
-        RelayLogger.Info($"Server relay delivered. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
     }
 
     private async Task EnqueueServerRelayReceiveAsync(ConnectionSession relaySession, ServerRelayMessage relayMessage)
@@ -1119,6 +1211,19 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         {
             RelayLogger.Warn($"Server relay request queue rejected receive command. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={relayMessage.MessageToken}");
             await this.HandleServerRelayAsync(relaySession, relayMessage);
+            return;
+        }
+
+        await command.Completion.Task;
+    }
+
+    private async Task EnqueueServerRelayBatchReceiveAsync(ConnectionSession relaySession, ServerRelayBatchMessage relayBatch)
+    {
+        ServerRelayCommand command = new(relaySession, relayBatch);
+        if (!this.serverRelayRequestChannel.Writer.TryWrite(command))
+        {
+            RelayLogger.Warn($"Server relay request queue rejected batch receive command. receiverInstanceId={this.instanceId}, count={relayBatch.Items.Count}");
+            await this.HandleServerRelayBatchAsync(relaySession, relayBatch);
             return;
         }
 
@@ -1145,17 +1250,20 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                         continue;
                     }
 
-                    (bool success, string targetInstanceId, string errorMessage) = await this.SendRelayToRemoteServerAsync(
-                        command.Host,
-                        command.Port,
-                        command.TargetInstanceId,
-                        command.Request);
-                    command.Completion.TrySetResult((success, targetInstanceId, errorMessage));
-                    this.serverRelayResponseChannel.Writer.TryWrite(new ServerRelayResult(
-                        success,
-                        targetInstanceId,
-                        command.Request?.MessageToken ?? "",
-                        errorMessage));
+                    if (command.IsReceiveBatchCommand)
+                    {
+                        await this.HandleServerRelayBatchAsync(command.Session, command.RelayBatchMessage);
+                        command.Completion.TrySetResult((true, this.instanceId, ""));
+                        this.serverRelayResponseChannel.Writer.TryWrite(new ServerRelayResult(
+                            true,
+                            this.instanceId,
+                            $"batch:{command.RelayBatchMessage?.Items.Count ?? 0}",
+                            ""));
+                        continue;
+                    }
+
+                    List<ServerRelayCommand> batch = await this.CollectServerRelaySendBatchAsync(command, cancellationToken);
+                    await this.SendServerRelayCommandBatchAsync(batch);
                 }
                 catch (Exception exception)
                 {
@@ -1169,6 +1277,77 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         catch (Exception exception)
         {
             RelayLogger.Warn($"Server relay worker stopped unexpectedly. instanceId={this.instanceId}", exception);
+        }
+    }
+
+    private async Task<List<ServerRelayCommand>> CollectServerRelaySendBatchAsync(
+        ServerRelayCommand firstCommand,
+        CancellationToken cancellationToken)
+    {
+        List<ServerRelayCommand> batch = new(ServerRelayBatchMaxItems) { firstCommand };
+        try
+        {
+            await Task.Delay(ServerRelayBatchFlushIntervalMilliseconds, cancellationToken);
+        }
+        catch (TaskCanceledException)
+        {
+            return batch;
+        }
+
+        while (batch.Count < ServerRelayBatchMaxItems &&
+            this.serverRelayRequestChannel.Reader.TryRead(out ServerRelayCommand? command))
+        {
+            if (command.IsReceiveCommand || command.IsReceiveBatchCommand)
+            {
+                await this.ProcessServerRelayReceiveCommandAsync(command);
+                continue;
+            }
+
+            batch.Add(command);
+        }
+
+        return batch;
+    }
+
+    private async Task ProcessServerRelayReceiveCommandAsync(ServerRelayCommand command)
+    {
+        if (command.IsReceiveCommand)
+        {
+            await this.HandleServerRelayAsync(command.Session, command.RelayMessage);
+            command.Completion.TrySetResult((true, this.instanceId, ""));
+            return;
+        }
+
+        if (command.IsReceiveBatchCommand)
+        {
+            await this.HandleServerRelayBatchAsync(command.Session, command.RelayBatchMessage);
+            command.Completion.TrySetResult((true, this.instanceId, ""));
+        }
+    }
+
+    private async Task SendServerRelayCommandBatchAsync(IReadOnlyList<ServerRelayCommand> commands)
+    {
+        foreach (IGrouping<string, ServerRelayCommand> group in commands.GroupBy(command => $"{command.Host}:{command.Port}"))
+        {
+            ServerRelayCommand[] groupCommands = group.ToArray();
+            if (groupCommands.Length == 1)
+            {
+                ServerRelayCommand command = groupCommands[0];
+                (bool success, string targetInstanceId, string errorMessage) = await this.SendRelayToRemoteServerAsync(
+                    command.Host,
+                    command.Port,
+                    command.TargetInstanceId,
+                    command.Request);
+                command.Completion.TrySetResult((success, targetInstanceId, errorMessage));
+                this.serverRelayResponseChannel.Writer.TryWrite(new ServerRelayResult(
+                    success,
+                    targetInstanceId,
+                    command.Request?.MessageToken ?? "",
+                    errorMessage));
+                continue;
+            }
+
+            await this.SendRelayBatchToRemoteServerAsync(groupCommands);
         }
     }
 
@@ -1288,6 +1467,17 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     }
 
     private async Task<(bool Success, string TargetInstanceId, string ErrorMessage)> RelayToRemoteServerAsync(
+        CachedClientLocation location,
+        ClientMessageSendRequest request)
+    {
+        return await RelayToRemoteServerAsync(
+            location.Host,
+            location.Port,
+            location.InstanceId,
+            request);
+    }
+
+    private async Task<(bool Success, string TargetInstanceId, string ErrorMessage)> RelayToRemoteServerAsync(
         BackendServerSnapshot server,
         ClientMessageSendRequest request)
     {
@@ -1382,6 +1572,118 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             RelayLogger.Warn($"Server relay channel was closed. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}", exception);
             return (false, targetInstanceId, "Target server relay channel was closed.");
         }
+    }
+
+    private void CacheBroadcastRelayTarget(uint targetClientId, string targetInstanceId)
+    {
+        if (targetClientId == 0 || string.IsNullOrWhiteSpace(targetInstanceId))
+        {
+            return;
+        }
+
+        BackendServerSnapshot? server = this.GetRelayCandidates()
+            .FirstOrDefault(item => string.Equals(item.InstanceId, targetInstanceId, StringComparison.Ordinal));
+        if (server != null)
+        {
+            this.clientLocationCache.Set(targetClientId, server);
+        }
+    }
+
+    private static bool IsTargetNotConnectedError(string errorMessage)
+    {
+        return !string.IsNullOrWhiteSpace(errorMessage) &&
+            errorMessage.IndexOf("not connected", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private async Task SendRelayBatchToRemoteServerAsync(IReadOnlyList<ServerRelayCommand> commands)
+    {
+        ServerRelayCommand first = commands[0];
+        string host = first.Host;
+        int port = first.Port;
+        string targetInstanceId = first.TargetInstanceId;
+        ServerRelayBatchMessage batch = new()
+        {
+            CreatedAt = DateTimeOffset.UtcNow,
+            Items = commands
+                .Select(command => ClientMessageProtocol.CreateRelay(this.clusterId, this.instanceId, command.Request))
+                .ToList()
+        };
+
+        try
+        {
+            RelayLogger.Info($"Server relay batch send started. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, count={batch.Items.Count}");
+            PersistentSecureChannelPool channelPool = this.GetServerRelayChannelPool(host, port);
+            (bool success, SocketMessageFrame frame) = await channelPool.SendAndReceiveAsync(
+                connection => ClientMessageProtocol.SendRelayBatchAndReceiveAsync(
+                    connection,
+                    batch),
+                SocketFactory.ReadTimeoutMilliseconds);
+            if (!success ||
+                frame.MessageId != ServerRelayMessageIds.ServerRelayBatchResult ||
+                !ClientMessageProtocol.TryDecodeRelayBatchResult(frame, out ServerRelayBatchResult result))
+            {
+                this.CompleteRelayBatch(commands, false, targetInstanceId, "Target server did not return a valid relay batch response.");
+                return;
+            }
+
+            Dictionary<string, ServerRelayBatchResultItem> resultsByToken = result.Items
+                .Where(item => !string.IsNullOrWhiteSpace(item.MessageToken))
+                .GroupBy(item => item.MessageToken, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.Last(), StringComparer.Ordinal);
+            foreach (ServerRelayCommand command in commands)
+            {
+                if (command.Request == null ||
+                    !resultsByToken.TryGetValue(command.Request.MessageToken, out ServerRelayBatchResultItem? item))
+                {
+                    this.CompleteRelayCommand(command, false, targetInstanceId, "Target server did not return a result for the relay message.");
+                    continue;
+                }
+
+                this.CompleteRelayCommand(
+                    command,
+                    item.Success,
+                    string.IsNullOrWhiteSpace(item.TargetInstanceId) ? targetInstanceId : item.TargetInstanceId,
+                    item.Success ? "" : item.ErrorMessage);
+            }
+
+            RelayLogger.Info($"Server relay batch send completed. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, count={commands.Count}, successCount={result.Items.Count(item => item.Success)}");
+        }
+        catch (Exception exception) when (exception is SocketException ||
+            exception is IOException ||
+            exception is AuthenticationException ||
+            exception is TimeoutException ||
+            exception is ObjectDisposedException)
+        {
+            Logger.Warn($"Server relay batch failed. target={host}:{port}, count={commands.Count}", exception);
+            RelayLogger.Warn($"Server relay batch failed. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, endpoint={host}:{port}, count={commands.Count}", exception);
+            this.CompleteRelayBatch(commands, false, targetInstanceId, "Target server relay batch failed.");
+        }
+    }
+
+    private void CompleteRelayBatch(
+        IReadOnlyList<ServerRelayCommand> commands,
+        bool success,
+        string targetInstanceId,
+        string errorMessage)
+    {
+        foreach (ServerRelayCommand command in commands)
+        {
+            this.CompleteRelayCommand(command, success, targetInstanceId, errorMessage);
+        }
+    }
+
+    private void CompleteRelayCommand(
+        ServerRelayCommand command,
+        bool success,
+        string targetInstanceId,
+        string errorMessage)
+    {
+        command.Completion.TrySetResult((success, targetInstanceId, errorMessage));
+        this.serverRelayResponseChannel.Writer.TryWrite(new ServerRelayResult(
+            success,
+            targetInstanceId,
+            command.Request?.MessageToken ?? "",
+            errorMessage));
     }
 
     private async Task<(bool Success, string TargetInstanceId, string ErrorMessage)> BroadcastRelayToKnownServersAsync(
@@ -1834,7 +2136,15 @@ internal sealed class ServerRelayCommand
         this.RelayMessage = relayMessage;
     }
 
+    public ServerRelayCommand(ConnectionSession session, ServerRelayBatchMessage relayBatchMessage)
+    {
+        this.Session = session;
+        this.RelayBatchMessage = relayBatchMessage;
+    }
+
     public bool IsReceiveCommand => this.RelayMessage != null;
+
+    public bool IsReceiveBatchCommand => this.RelayBatchMessage != null;
 
     public string Host { get; }
 
@@ -1847,6 +2157,8 @@ internal sealed class ServerRelayCommand
     public ConnectionSession Session { get; }
 
     public ServerRelayMessage RelayMessage { get; }
+
+    public ServerRelayBatchMessage RelayBatchMessage { get; }
 
     public TaskCompletionSource<(bool Success, string TargetInstanceId, string ErrorMessage)> Completion { get; } =
         new(TaskCreationOptions.RunContinuationsAsynchronously);

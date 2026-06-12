@@ -69,8 +69,12 @@ SocketServer-to-SocketServer delivery connects directly to the target server's l
 2100 SERVER_RELAY_MESSAGE
 2101 SERVER_RELAY_ACK
 2102 SERVER_RELAY_ERROR
+2103 SERVER_RELAY_BATCH
+2104 SERVER_RELAY_BATCH_RESULT
 ```
-The source server refreshes the healthy SocketServer list from the ControlServer registry snapshot; if the target client isn't local, it broadcasts `SERVER_RELAY_MESSAGE` to all known servers in parallel. Only the server holding the target returns ACK (after `CLIENT_MESSAGE_DELIVER`); others return `TargetNotConnected`. If broadcast fails, it falls back to ControlServer client-location lookup + targeted relay.
+The source server first tries local delivery. If the target is remote, it checks the in-process client-location cache and sends a targeted relay on a cache hit. Cache misses go to ControlServer client-location lookup; successful lookups populate the cache. If targeted relay fails because the cached or resolved target no longer has the client, the cache entry is invalidated and the server falls back to lookup/broadcast. Broadcast remains the final fallback across the healthy relay-server snapshot, and a successful broadcast ACK can also populate the cache.
+
+Repeated SocketServer-to-SocketServer relay messages are coalesced for a short flush interval and sent as `SERVER_RELAY_BATCH`; the receiver processes each item and returns one `SERVER_RELAY_BATCH_RESULT` containing per-message success/error entries. Single-message relay remains supported for compatibility.
 
 ## Control plane
 ControlServer/SocketServer/SocketClient use protobuf payloads over the common frame.

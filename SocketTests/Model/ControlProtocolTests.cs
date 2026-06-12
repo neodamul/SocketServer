@@ -76,6 +76,85 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void ControlRelayBatchEncodeDecodePreservesItemsTest()
+    {
+        SessionEventMessage session = new()
+        {
+            ClusterId = "socket-cluster-1",
+            SessionId = 10,
+            ClientId = 99,
+            ServerId = 1,
+            InstanceId = "server-1",
+            State = "Connected",
+            Version = 7,
+            ConnectedAt = DateTimeOffset.UtcNow,
+            LastReceivedAt = DateTimeOffset.UtcNow
+        };
+        SocketMessageFrame sessionFrame = ControlProtocol.CreateFrame(0, ControlMessageIds.SessionSummaryUpsert, session);
+        ControlRelayBatchMessage batch = new()
+        {
+            Items =
+            {
+                new ControlRelayBatchItem
+                {
+                    ClientId = sessionFrame.ClientId,
+                    MessageId = sessionFrame.MessageId,
+                    Payload = sessionFrame.Payload,
+                    PayloadType = nameof(SessionEventMessage)
+                }
+            }
+        };
+
+        SocketMessageFrame frame = ControlProtocol.CreateFrame(0, ControlMessageIds.ControlRelayBatch, batch);
+        bool decoded = ControlProtocol.TryDecode(frame, ControlMessageIds.ControlRelayBatch, out ControlRelayBatchMessage decodedBatch);
+
+        Assert.IsTrue(decoded);
+        Assert.AreEqual(1, decodedBatch.Items.Count);
+        Assert.AreEqual(ControlMessageIds.SessionSummaryUpsert, decodedBatch.Items[0].MessageId);
+        SocketMessageFrame decodedItemFrame = new(decodedBatch.Items[0].ClientId, decodedBatch.Items[0].MessageId, decodedBatch.Items[0].Payload);
+        Assert.IsTrue(ControlProtocol.TryDecode(decodedItemFrame, ControlMessageIds.SessionSummaryUpsert, out SessionEventMessage decodedSession));
+        Assert.AreEqual((uint)99, decodedSession.ClientId);
+        Assert.AreEqual("server-1", decodedSession.InstanceId);
+    }
+
+    [TestMethod]
+    public void ServerRelayBatchEncodeDecodePreservesResultsTest()
+    {
+        ClientMessageSendRequest request = ClientMessageProtocol.CreateSendRequest(11, 22, "hello");
+        ServerRelayBatchMessage batch = new()
+        {
+            Items =
+            {
+                ClientMessageProtocol.CreateRelay("socket-cluster-1", "server-1", request)
+            }
+        };
+
+        SocketMessageFrame frame = ClientMessageProtocol.CreateFrame(11, ServerRelayMessageIds.ServerRelayBatch, batch);
+        Assert.IsTrue(ClientMessageProtocol.TryDecodeRelayBatch(frame, out ServerRelayBatchMessage decodedBatch));
+        Assert.AreEqual(1, decodedBatch.Items.Count);
+        Assert.AreEqual(request.MessageToken, decodedBatch.Items[0].MessageToken);
+        Assert.AreEqual((uint)22, decodedBatch.Items[0].TargetClientId);
+
+        ServerRelayBatchResult result = new()
+        {
+            Items =
+            {
+                new ServerRelayBatchResultItem
+                {
+                    MessageToken = request.MessageToken,
+                    Success = true,
+                    TargetInstanceId = "server-2"
+                }
+            }
+        };
+        SocketMessageFrame resultFrame = ClientMessageProtocol.CreateFrame(11, ServerRelayMessageIds.ServerRelayBatchResult, result);
+        Assert.IsTrue(ClientMessageProtocol.TryDecodeRelayBatchResult(resultFrame, out ServerRelayBatchResult decodedResult));
+        Assert.AreEqual(1, decodedResult.Items.Count);
+        Assert.IsTrue(decodedResult.Items[0].Success);
+        Assert.AreEqual("server-2", decodedResult.Items[0].TargetInstanceId);
+    }
+
+    [TestMethod]
     public void ClusterStatusSnapshotEncodeDecodePreservesControlServerResourceUsageTest()
     {
         ClusterStatusSnapshot status = new()

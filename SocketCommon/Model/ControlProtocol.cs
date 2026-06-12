@@ -34,6 +34,7 @@ public static class ControlMessageIds
     public const uint RouteReservationRelease = 1431;
     public const uint RegistrySnapshotRequest = 1440;
     public const uint RegistrySnapshotResponse = 1441;
+    public const uint ControlRelayBatch = 1450;
 }
 
 public enum ServerHealthState
@@ -412,6 +413,24 @@ public class ControlAckMessage
 public class RegistrySnapshotRequest
 {
     public DateTimeOffset RequestedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class ControlRelayBatchItem
+{
+    public uint ClientId { get; set; }
+
+    public uint MessageId { get; set; }
+
+    public byte[] Payload { get; set; } = Array.Empty<byte>();
+
+    public string PayloadType { get; set; } = "";
+}
+
+public class ControlRelayBatchMessage
+{
+    public List<ControlRelayBatchItem> Items { get; set; } = new();
+
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 public static class ControlProtocol
