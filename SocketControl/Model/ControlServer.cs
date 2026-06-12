@@ -1090,7 +1090,7 @@ public class ControlServer : IDisposable
         {
             RelayLogger.Debug(() => $"Control peer relay batch send started. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, count={batch.Items.Count}");
             PersistentSecureChannel channel = this.GetPeerChannel(peer);
-            (bool success, _) = await channel.SendAndReceiveAsync(
+            (bool success, SocketMessageFrame frame) = await channel.SendAndReceiveAsync(
                 connection => ControlProtocol.SendAndReceiveAsync(
                     connection,
                     0,
@@ -1098,6 +1098,13 @@ public class ControlServer : IDisposable
                     batch,
                     GetPeerOperationTimeoutMilliseconds()),
                 GetPeerOperationTimeoutMilliseconds());
+            if (!success || frame.MessageId != ControlMessageIds.ControlRegisterAck)
+            {
+                RelayLogger.Warn($"Control peer relay batch response invalid. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, count={commands.Count}, fallback=single");
+                await PublishCommandsIndividuallyToPeerAsync(peer, commands);
+                return;
+            }
+
             foreach (PeerRelayCommand command in commands)
             {
                 this.peerRelayResponseChannel.Writer.TryWrite(new PeerRelayResult(peer, command.MessageId, command.PayloadType, success, success ? "" : "Peer relay batch response timed out or failed."));
@@ -1111,10 +1118,15 @@ public class ControlServer : IDisposable
         {
             Logger.Warn($"ControlServer peer relay batch failed. peer={peer.Host}:{peer.Port}, count={commands.Count}", exception);
             RelayLogger.Warn($"Control peer relay batch failed. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, count={commands.Count}", exception);
-            foreach (PeerRelayCommand command in commands)
-            {
-                this.peerRelayResponseChannel.Writer.TryWrite(new PeerRelayResult(peer, command.MessageId, command.PayloadType, false, exception.Message));
-            }
+            await PublishCommandsIndividuallyToPeerAsync(peer, commands);
+        }
+    }
+
+    private async Task PublishCommandsIndividuallyToPeerAsync(EndpointConfig peer, IReadOnlyList<PeerRelayCommand> commands)
+    {
+        foreach (PeerRelayCommand command in commands)
+        {
+            await PublishToPeerAsync(peer, command.MessageId, command.Payload, command.PayloadType);
         }
     }
 

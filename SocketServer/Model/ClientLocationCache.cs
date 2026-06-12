@@ -15,7 +15,7 @@ internal sealed class ClientLocationCache
     private readonly TimeSpan ttl;
     private readonly int maxEntries;
 
-    public ClientLocationCache(ClientLocationCacheConfig? config = null)
+    public ClientLocationCache(ClientLocationCacheConfig config = null)
     {
         config ??= new ClientLocationCacheConfig();
         this.Enabled = config.Enabled;

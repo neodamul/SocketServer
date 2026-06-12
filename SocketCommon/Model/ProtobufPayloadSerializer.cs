@@ -1075,6 +1075,7 @@ internal static class ProtobufPayloadSerializer
         {
             result.Items.Add(new ProtoServerRelayBatchResultItem
             {
+                ItemIndex = item.ItemIndex,
                 MessageToken = item.MessageToken ?? "",
                 Success = item.Success,
                 TargetInstanceId = item.TargetInstanceId ?? "",
@@ -1092,6 +1093,7 @@ internal static class ProtobufPayloadSerializer
         {
             Items = value.Items.Select(item => new ServerRelayBatchResultItem
             {
+                ItemIndex = item.ItemIndex,
                 MessageToken = item.MessageToken,
                 Success = item.Success,
                 TargetInstanceId = item.TargetInstanceId,

@@ -316,6 +316,7 @@ message ProtoServerRelayBatchResultItem {
   string target_instance_id = 3;
   string error_code = 4;
   string error_message = 5;
+  int32 item_index = 6;
 }
 
 message ProtoServerRelayBatchResult {

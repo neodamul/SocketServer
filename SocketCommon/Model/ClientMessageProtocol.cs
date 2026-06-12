@@ -131,6 +131,8 @@ public class ServerRelayBatchMessage
 
 public class ServerRelayBatchResultItem
 {
+    public int ItemIndex { get; set; } = -1;
+
     public string MessageToken { get; set; } = "";
 
     public bool Success { get; set; }

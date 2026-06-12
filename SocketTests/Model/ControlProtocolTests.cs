@@ -141,6 +141,7 @@ public class ControlProtocolTests
             {
                 new ServerRelayBatchResultItem
                 {
+                    ItemIndex = 0,
                     MessageToken = request.MessageToken,
                     Success = true,
                     TargetInstanceId = "server-2"
@@ -150,6 +151,7 @@ public class ControlProtocolTests
         SocketMessageFrame resultFrame = ClientMessageProtocol.CreateFrame(11, ServerRelayMessageIds.ServerRelayBatchResult, result);
         Assert.IsTrue(ClientMessageProtocol.TryDecodeRelayBatchResult(resultFrame, out ServerRelayBatchResult decodedResult));
         Assert.AreEqual(1, decodedResult.Items.Count);
+        Assert.AreEqual(0, decodedResult.Items[0].ItemIndex);
         Assert.IsTrue(decodedResult.Items[0].Success);
         Assert.AreEqual("server-2", decodedResult.Items[0].TargetInstanceId);
     }
