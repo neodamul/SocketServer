@@ -771,6 +771,7 @@ public static class LocalCertificateStore
     private const string RootCertificateFileName = "SocketServerLocalRootCA.pfx";
     private static readonly object RootAuthorityCacheLock = new();
     private static readonly object ModuleCertificateCacheLock = new();
+    private static readonly Dictionary<string, object> ModuleCertificateLocks = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, CachedModuleCertificate> CachedModuleCertificates = new(StringComparer.Ordinal);
     private static X509Certificate2 cachedRootAuthority;
     private static string cachedRootAuthorityPath = "";
@@ -839,34 +840,39 @@ public static class LocalCertificateStore
         string key = NormalizeModuleName(moduleName);
         string path = GetCertificatePath(key);
         string password = GetCertificatePassword();
+        object moduleLock = GetModuleCertificateLock(key);
 
-        lock (ModuleCertificateCacheLock)
+        lock (moduleLock)
         {
             X509Certificate2 rootCertificate = GetCachedRootAuthority();
             DateTime writeTimeUtc = File.Exists(path)
                 ? File.GetLastWriteTimeUtc(path)
                 : DateTime.MinValue;
 
-            if (CachedModuleCertificates.TryGetValue(key, out CachedModuleCertificate cached) &&
-                string.Equals(cached.Path, path, StringComparison.Ordinal) &&
-                string.Equals(cached.Password, password, StringComparison.Ordinal) &&
-                cached.WriteTimeUtc == writeTimeUtc &&
-                IsModuleCertificateValid(cached.Certificate, rootCertificate, key))
+            lock (ModuleCertificateCacheLock)
             {
-                return cached.Certificate;
-            }
+                if (CachedModuleCertificates.TryGetValue(key, out CachedModuleCertificate cached) &&
+                    string.Equals(cached.Path, path, StringComparison.Ordinal) &&
+                    string.Equals(cached.Password, password, StringComparison.Ordinal) &&
+                    cached.WriteTimeUtc == writeTimeUtc &&
+                    IsModuleCertificateValid(cached.Certificate, rootCertificate, key))
+                {
+                    return cached.Certificate;
+                }
 
-            if (cached != null)
-            {
                 CachedModuleCertificates.Remove(key);
             }
 
             X509Certificate2 certificate = GetOrCreate(key);
-            CachedModuleCertificates[key] = new CachedModuleCertificate(
-                certificate,
-                path,
-                password,
-                File.GetLastWriteTimeUtc(path));
+            lock (ModuleCertificateCacheLock)
+            {
+                CachedModuleCertificates[key] = new CachedModuleCertificate(
+                    certificate,
+                    path,
+                    password,
+                    File.GetLastWriteTimeUtc(path));
+            }
+
             return certificate;
         }
     }
@@ -907,6 +913,20 @@ public static class LocalCertificateStore
         }
 
         ClearRootAuthorityCache();
+    }
+
+    private static object GetModuleCertificateLock(string moduleName)
+    {
+        lock (ModuleCertificateCacheLock)
+        {
+            if (!ModuleCertificateLocks.TryGetValue(moduleName, out object moduleLock))
+            {
+                moduleLock = new object();
+                ModuleCertificateLocks[moduleName] = moduleLock;
+            }
+
+            return moduleLock;
+        }
     }
 
     internal static void ClearRootAuthorityCache()

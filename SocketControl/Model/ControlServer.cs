@@ -289,7 +289,7 @@ public class ControlServer : IDisposable
                 serverInstanceId = result.ServerInstanceId;
                 if (ShouldCloseAfterResponse(frame.MessageId))
                 {
-                    Logger.Debug($"ControlServer closing one-shot request connection. messageId={frame.MessageId}");
+                    Logger.Debug(() => $"ControlServer closing one-shot request connection. messageId={frame.MessageId}");
                     break;
                 }
             }
@@ -332,7 +332,7 @@ public class ControlServer : IDisposable
                 : serverInstanceId;
             if (!string.IsNullOrWhiteSpace(disconnectedInstanceId))
             {
-                Logger.Debug($"ControlServer request channel closed. instanceId={disconnectedInstanceId}");
+                Logger.Debug(() => $"ControlServer request channel closed. instanceId={disconnectedInstanceId}");
             }
         }
     }
@@ -573,8 +573,8 @@ public class ControlServer : IDisposable
         }
 
         BackendServerSnapshot snapshot = this.registry.Upsert(request, this.config.NodeId, this.healthThreshold);
-        Logger.Debug($"SocketServer heartbeat received. controlNodeId={this.config.NodeId}, instanceId={request.InstanceId}, current={request.CurrentConnections}, available={request.AvailableConnections}, cpu={request.ResourceUsage.CpuUsagePercent}, memory={request.ResourceUsage.MemoryUsagePercent}, storage={request.ResourceUsage.StorageUsagePercent}, health={snapshot.Health}");
-        RelayLogger.Debug($"Server heartbeat registry upsert received. controlNodeId={this.config.NodeId}, instanceId={request.InstanceId}, version={snapshot.Version}, health={snapshot.Health}, current={snapshot.CurrentConnections}, available={snapshot.AvailableConnections}");
+        Logger.Debug(() => $"SocketServer heartbeat received. controlNodeId={this.config.NodeId}, instanceId={request.InstanceId}, current={request.CurrentConnections}, available={request.AvailableConnections}, cpu={request.ResourceUsage.CpuUsagePercent}, memory={request.ResourceUsage.MemoryUsagePercent}, storage={request.ResourceUsage.StorageUsagePercent}, health={snapshot.Health}");
+        RelayLogger.Debug(() => $"Server heartbeat registry upsert received. controlNodeId={this.config.NodeId}, instanceId={request.InstanceId}, version={snapshot.Version}, health={snapshot.Health}, current={snapshot.CurrentConnections}, available={snapshot.AvailableConnections}");
         await SendControlResponseAsync(connection, frame.ClientId, ControlMessageIds.ServerHeartbeatAck, new ServerHeartbeatAck
         {
             ClusterId = this.config.ClusterId,
@@ -596,34 +596,34 @@ public class ControlServer : IDisposable
         RouteReservationMessage? releasedReservation = null;
         if (frame.MessageId == ControlMessageIds.SessionOpened)
         {
-            Logger.Info($"Session opened. controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}");
-            RelayLogger.Info($"Session summary upsert started. event=opened, controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}, version={sessionEvent.Version}");
+            Logger.Debug(() => $"Session opened. controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}");
+            RelayLogger.Debug(() => $"Session summary upsert started. event=opened, controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}, version={sessionEvent.Version}");
             this.registry.UpsertSession(sessionEvent);
             releasedReservation = this.registry.ReleaseReservationFor(sessionEvent.ClientId, sessionEvent.InstanceId);
             await PublishSessionAsync(sessionEvent, ControlMessageIds.SessionSummaryUpsert);
             await PublishClientLocationAsync(sessionEvent, ControlMessageIds.ClientLocationUpsert);
             if (releasedReservation != null)
             {
-                RelayLogger.Info($"Route reservation released by session open. controlNodeId={this.config.NodeId}, reservationId={releasedReservation.ReservationId}, clientId={releasedReservation.ClientId}, instanceId={releasedReservation.InstanceId}");
+                RelayLogger.Debug(() => $"Route reservation released by session open. controlNodeId={this.config.NodeId}, reservationId={releasedReservation.ReservationId}, clientId={releasedReservation.ClientId}, instanceId={releasedReservation.InstanceId}");
                 await PublishReservationReleaseAsync(releasedReservation);
             }
         }
         else if (frame.MessageId == ControlMessageIds.SessionUpdated)
         {
-            Logger.Debug($"Session updated. controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}");
-            RelayLogger.Debug($"Session summary upsert started. event=updated, controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}, version={sessionEvent.Version}");
+            Logger.Debug(() => $"Session updated. controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}");
+            RelayLogger.Debug(() => $"Session summary upsert started. event=updated, controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}, version={sessionEvent.Version}");
             this.registry.UpsertSession(sessionEvent);
             releasedReservation = this.registry.ReleaseReservationFor(sessionEvent.ClientId, sessionEvent.InstanceId);
             if (releasedReservation != null)
             {
-                RelayLogger.Info($"Route reservation released by session update. controlNodeId={this.config.NodeId}, reservationId={releasedReservation.ReservationId}, clientId={releasedReservation.ClientId}, instanceId={releasedReservation.InstanceId}");
+                RelayLogger.Debug(() => $"Route reservation released by session update. controlNodeId={this.config.NodeId}, reservationId={releasedReservation.ReservationId}, clientId={releasedReservation.ClientId}, instanceId={releasedReservation.InstanceId}");
                 await PublishReservationReleaseAsync(releasedReservation);
             }
         }
         else if (frame.MessageId == ControlMessageIds.SessionClosed)
         {
-            Logger.Info($"Session closed. controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}");
-            RelayLogger.Info($"Session summary remove started. controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}, version={sessionEvent.Version}");
+            Logger.Debug(() => $"Session closed. controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}");
+            RelayLogger.Debug(() => $"Session summary remove started. controlNodeId={this.config.NodeId}, instanceId={sessionEvent.InstanceId}, sessionId={sessionEvent.SessionId}, clientId={sessionEvent.ClientId}, version={sessionEvent.Version}");
             this.registry.RemoveSession(sessionEvent);
             await PublishSessionAsync(sessionEvent, ControlMessageIds.SessionSummaryRemove);
             await PublishClientLocationAsync(sessionEvent, ControlMessageIds.ClientLocationRemove);
@@ -666,8 +666,8 @@ public class ControlServer : IDisposable
             request,
             this.config.NodeId,
             TimeSpan.FromSeconds(Math.Max(1, this.config.RouteReservationSeconds)));
-        Logger.Info($"Route request resolved. controlNodeId={this.config.NodeId}, clientId={request.ClientId}, success={response.Success}, instanceId={response.InstanceId}, endpoint={response.Host}:{response.Port}, reason={response.ErrorMessage}");
-        RelayLogger.Info($"Route reservation evaluated. controlNodeId={this.config.NodeId}, clientId={request.ClientId}, success={response.Success}, instanceId={response.InstanceId}, reservationId={response.ReservationId}");
+        Logger.Debug(() => $"Route request resolved. controlNodeId={this.config.NodeId}, clientId={request.ClientId}, success={response.Success}, instanceId={response.InstanceId}, endpoint={response.Host}:{response.Port}, reason={response.ErrorMessage}");
+        RelayLogger.Debug(() => $"Route reservation evaluated. controlNodeId={this.config.NodeId}, clientId={request.ClientId}, success={response.Success}, instanceId={response.InstanceId}, reservationId={response.ReservationId}");
         await SendControlResponseAsync(connection, request.ClientId, ControlMessageIds.RouteResponse, response);
         if (response.Success)
         {
@@ -675,7 +675,7 @@ public class ControlServer : IDisposable
                 .FirstOrDefault(item => item.ReservationId == response.ReservationId);
             if (reservation != null)
             {
-                RelayLogger.Info($"Route reservation upsert started. controlNodeId={this.config.NodeId}, reservationId={reservation.ReservationId}, clientId={reservation.ClientId}, instanceId={reservation.InstanceId}, expiresAt={reservation.ExpiresAt}");
+                RelayLogger.Debug(() => $"Route reservation upsert started. controlNodeId={this.config.NodeId}, reservationId={reservation.ReservationId}, clientId={reservation.ClientId}, instanceId={reservation.InstanceId}, expiresAt={reservation.ExpiresAt}");
                 await PublishReservationAsync(reservation);
             }
         }
@@ -703,7 +703,7 @@ public class ControlServer : IDisposable
         if (ControlProtocol.TryDecode(frame, ControlMessageIds.SessionSummaryUpsert, out SessionEventMessage session))
         {
             this.registry.UpsertSession(session);
-            RelayLogger.Debug($"Peer session summary upsert applied. controlNodeId={this.config.NodeId}, instanceId={session.InstanceId}, sessionId={session.SessionId}, clientId={session.ClientId}, version={session.Version}");
+            RelayLogger.Debug(() => $"Peer session summary upsert applied. controlNodeId={this.config.NodeId}, instanceId={session.InstanceId}, sessionId={session.SessionId}, clientId={session.ClientId}, version={session.Version}");
         }
 
         await SendPeerAckAsync(connection, frame.ClientId);
@@ -714,7 +714,7 @@ public class ControlServer : IDisposable
         if (ControlProtocol.TryDecode(frame, ControlMessageIds.SessionSummaryRemove, out SessionEventMessage session))
         {
             this.registry.RemoveSession(session);
-            RelayLogger.Debug($"Peer session summary remove applied. controlNodeId={this.config.NodeId}, instanceId={session.InstanceId}, sessionId={session.SessionId}, clientId={session.ClientId}, version={session.Version}");
+            RelayLogger.Debug(() => $"Peer session summary remove applied. controlNodeId={this.config.NodeId}, instanceId={session.InstanceId}, sessionId={session.SessionId}, clientId={session.ClientId}, version={session.Version}");
         }
 
         await SendPeerAckAsync(connection, frame.ClientId);
@@ -725,7 +725,7 @@ public class ControlServer : IDisposable
         if (ControlProtocol.TryDecode(frame, ControlMessageIds.ClientLocationUpsert, out ClientLocationMessage location))
         {
             this.registry.UpsertClientLocation(location);
-            RelayLogger.Debug($"Peer client location upsert applied. controlNodeId={this.config.NodeId}, clientId={location.ClientId}, instanceId={location.InstanceId}, endpoint={location.Host}:{location.Port}, version={location.Version}");
+            RelayLogger.Debug(() => $"Peer client location upsert applied. controlNodeId={this.config.NodeId}, clientId={location.ClientId}, instanceId={location.InstanceId}, endpoint={location.Host}:{location.Port}, version={location.Version}");
         }
 
         await SendPeerAckAsync(connection, frame.ClientId);
@@ -736,7 +736,7 @@ public class ControlServer : IDisposable
         if (ControlProtocol.TryDecode(frame, ControlMessageIds.ClientLocationRemove, out ClientLocationMessage location))
         {
             this.registry.RemoveClientLocation(location);
-            RelayLogger.Debug($"Peer client location remove applied. controlNodeId={this.config.NodeId}, clientId={location.ClientId}, instanceId={location.InstanceId}, version={location.Version}");
+            RelayLogger.Debug(() => $"Peer client location remove applied. controlNodeId={this.config.NodeId}, clientId={location.ClientId}, instanceId={location.InstanceId}, version={location.Version}");
         }
 
         await SendPeerAckAsync(connection, frame.ClientId);
@@ -747,7 +747,7 @@ public class ControlServer : IDisposable
         if (ControlProtocol.TryDecode(frame, ControlMessageIds.RouteReservationUpsert, out RouteReservationMessage reservation))
         {
             this.registry.UpsertReservation(reservation);
-            RelayLogger.Debug($"Peer route reservation upsert applied. controlNodeId={this.config.NodeId}, reservationId={reservation.ReservationId}, clientId={reservation.ClientId}, instanceId={reservation.InstanceId}");
+            RelayLogger.Debug(() => $"Peer route reservation upsert applied. controlNodeId={this.config.NodeId}, reservationId={reservation.ReservationId}, clientId={reservation.ClientId}, instanceId={reservation.InstanceId}");
         }
 
         await SendPeerAckAsync(connection, frame.ClientId);
@@ -758,7 +758,7 @@ public class ControlServer : IDisposable
         if (ControlProtocol.TryDecode(frame, ControlMessageIds.RouteReservationRelease, out RouteReservationMessage reservation))
         {
             this.registry.ReleaseReservation(reservation.ReservationId);
-            RelayLogger.Debug($"Peer route reservation release applied. controlNodeId={this.config.NodeId}, reservationId={reservation.ReservationId}, clientId={reservation.ClientId}, instanceId={reservation.InstanceId}");
+            RelayLogger.Debug(() => $"Peer route reservation release applied. controlNodeId={this.config.NodeId}, reservationId={reservation.ReservationId}, clientId={reservation.ClientId}, instanceId={reservation.InstanceId}");
         }
 
         await SendPeerAckAsync(connection, frame.ClientId);
@@ -858,7 +858,7 @@ public class ControlServer : IDisposable
         }
         else
         {
-            RelayLogger.Debug($"Control peer relay queued. controlNodeId={this.config.NodeId}, messageId={messageId}, peerCount={this.peers.Count}, payloadType={command.PayloadType}");
+            RelayLogger.Debug(() => $"Control peer relay queued. controlNodeId={this.config.NodeId}, messageId={messageId}, peerCount={this.peers.Count}, payloadType={command.PayloadType}");
         }
 
         return Task.CompletedTask;
@@ -910,21 +910,21 @@ public class ControlServer : IDisposable
     private async Task PublishQueuedCommandAsync(PeerRelayCommand command)
     {
         List<Task> tasks = new();
-        RelayLogger.Debug($"Control peer relay fanout started. controlNodeId={this.config.NodeId}, messageId={command.MessageId}, peerCount={this.peers.Count}, payloadType={command.PayloadType}");
+        RelayLogger.Debug(() => $"Control peer relay fanout started. controlNodeId={this.config.NodeId}, messageId={command.MessageId}, peerCount={this.peers.Count}, payloadType={command.PayloadType}");
         foreach (EndpointConfig peer in this.peers)
         {
             tasks.Add(PublishToPeerAsync(peer, command.MessageId, command.Payload, command.PayloadType));
         }
 
         await Task.WhenAll(tasks);
-        RelayLogger.Debug($"Control peer relay fanout completed. controlNodeId={this.config.NodeId}, messageId={command.MessageId}, peerCount={this.peers.Count}, payloadType={command.PayloadType}");
+        RelayLogger.Debug(() => $"Control peer relay fanout completed. controlNodeId={this.config.NodeId}, messageId={command.MessageId}, peerCount={this.peers.Count}, payloadType={command.PayloadType}");
     }
 
     private async Task PublishToPeerAsync(EndpointConfig peer, uint messageId, object payload, string payloadType)
     {
         try
         {
-            RelayLogger.Debug($"Control peer relay send started. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={payloadType}");
+            RelayLogger.Debug(() => $"Control peer relay send started. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, messageId={messageId}, payloadType={payloadType}");
             PersistentSecureChannel channel = this.GetPeerChannel(peer);
             (bool success, _) = await channel.SendAndReceiveAsync(
                 connection => ControlProtocol.SendAndReceiveAsync(
@@ -990,7 +990,7 @@ public class ControlServer : IDisposable
         {
             try
             {
-                RelayLogger.Debug($"Control peer snapshot sync started. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}");
+                RelayLogger.Debug(() => $"Control peer snapshot sync started. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}");
                 PersistentSecureChannel channel = this.GetPeerChannel(peer);
                 (bool success, SocketMessageFrame frame) = await channel.SendAndReceiveAsync(
                     connection => ControlProtocol.SendAndReceiveAsync(
