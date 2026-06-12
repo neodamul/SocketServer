@@ -220,7 +220,7 @@ internal static class Program
         {
             bool connected = options.UseControlServer
                 ? await client.ConnectViaControlServerAsync(options.Host, options.Port)
-                : client.Connect();
+                : await client.ConnectAsync();
             if (!connected)
             {
                 Interlocked.Increment(ref counters.ConnectFail);

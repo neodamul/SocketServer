@@ -193,7 +193,7 @@ public sealed class SocketClientSession : IDisposable
             ? settings.ControlEndpoints.Length > 0
                 ? await nextClient.ConnectViaControlServersAsync(settings.ControlEndpoints)
                 : await nextClient.ConnectViaControlServerAsync(settings.Host, settings.Port)
-            : await Task.Run(nextClient.Connect);
+            : await nextClient.ConnectAsync();
         if (!connected)
         {
             nextClient.Dispose();
