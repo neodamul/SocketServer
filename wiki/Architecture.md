@@ -47,6 +47,8 @@ availableConnections = maxConnections - currentConnections - reservedConnections
 ```
 Candidate conditions: `Health == Healthy`, heartbeat not timed out, `availableConnections > 0`. Selection prefers highest `availableConnections`, then lowest `currentConnections`; ties are broken randomly within the tied group. Protocol codes: see [Protocols → Route](Protocols.md#route).
 
+Client `ROUTE_REQUEST` connections are one-shot: ControlServer sends `ROUTE_RESPONSE` and closes the route lookup connection immediately. The client then opens its long-lived connection directly to the assigned SocketServer endpoint. This keeps the nginx broker stream short-lived during large client ramps.
+
 ## SocketServer
 Binds an available port in its configured range, registers with the ControlServer, and sends periodic heartbeats. It reports register/heartbeat/session events directly to all configured ControlServers. In a 2-node active-active setup it sends to A/B in parallel and, once at least one report succeeds, continues after a short grace so a slow endpoint can't stall the call path; remaining sends record success/failure under their own operation timeout. The heartbeat loop retries on the next cycle after exceptions and periodically re-sends register metadata to recover from ControlServer restart or registry loss. A closed request channel alone does not mark a server `Unhealthy`; only heartbeat-timeout servers are excluded (by the cleanup scheduler) from new routes and client-location candidates. On reconnect, register/heartbeat/session-update restore state.
 
