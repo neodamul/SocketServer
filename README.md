@@ -79,8 +79,10 @@ dotnet run --project SocketControl/SocketControl.csproj
 SocketServer:
 
 ```bash
-dotnet run --project SocketServer/SocketServer.csproj -- --all
+dotnet run --project SocketServer/SocketServer.csproj -- --server-id 1
 ```
+
+Run one SocketServer process per configured instance for high-load TLS validation; use `--all` only when intentionally hosting every configured instance in one process.
 
 Dashboard:
 

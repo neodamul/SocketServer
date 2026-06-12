@@ -53,6 +53,9 @@ internal static class Program
         Console.WriteLine(
             $"Starting load test: clients={options.Clients}, batch-size={options.BatchSize}, hold-seconds={options.HoldSeconds}, endpoint={options.Host}:{options.Port}, external-server={options.ExternalServer}, use-control-server={options.UseControlServer}, message-test={options.MessageTest}, message-rounds={options.MessageRounds}, ramp-delay-ms={options.RampDelayMilliseconds}, expected-connected={options.ExpectedConnected}");
 
+        int[] clientIds = BuildClientIds(options);
+        await WarmUpClientCertificatesAsync(clientIds, CancellationToken.None);
+
         Stopwatch stopwatch = Stopwatch.StartNew();
         LoadTestCounters counters = new();
         List<ConnectedLoadClient> connectedClients = new(options.Clients);
@@ -167,6 +170,39 @@ internal static class Program
         }
 
         return await Task.WhenAll(tasks);
+    }
+
+    private static int[] BuildClientIds(LoadTestOptions options)
+    {
+        int lastClientId = options.StartClientId + options.Clients - 1;
+        return Enumerable.Range(options.StartClientId, lastClientId - options.StartClientId + 1).ToArray();
+    }
+
+    private static async Task WarmUpClientCertificatesAsync(
+        IReadOnlyCollection<int> clientIds,
+        CancellationToken cancellationToken)
+    {
+        if (!LoadTestCertificateWarmup.IsRequired)
+        {
+            return;
+        }
+
+        int concurrency = LoadTestCertificateWarmup.GetDefaultConcurrency();
+        PrintDebug($"certificate warmup start clients={clientIds.Count}, concurrency={concurrency}");
+        LoadTestCertificateWarmupResult result = await LoadTestCertificateWarmup.WarmUpAsync(
+            clientIds,
+            concurrency,
+            completed =>
+            {
+                if (completed == clientIds.Count || completed % 500 == 0)
+                {
+                    PrintDebug($"certificate warmup progress completed={completed}, total={clientIds.Count}");
+                }
+            },
+            cancellationToken);
+        PrintDebug(
+            $"certificate warmup complete completed={result.Completed}, total={result.Total}, " +
+            $"elapsed={result.Elapsed}");
     }
 
     private static async Task<ClientAttemptResult> ConnectClientAsync(

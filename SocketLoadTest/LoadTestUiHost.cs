@@ -87,7 +87,7 @@ internal static class LoadTestUiHost
         html.AppendLine("function renderTargets(){const ts=lastState?lastState.targetServers:[];document.getElementById('targets').innerHTML=ts.map(t=>`<tr><td>${t.targetServer}</td><td>${t.connectedClients}</td><td style=\"text-align:right\"><button class=\"mini\" data-target=\"${t.targetServer}\">View Clients</button></td></tr>`).join('');}");
         html.AppendLine("function openClients(server){const cs=lastState?lastState.clients:[];const rows=cs.filter(c=>String(c.targetServer)===String(server)).sort((a,b)=>Number(a.clientId)-Number(b.clientId)||String(a.clientId).localeCompare(String(b.clientId),undefined,{numeric:true}));document.getElementById('modalTitle').textContent=`Clients · ${server} (${rows.length})`;document.getElementById('modalClients').innerHTML=rows.length?rows.map(c=>`<tr><td>${c.clientId}</td><td>${c.isConnected}</td></tr>`).join(''):'<tr><td colspan=\"2\">No clients</td></tr>';document.getElementById('clientModal').style.display='grid';}");
         html.AppendLine("function closeClients(){document.getElementById('clientModal').style.display='none';}");
-        html.AppendLine("function render(s){lastState=s;const cl=Array.isArray(s.clients)?s.clients:[];document.getElementById('state').textContent=JSON.stringify(Object.assign({},s,{clients:cl.length}),null,2);document.getElementById('clientsSummary').textContent=`clients (${cl.length})`;document.getElementById('clientsJson').textContent=JSON.stringify(cl,null,2);const c=s.counters;document.getElementById('metrics').innerHTML=metric('Status',s.status)+metric('Connected Now',s.connectedNow)+metric('Attempted',c.attempted)+metric('Connected Total',c.connected)+metric('Healthcheck OK',c.healthCheckSuccess)+metric('Failures',c.connectFail+c.healthCheckFail+c.registerFail+c.messageFail);renderTargets();}");
+        html.AppendLine("function render(s){lastState=s;const cl=Array.isArray(s.clients)?s.clients:[];document.getElementById('state').textContent=JSON.stringify(Object.assign({},s,{clients:cl.length}),null,2);document.getElementById('clientsSummary').textContent=`clients (${cl.length})`;document.getElementById('clientsJson').textContent=JSON.stringify(cl,null,2);const c=s.counters;const warm=`${s.certificateWarmupCompleted||0}/${s.certificateWarmupTotal||0}`;document.getElementById('metrics').innerHTML=metric('Status',s.status)+metric('Warm-up',warm)+metric('Connected Now',s.connectedNow)+metric('Attempted',c.attempted)+metric('Connected Total',c.connected)+metric('Failures',c.connectFail+c.healthCheckFail+c.registerFail+c.messageFail);renderTargets();}");
         html.AppendLine("document.getElementById('targets').addEventListener('click',function(e){const b=e.target.closest('button[data-target]');if(!b)return;openClients(b.getAttribute('data-target'));});");
         html.AppendLine("document.getElementById('clientModal').addEventListener('click',function(e){if(e.target.id==='clientModal')closeClients();});");
         html.AppendLine("async function refresh(){render(await api('/api/state'))}");
@@ -120,6 +120,8 @@ internal sealed class LoadTestUiService
     private SemaphoreSlim? connectAttemptSlots;
     private int connectAttemptLimit;
     private readonly SemaphoreSlim applyGate = new(1, 1);
+    private int certificateWarmupTotal;
+    private int certificateWarmupCompleted;
 
     public LoadTestUiService(LoadTestOptions defaultOptions)
     {
@@ -148,6 +150,8 @@ internal sealed class LoadTestUiService
             this.pendingClientGenerations.Clear();
             this.pendingClientReschedules.Clear();
             this.connectWorkerTasks.Clear();
+            this.certificateWarmupTotal = 0;
+            this.certificateWarmupCompleted = 0;
             this.connectAttemptLimit = Math.Max(1, options.BatchSize);
             this.connectAttemptSlots = new SemaphoreSlim(this.connectAttemptLimit);
             int generation = ++this.runGeneration;
@@ -296,6 +300,8 @@ internal sealed class LoadTestUiService
             this.connectWorkerTasks.RemoveAll(connectTask => connectTask.IsCompleted);
             this.connectAttemptSlots = null;
             this.connectAttemptLimit = 0;
+            this.certificateWarmupTotal = 0;
+            this.certificateWarmupCompleted = 0;
             this.status = "Stopped";
             this.stoppedAt = DateTimeOffset.UtcNow;
         }
@@ -325,6 +331,8 @@ internal sealed class LoadTestUiService
                 this.startedAt,
                 this.stoppedAt,
                 clients.Count(client => client.IsConnected),
+                this.certificateWarmupTotal,
+                this.certificateWarmupCompleted,
                 SnapshotCounters(this.counters),
                 targets,
                 clients);
@@ -359,7 +367,7 @@ internal sealed class LoadTestUiService
 
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
         }
-        catch (TaskCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
         catch (Exception exception)
@@ -422,6 +430,8 @@ internal sealed class LoadTestUiService
     {
         try
         {
+            await this.WarmUpClientCertificatesAsync(clientIds, generation, cancellationToken);
+
             for (int index = 0; index < clientIds.Length && !cancellationToken.IsCancellationRequested; index++)
             {
                 int clientId = clientIds[index];
@@ -438,8 +448,56 @@ internal sealed class LoadTestUiService
                 }
             }
         }
-        catch (TaskCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+        }
+    }
+
+    private async Task WarmUpClientCertificatesAsync(
+        int[] clientIds,
+        int generation,
+        CancellationToken cancellationToken)
+    {
+        if (!LoadTestCertificateWarmup.IsRequired || clientIds.Length == 0)
+        {
+            return;
+        }
+
+        int total = clientIds.Distinct().Count();
+        int concurrency = LoadTestCertificateWarmup.GetDefaultConcurrency();
+        lock (this.syncRoot)
+        {
+            if (!this.IsActiveRun(generation))
+            {
+                return;
+            }
+
+            this.status = "WarmingCertificates";
+            this.certificateWarmupTotal = total;
+            this.certificateWarmupCompleted = 0;
+        }
+
+        await LoadTestCertificateWarmup.WarmUpAsync(
+            clientIds,
+            concurrency,
+            completed =>
+            {
+                lock (this.syncRoot)
+                {
+                    if (this.IsActiveRun(generation))
+                    {
+                        this.certificateWarmupCompleted = Math.Max(this.certificateWarmupCompleted, completed);
+                    }
+                }
+            },
+            cancellationToken);
+
+        lock (this.syncRoot)
+        {
+            if (this.IsActiveRun(generation))
+            {
+                this.status = "Connecting";
+            }
         }
     }
 
@@ -803,6 +861,8 @@ internal sealed record LoadTestUiState(
     DateTimeOffset? StartedAt,
     DateTimeOffset? StoppedAt,
     int ConnectedNow,
+    int CertificateWarmupTotal,
+    int CertificateWarmupCompleted,
     LoadTestUiCounters Counters,
     IReadOnlyList<LoadTestUiTargetState> TargetServers,
     IReadOnlyList<LoadTestUiClientState> Clients);
