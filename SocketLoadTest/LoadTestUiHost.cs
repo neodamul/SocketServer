@@ -430,19 +430,39 @@ internal sealed class LoadTestUiService
     {
         try
         {
-            await this.WarmUpClientCertificatesAsync(clientIds, generation, cancellationToken);
-
-            for (int index = 0; index < clientIds.Length && !cancellationToken.IsCancellationRequested; index++)
+            int warmupCompleted = 0;
+            int batchSize = Math.Max(1, options.BatchSize);
+            HashSet<string> warmedCertificateModules = new(StringComparer.Ordinal);
+            this.BeginCertificateWarmup(clientIds, generation);
+            for (int batchStart = 0; batchStart < clientIds.Length && !cancellationToken.IsCancellationRequested; batchStart += batchSize)
             {
-                int clientId = clientIds[index];
-                if (!this.TryMarkPendingClient(clientId, generation, requestRescheduleIfPending))
+                int[] batchClientIds = clientIds
+                    .Skip(batchStart)
+                    .Take(batchSize)
+                    .ToArray();
+                int[] warmupClientIds = batchClientIds
+                    .Where(clientId => warmedCertificateModules.Add(LoadTestCertificateWarmup.GetClientCertificateModuleName(clientId)))
+                    .ToArray();
+                await this.WarmUpClientCertificateBatchAsync(
+                    warmupClientIds,
+                    generation,
+                    warmupCompleted,
+                    cancellationToken);
+                warmupCompleted += LoadTestCertificateWarmup.GetRequiredCertificateCount(warmupClientIds);
+                this.MarkCertificateWarmupConnecting(generation);
+
+                for (int index = 0; index < batchClientIds.Length && !cancellationToken.IsCancellationRequested; index++)
                 {
-                    continue;
+                    int clientId = batchClientIds[index];
+                    if (!this.TryMarkPendingClient(clientId, generation, requestRescheduleIfPending))
+                    {
+                        continue;
+                    }
+
+                    this.StartConnectWorker(options, runCounters, clientId, generation, cancellationToken);
                 }
 
-                this.StartConnectWorker(options, runCounters, clientId, generation, cancellationToken);
-
-                if (options.RampDelayMilliseconds > 0 && (index + 1) % Math.Max(1, options.BatchSize) == 0)
+                if (options.RampDelayMilliseconds > 0)
                 {
                     await Task.Delay(options.RampDelayMilliseconds, cancellationToken);
                 }
@@ -453,18 +473,14 @@ internal sealed class LoadTestUiService
         }
     }
 
-    private async Task WarmUpClientCertificatesAsync(
-        int[] clientIds,
-        int generation,
-        CancellationToken cancellationToken)
+    private void BeginCertificateWarmup(int[] clientIds, int generation)
     {
         if (!LoadTestCertificateWarmup.IsRequired || clientIds.Length == 0)
         {
             return;
         }
 
-        int total = clientIds.Distinct().Count();
-        int concurrency = LoadTestCertificateWarmup.GetDefaultConcurrency();
+        int total = LoadTestCertificateWarmup.GetRequiredCertificateCount(clientIds);
         lock (this.syncRoot)
         {
             if (!this.IsActiveRun(generation))
@@ -476,7 +492,20 @@ internal sealed class LoadTestUiService
             this.certificateWarmupTotal = total;
             this.certificateWarmupCompleted = 0;
         }
+    }
 
+    private async Task WarmUpClientCertificateBatchAsync(
+        int[] clientIds,
+        int generation,
+        int completedOffset,
+        CancellationToken cancellationToken)
+    {
+        if (!LoadTestCertificateWarmup.IsRequired || clientIds.Length == 0)
+        {
+            return;
+        }
+
+        int concurrency = LoadTestCertificateWarmup.GetDefaultConcurrency();
         await LoadTestCertificateWarmup.WarmUpAsync(
             clientIds,
             concurrency,
@@ -486,12 +515,17 @@ internal sealed class LoadTestUiService
                 {
                     if (this.IsActiveRun(generation))
                     {
-                        this.certificateWarmupCompleted = Math.Max(this.certificateWarmupCompleted, completed);
+                        this.certificateWarmupCompleted = Math.Max(
+                            this.certificateWarmupCompleted,
+                            completedOffset + completed);
                     }
                 }
             },
             cancellationToken);
+    }
 
+    private void MarkCertificateWarmupConnecting(int generation)
+    {
         lock (this.syncRoot)
         {
             if (this.IsActiveRun(generation))

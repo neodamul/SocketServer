@@ -183,6 +183,72 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
+    public async Task StrictClientCertificateBindingRejectsMismatchedRouteRequestTest()
+    {
+        SecureSocketConnection.Configure(new SocketSecurityConfig
+        {
+            TransportMode = "Tls",
+            TlsProtocol = "Auto",
+            RequireTls13 = false,
+            RequireClientCertificate = true,
+            EnforceClientCertificateId = true,
+            AuthenticationTimeoutMilliseconds = 30000
+        });
+
+        try
+        {
+            using ControlServer controlServer = new(new ControlServerConfigFile
+            {
+                ControlServer = new ControlServerNodeConfig
+                {
+                    ClusterId = "socket-cluster-1",
+                    NodeId = "control-strict-route",
+                    Host = "127.0.0.1",
+                    Port = 0,
+                    PeerSyncPort = 0,
+                    RouteReservationSeconds = 5
+                }
+            });
+            Assert.IsTrue(controlServer.Start());
+            controlServer.Registry.Upsert(new ServerRegisterRequest
+            {
+                ClusterId = "socket-cluster-1",
+                ServerId = 201,
+                InstanceId = "server-strict-route",
+                Name = "server-strict-route",
+                Host = "127.0.0.1",
+                Port = 56201,
+                PortRangeStart = 56201,
+                PortRangeEnd = 56201,
+                MaxConnections = 10,
+                StartedAt = DateTimeOffset.UtcNow
+            }, "control-strict-route");
+
+            using NetSocket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
+            await SocketFactory.ConnectAsync(socket, IPAddress.Loopback, controlServer.Port);
+            using SecureSocketConnection connection =
+                await SecureSocketConnection.AuthenticateClientAsync(socket, "SocketClient-123");
+
+            (bool success, SocketMessageFrame frame) = await ControlProtocol.SendAndReceiveAsync(
+                connection,
+                456,
+                ControlMessageIds.RouteRequest,
+                new RouteRequest { ClientId = 456 },
+                timeoutMilliseconds: 2000);
+
+            Assert.IsTrue(success);
+            Assert.IsTrue(ControlProtocol.TryDecode(frame, ControlMessageIds.RouteResponse, out RouteResponse response));
+            Assert.IsFalse(response.Success);
+            Assert.AreEqual("Client certificate is not authorized for the requested clientId.", response.ErrorMessage);
+            Assert.AreEqual(0, controlServer.Registry.Reservations.Count);
+        }
+        finally
+        {
+            ResetSocketTestDefaults();
+        }
+    }
+
+    [TestMethod]
     public async Task PeerControlServerReceivesRegistryUpsertAndRoutesClientTest()
     {
         using ControlServer peerControl = new(new ControlServerConfigFile

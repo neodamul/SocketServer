@@ -43,6 +43,7 @@ public sealed class SecureSocketConnection : IDisposable
     private static SslProtocols configuredProtocols = SslProtocols.None;
     private static bool requireTls13;
     private static bool requireClientCertificate;
+    private static bool enforceClientCertificateId;
     private static int authenticationTimeoutMilliseconds = 30000;
     private static string certificateDirectory = "";
     private static string certificatePasswordEnvironmentVariable = "SOCKET_CERTIFICATE_PASSWORD";
@@ -143,6 +144,17 @@ public sealed class SecureSocketConnection : IDisposable
         }
     }
 
+    public static bool EnforceClientCertificateId
+    {
+        get
+        {
+            lock (OptionsLock)
+            {
+                return enforceClientCertificateId;
+            }
+        }
+    }
+
     public static int AuthenticationTimeoutMilliseconds
     {
         get
@@ -176,6 +188,7 @@ public sealed class SecureSocketConnection : IDisposable
             transportMode = nextTransportMode;
             requireTls13 = config.RequireTls13;
             requireClientCertificate = nextRequireClientCertificate;
+            enforceClientCertificateId = nextRequireClientCertificate && config.EnforceClientCertificateId;
             authenticationTimeoutMilliseconds = Math.Max(1000, config.AuthenticationTimeoutMilliseconds);
             certificateDirectory = config.CertificateDirectory?.Trim() ?? "";
             certificatePasswordEnvironmentVariable = string.IsNullOrWhiteSpace(config.CertificatePasswordEnvironmentVariable)

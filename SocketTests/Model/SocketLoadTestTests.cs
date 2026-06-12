@@ -168,7 +168,7 @@ public class SocketLoadTestTests
     }
 
     [TestMethod]
-    public async Task LoadTestCertificateWarmupCreatesPerClientCertificatesTest()
+    public async Task LoadTestCertificateWarmupCreatesSharedClientCertificateByDefaultTest()
     {
         string directory = Path.Combine(
             Path.GetTempPath(),
@@ -189,7 +189,63 @@ public class SocketLoadTestTests
             });
 
             Assert.IsTrue(LoadTestCertificateWarmup.IsRequired);
+            Assert.AreEqual("SocketClient", LoadTestCertificateWarmup.GetClientCertificateModuleName(1201));
+            Assert.AreEqual(1, LoadTestCertificateWarmup.GetRequiredCertificateCount(new[] { 1201, 1202, 1201 }));
+
+            LoadTestCertificateWarmupResult result = await LoadTestCertificateWarmup.WarmUpAsync(
+                new[] { 1201, 1202, 1201 },
+                maxConcurrency: 2,
+                onCompleted: completed => UpdateMax(ref maxProgress, completed),
+                CancellationToken.None);
+
+            Assert.AreEqual(1, result.Total);
+            Assert.AreEqual(1, result.Completed);
+            Assert.AreEqual(1, Volatile.Read(ref maxProgress));
+            Assert.IsTrue(File.Exists(LocalCertificateStore.GetCertificatePath("SocketClient")));
+        }
+        finally
+        {
+            SecureSocketConnection.Configure(new SocketSecurityConfig
+            {
+                TransportMode = "Tls",
+                TlsProtocol = "Auto",
+                RequireTls13 = false,
+                RequireClientCertificate = false,
+                AuthenticationTimeoutMilliseconds = 30000
+            });
+
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task LoadTestCertificateWarmupCreatesPerClientCertificatesWhenStrictBindingTest()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            $"socket-loadtest-certs-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        int maxProgress = 0;
+
+        try
+        {
+            SecureSocketConnection.Configure(new SocketSecurityConfig
+            {
+                TransportMode = "Tls",
+                TlsProtocol = "Auto",
+                RequireTls13 = false,
+                RequireClientCertificate = true,
+                EnforceClientCertificateId = true,
+                CertificateDirectory = directory,
+                AuthenticationTimeoutMilliseconds = 30000
+            });
+
+            Assert.IsTrue(LoadTestCertificateWarmup.IsRequired);
             Assert.AreEqual("SocketClient-1201", LoadTestCertificateWarmup.GetClientCertificateModuleName(1201));
+            Assert.AreEqual(2, LoadTestCertificateWarmup.GetRequiredCertificateCount(new[] { 1201, 1202, 1201 }));
 
             LoadTestCertificateWarmupResult result = await LoadTestCertificateWarmup.WarmUpAsync(
                 new[] { 1201, 1202, 1201 },
@@ -213,7 +269,6 @@ public class SocketLoadTestTests
                 RequireClientCertificate = false,
                 AuthenticationTimeoutMilliseconds = 30000
             });
-
             if (Directory.Exists(directory))
             {
                 Directory.Delete(directory, recursive: true);
@@ -242,6 +297,7 @@ public class SocketLoadTestTests
         Assert.AreEqual("Auto", security.TlsProtocol);
         Assert.IsFalse(security.RequireTls13);
         Assert.IsTrue(security.RequireClientCertificate);
+        Assert.IsFalse(security.EnforceClientCertificateId);
     }
 
     [TestMethod]
@@ -313,7 +369,7 @@ public class SocketLoadTestTests
             TimeSpan.FromSeconds(5));
 
         Assert.IsTrue(retrying.IsRunning);
-        Assert.AreEqual("Starting", retrying.Status);
+        Assert.AreEqual("Connecting", retrying.Status);
         Assert.AreEqual(0, retrying.Counters.Connected);
         Assert.IsTrue(retrying.Counters.ConnectFail >= 1);
         Assert.AreEqual(0, retrying.Counters.RegisterFail);

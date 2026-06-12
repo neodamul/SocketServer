@@ -47,13 +47,16 @@ public class TcpServerTests
         this.testPortMutex?.Dispose();
     }
 
-    private static SocketSecurityConfig CreateTestSecurityConfig(string? certificateDirectory = null)
+    private static SocketSecurityConfig CreateTestSecurityConfig(
+        string? certificateDirectory = null,
+        bool enforceClientCertificateId = false)
     {
         return new SocketSecurityConfig
         {
             TransportMode = "Tls",
             TlsProtocol = "Auto",
             RequireTls13 = false,
+            EnforceClientCertificateId = enforceClientCertificateId,
             AuthenticationTimeoutMilliseconds = 30000,
             CertificateDirectory = certificateDirectory ?? ""
         };
@@ -201,7 +204,7 @@ public class TcpServerTests
     [TestMethod()]
     public async Task ClientRegisterRejectsCertificateClientIdMismatchTest()
     {
-        SecureSocketConnection.Configure(CreateTestSecurityConfig());
+        SecureSocketConnection.Configure(CreateTestSecurityConfig(enforceClientCertificateId: true));
 
         TcpServer server = new(1, "testServer", "127.0.0.1", 0);
         try
@@ -222,6 +225,41 @@ public class TcpServerTests
                 payloadTimeoutMilliseconds: 1000);
 
             Assert.IsFalse(success);
+        }
+        finally
+        {
+            server.End();
+            SecureSocketConnection.Configure(CreateTestSecurityConfig());
+        }
+    }
+
+    [TestMethod()]
+    public async Task ClientRegisterAllowsSharedCertificateByDefaultTest()
+    {
+        SecureSocketConnection.Configure(CreateTestSecurityConfig());
+
+        TcpServer server = new(1, "testServer", "127.0.0.1", 0);
+        try
+        {
+            Assert.IsTrue(server.BindInPortRange(0, 0));
+            Assert.IsTrue(server.Listen());
+            Assert.IsTrue(server.StartClientAcceptLoop());
+
+            using Socket clientSocket = SocketFactory.CreateTcpSocket();
+            await SocketFactory.ConnectAsync(clientSocket, IPAddress.Loopback, server.GetPort());
+            using SecureSocketConnection connection =
+                await SecureSocketConnection.AuthenticateClientAsync(clientSocket, "SocketClient");
+
+            Assert.IsTrue(await ClientMessageProtocol.SendRegisterAsync(connection, 456));
+            (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(
+                connection,
+                headerTimeoutMilliseconds: 1000,
+                payloadTimeoutMilliseconds: 1000);
+
+            Assert.IsTrue(success);
+            Assert.IsTrue(ClientMessageProtocol.TryDecodeRegisterAck(frame, out ClientRegisterAck ack));
+            Assert.IsTrue(ack.Success);
+            Assert.AreEqual((uint)456, ack.ClientId);
         }
         finally
         {

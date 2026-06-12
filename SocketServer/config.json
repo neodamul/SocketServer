@@ -5,6 +5,7 @@
     "tlsProtocol": "Tls13",
     "requireTls13": true,
     "requireClientCertificate": true,
+    "enforceClientCertificateId": false,
     "certificateDirectory": "",
     "certificatePasswordEnvironmentVariable": "SOCKET_CERTIFICATE_PASSWORD",
     "certificateRenewBeforeDays": 30,

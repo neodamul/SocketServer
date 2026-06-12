@@ -662,6 +662,17 @@ public class ControlServer : IDisposable
             return;
         }
 
+        if (!IsClientRouteRequestAuthorized(connection, request.ClientId))
+        {
+            Logger.Warn($"Route request rejected because TLS certificate clientId does not match requested clientId. controlNodeId={this.config.NodeId}, authenticatedClientId={connection.RemoteCertificateClientId?.ToString() ?? "none"}, requestedClientId={request.ClientId}");
+            await SendControlResponseAsync(connection, request.ClientId, ControlMessageIds.RouteResponse, new RouteResponse
+            {
+                Success = false,
+                ErrorMessage = "Client certificate is not authorized for the requested clientId."
+            });
+            return;
+        }
+
         RouteResponse response = this.registry.Resolve(
             request,
             this.config.NodeId,
@@ -679,6 +690,20 @@ public class ControlServer : IDisposable
                 await PublishReservationAsync(reservation);
             }
         }
+    }
+
+    private static bool IsClientRouteRequestAuthorized(SecureSocketConnection connection, uint clientId)
+    {
+        if (SecureSocketConnection.SecurityProfile != SocketSecurityProfile.EndToEndTls ||
+            !SecureSocketConnection.RequireClientCertificate ||
+            !SecureSocketConnection.EnforceClientCertificateId ||
+            clientId == 0)
+        {
+            return true;
+        }
+
+        return connection.RemoteCertificateClientId.HasValue &&
+            connection.RemoteCertificateClientId.Value == clientId;
     }
 
     private async Task HandlePeerServerUpsertAsync(SecureSocketConnection connection, SocketMessageFrame frame)

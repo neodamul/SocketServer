@@ -53,9 +53,6 @@ internal static class Program
         Console.WriteLine(
             $"Starting load test: clients={options.Clients}, batch-size={options.BatchSize}, hold-seconds={options.HoldSeconds}, endpoint={options.Host}:{options.Port}, external-server={options.ExternalServer}, use-control-server={options.UseControlServer}, message-test={options.MessageTest}, message-rounds={options.MessageRounds}, ramp-delay-ms={options.RampDelayMilliseconds}, expected-connected={options.ExpectedConnected}");
 
-        int[] clientIds = BuildClientIds(options);
-        await WarmUpClientCertificatesAsync(clientIds, CancellationToken.None);
-
         Stopwatch stopwatch = Stopwatch.StartNew();
         LoadTestCounters counters = new();
         List<ConnectedLoadClient> connectedClients = new(options.Clients);
@@ -63,9 +60,16 @@ internal static class Program
         try
         {
             int lastClientId = options.StartClientId + options.Clients - 1;
+            HashSet<string> warmedCertificateModules = new(StringComparer.Ordinal);
             for (int firstClientId = options.StartClientId; firstClientId <= lastClientId; firstClientId += options.BatchSize)
             {
                 int batchCount = Math.Min(options.BatchSize, lastClientId - firstClientId + 1);
+                int[] batchClientIds = BuildClientIds(firstClientId, batchCount);
+                int[] warmupClientIds = batchClientIds
+                    .Where(clientId => warmedCertificateModules.Add(LoadTestCertificateWarmup.GetClientCertificateModuleName(clientId)))
+                    .ToArray();
+                await WarmUpClientCertificatesAsync(warmupClientIds, CancellationToken.None);
+
                 Stopwatch batchStopwatch = Stopwatch.StartNew();
                 PrintDebug(
                     $"batch start first-client-id={firstClientId}, count={batchCount}, " +
@@ -172,10 +176,9 @@ internal static class Program
         return await Task.WhenAll(tasks);
     }
 
-    private static int[] BuildClientIds(LoadTestOptions options)
+    private static int[] BuildClientIds(int firstClientId, int count)
     {
-        int lastClientId = options.StartClientId + options.Clients - 1;
-        return Enumerable.Range(options.StartClientId, lastClientId - options.StartClientId + 1).ToArray();
+        return Enumerable.Range(firstClientId, count).ToArray();
     }
 
     private static async Task WarmUpClientCertificatesAsync(

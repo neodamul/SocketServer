@@ -247,7 +247,9 @@ public class TcpClient : IClient, IDisposable
 
     private string GetCertificateModuleName()
     {
-        return this.ClientId > 0 ? $"SocketClient-{this.ClientId}" : "SocketClient";
+        return SecureSocketConnection.EnforceClientCertificateId && this.ClientId > 0
+            ? $"SocketClient-{this.ClientId}"
+            : "SocketClient";
     }
 
     private bool ResetAfterConnectFailure()
