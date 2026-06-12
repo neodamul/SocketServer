@@ -39,9 +39,21 @@ public sealed class SocketLogger
         this.log = log;
     }
 
+    public bool IsDebugEnabled => this.log.IsDebugEnabled;
+
     public void Debug(string message)
     {
         this.log.Debug(message);
+    }
+
+    public void Debug(Func<string> messageFactory)
+    {
+        if (!this.log.IsDebugEnabled)
+        {
+            return;
+        }
+
+        this.log.Debug(messageFactory());
     }
 
     public void Info(string message)

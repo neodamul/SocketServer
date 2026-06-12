@@ -164,7 +164,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     {
         Dictionary<string, BackendServerSnapshot> latestServers = new(StringComparer.Ordinal);
         bool receivedSnapshot = false;
-        RelayLogger.Debug($"Relay server snapshot refresh started. instanceId={this.instanceId}, controlServers={this.controlServers.Count}");
+        RelayLogger.Debug(() => $"Relay server snapshot refresh started. instanceId={this.instanceId}, controlServers={this.controlServers.Count}");
         List<Task<(EndpointConfig Endpoint, ClusterStatusSnapshot Snapshot)>> snapshotTasks = this.controlServers
             .Select(FetchRelaySnapshotAsync)
             .ToList();
@@ -184,7 +184,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             {
                 if (!IsRelayCandidate(server))
                 {
-                    RelayLogger.Debug($"Relay server candidate skipped. sourceInstanceId={this.instanceId}, candidateInstanceId={server?.InstanceId}, host={server?.Host}, port={server?.Port}, health={server?.Health}");
+                    RelayLogger.Debug(() => $"Relay server candidate skipped. sourceInstanceId={this.instanceId}, candidateInstanceId={server?.InstanceId}, host={server?.Host}, port={server?.Port}, health={server?.Health}");
                     continue;
                 }
 
@@ -208,7 +208,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         {
             try
             {
-                RelayLogger.Debug($"Relay server snapshot request started. instanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}");
+                RelayLogger.Debug(() => $"Relay server snapshot request started. instanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}");
                 PersistentSecureChannel channel = this.GetControlCommandChannel(endpoint);
                 (bool success, SocketMessageFrame frame) = await channel.SendAndReceiveAsync(
                     connection => ControlProtocol.SendAndReceiveAsync(
@@ -270,10 +270,10 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         foreach (KeyValuePair<string, BackendServerSnapshot> item in latestServers)
         {
             this.relayServers[item.Key] = item.Value;
-            RelayLogger.Debug($"Relay server cached. sourceInstanceId={this.instanceId}, relayInstanceId={item.Key}, endpoint={item.Value.Host}:{item.Value.Port}, health={item.Value.Health}, current={item.Value.CurrentConnections}, available={item.Value.AvailableConnections}");
+            RelayLogger.Debug(() => $"Relay server cached. sourceInstanceId={this.instanceId}, relayInstanceId={item.Key}, endpoint={item.Value.Host}:{item.Value.Port}, health={item.Value.Health}, current={item.Value.CurrentConnections}, available={item.Value.AvailableConnections}");
         }
 
-        Logger.Debug($"Relay server list refreshed. instanceId={this.instanceId}, relayServers={this.relayServers.Count}");
+        Logger.Debug(() => $"Relay server list refreshed. instanceId={this.instanceId}, relayServers={this.relayServers.Count}");
         RelayLogger.Info($"Relay server list refreshed. instanceId={this.instanceId}, relayServers={this.relayServers.Count}");
         return this.relayServers.Count;
     }
@@ -622,7 +622,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 this.AddConnectedClient(session);
                 slotAcquired = false;
                 Interlocked.Increment(ref this.totalAcceptedClients);
-                Logger.Debug($"Client accepted. connectionId={session.Id}, remote={session.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
+                Logger.Debug(() => $"Client accepted. connectionId={session.Id}, remote={session.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
                 session.HandlerTask = this.HandleClientAsync(session, cancellationToken);
             }
             catch (SocketException exception)
@@ -698,7 +698,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             {
                 closedCount++;
                 Interlocked.Increment(ref this.totalIdleTimeoutClients);
-                Logger.Debug($"Client closed by cleanup scheduler. connectionId={session.Id}, remote={session.RemoteEndPoint}");
+                Logger.Debug(() => $"Client closed by cleanup scheduler. connectionId={session.Id}, remote={session.RemoteEndPoint}");
             }
         }
 
@@ -871,7 +871,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 {
                     bool sent = await command.Session.SendAsync(command.Payload);
                     command.Completion.TrySetResult(sent);
-                    Logger.Debug($"Client response command processed. instanceId={this.instanceId}, connectionId={command.Session.Id}, operation={command.Operation}, success={sent}");
+                    Logger.Debug(() => $"Client response command processed. instanceId={this.instanceId}, connectionId={command.Session.Id}, operation={command.Operation}, success={sent}");
                 }
                 catch (Exception exception)
                 {
@@ -898,7 +898,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
                 return true;
             }
 
-            Logger.Debug($"Healthcheck ping received. instanceId={this.InstanceId}, connectionId={session.Id}, clientId={healthCheckMessage.ClientId}");
+            Logger.Debug(() => $"Healthcheck ping received. instanceId={this.InstanceId}, connectionId={session.Id}, clientId={healthCheckMessage.ClientId}");
             sent = await this.EnqueueClientResponseAsync(
                 session,
                 HealthCheckProtocol.Encode(HealthCheckProtocol.CreatePong(healthCheckMessage.ClientId)),
@@ -906,7 +906,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             if (sent)
             {
                 Interlocked.Increment(ref this.totalSentMessages);
-                Logger.Debug($"Healthcheck pong sent. instanceId={this.InstanceId}, connectionId={session.Id}, clientId={healthCheckMessage.ClientId}");
+                Logger.Debug(() => $"Healthcheck pong sent. instanceId={this.InstanceId}, connectionId={session.Id}, clientId={healthCheckMessage.ClientId}");
             }
             else
             {
@@ -1021,7 +1021,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             return await this.SendClientMessageAckAsync(sourceSession, request, this.instanceId);
         }
 
-        RelayLogger.Debug($"Client message local delivery missed. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
+        RelayLogger.Debug(() => $"Client message local delivery missed. sourceInstanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
         string relayErrorMessage = "";
         ClientLocationResponse location = await this.ResolveClientLocationAsync(request.SourceClientId, request.TargetClientId);
         if (location != null && location.Success && location.InstanceId == this.instanceId)
@@ -1090,7 +1090,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
         if (!await this.DeliverToLocalClientAsync(request))
         {
-            RelayLogger.Debug($"Server relay target not connected. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
+            RelayLogger.Debug(() => $"Server relay target not connected. receiverInstanceId={this.instanceId}, sourceInstanceId={relayMessage.SourceInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
             await this.EnqueueClientResponseAsync(
                 relaySession,
                 ClientMessageProtocol.CreateFrame(
@@ -1179,7 +1179,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             {
                 if (result.Success)
                 {
-                    RelayLogger.Debug($"Server relay response processed. sourceInstanceId={this.instanceId}, targetInstanceId={result.TargetInstanceId}, messageToken={result.MessageToken}, success=true");
+                    RelayLogger.Debug(() => $"Server relay response processed. sourceInstanceId={this.instanceId}, targetInstanceId={result.TargetInstanceId}, messageToken={result.MessageToken}, success=true");
                     continue;
                 }
 
@@ -1200,7 +1200,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         if (!this.connectedClientsById.TryGetValue(request.TargetClientId, out ConnectionSession targetSession) ||
             targetSession.IsClosed)
         {
-            RelayLogger.Debug($"Local client delivery skipped. instanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, reason=TargetNotConnected");
+            RelayLogger.Debug(() => $"Local client delivery skipped. instanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, reason=TargetNotConnected");
             return false;
         }
 
@@ -1216,7 +1216,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         {
             Interlocked.Increment(ref this.totalSentMessages);
             this.AddSentMessageBytes(deliveryFrame);
-            RelayLogger.Debug($"Local client delivery sent. instanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, connectionId={targetSession.Id}");
+            RelayLogger.Debug(() => $"Local client delivery sent. instanceId={this.instanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, connectionId={targetSession.Id}");
             return true;
         }
 
@@ -1231,7 +1231,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
         {
             try
             {
-                RelayLogger.Debug($"Client location request started. sourceInstanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}, sourceClientId={sourceClientId}, targetClientId={targetClientId}");
+                RelayLogger.Debug(() => $"Client location request started. sourceInstanceId={this.instanceId}, endpoint={endpoint.Host}:{endpoint.Port}, sourceClientId={sourceClientId}, targetClientId={targetClientId}");
                 PersistentSecureChannel channel = this.GetControlCommandChannel(endpoint);
                 (bool success, SocketMessageFrame frame) = await channel.SendAndReceiveAsync(
                     connection => ControlProtocol.SendAndReceiveAsync(
@@ -1415,7 +1415,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             {
                 if (pendingTasks.Count > 0)
                 {
-                    RelayLogger.Debug($"Broadcast relay returning after first delivery. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, pendingRelayCount={pendingTasks.Count}");
+                    RelayLogger.Debug(() => $"Broadcast relay returning after first delivery. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}, pendingRelayCount={pendingTasks.Count}");
                 }
 
                 RelayLogger.Info($"Broadcast relay delivered. sourceInstanceId={this.instanceId}, targetInstanceId={targetInstanceId}, messageToken={request.MessageToken}, targetClientId={request.TargetClientId}");
@@ -1600,7 +1600,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
 
             Interlocked.Decrement(ref this.activeConnectionSlots);
             Interlocked.Increment(ref this.totalClosedClients);
-            Logger.Debug($"Client closed. connectionId={removedSession.Id}, remote={removedSession.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
+            Logger.Debug(() => $"Client closed. connectionId={removedSession.Id}, remote={removedSession.RemoteEndPoint}, connectedClients={this.GetConnectedClientCount()}");
             if (removedSession.HasReportedOpened)
             {
                 _ = this.NotifySessionClosedAsync(removedSession);

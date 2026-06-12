@@ -71,9 +71,15 @@ public class SocketLoggingTests
             Assert.IsNotNull(relayLogger, $"SocketRelay logger is missing: {relativePath}");
             Assert.AreEqual("false", (string?)relayLogger!.Attribute("additivity"), $"SocketRelay must not write through the root logger: {relativePath}");
             Assert.AreEqual(
-                "DEBUG",
+                "INFO",
                 (string?)relayLogger.Element("level")?.Attribute("value"),
-                $"SocketRelay must keep DEBUG relay traces: {relativePath}");
+                $"SocketRelay must keep DEBUG traces disabled by default: {relativePath}");
+
+            XElement? rootLogger = root.Element("root");
+            Assert.AreEqual(
+                "INFO",
+                (string?)rootLogger?.Element("level")?.Attribute("value"),
+                $"Root logger must keep DEBUG traces disabled by default: {relativePath}");
         }
     }
 

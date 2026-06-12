@@ -397,6 +397,72 @@ public class SecureSocketConnectionTests
         }
     }
 
+    [TestMethod]
+    public async Task CachedCertificatesCanBeCreatedConcurrentlyForDifferentClientsTest()
+    {
+        string directory = CreateTemporaryCertificateDirectory();
+        Environment.SetEnvironmentVariable(TestPasswordVariable, $"password-{Guid.NewGuid():N}");
+        try
+        {
+            SecureSocketConnection.Configure(CreateSecurityConfig(directory, requireClientCertificate: true));
+            int clientCount = 12;
+            Task<X509Certificate2>[] tasks = new Task<X509Certificate2>[clientCount];
+            for (int index = 0; index < clientCount; index++)
+            {
+                int clientId = 2000 + index;
+                tasks[index] = Task.Run(() => LocalCertificateStore.GetOrCreateCached($"SocketClient-{clientId}"));
+            }
+
+            X509Certificate2[] certificates = await Task.WhenAll(tasks);
+
+            for (int index = 0; index < certificates.Length; index++)
+            {
+                Assert.IsTrue(LocalCertificateStore.TryGetClientId(certificates[index], out uint clientId));
+                Assert.AreEqual((uint)(2000 + index), clientId);
+                Assert.IsTrue(File.Exists(LocalCertificateStore.GetCertificatePath($"SocketClient-{clientId}")));
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(TestPasswordVariable, null);
+            DeleteTemporaryCertificateDirectory(directory);
+            SecureSocketConnection.Configure(CreateSecurityConfig());
+        }
+    }
+
+    [TestMethod]
+    public async Task CachedCertificateCreationIsSingleFlightForSameClientTest()
+    {
+        string directory = CreateTemporaryCertificateDirectory();
+        Environment.SetEnvironmentVariable(TestPasswordVariable, $"password-{Guid.NewGuid():N}");
+        try
+        {
+            SecureSocketConnection.Configure(CreateSecurityConfig(directory, requireClientCertificate: true));
+            int workerCount = 12;
+            Task<X509Certificate2>[] tasks = new Task<X509Certificate2>[workerCount];
+            for (int index = 0; index < workerCount; index++)
+            {
+                tasks[index] = Task.Run(() => LocalCertificateStore.GetOrCreateCached("SocketClient-3000"));
+            }
+
+            X509Certificate2[] certificates = await Task.WhenAll(tasks);
+            string expectedSerialNumber = Convert.ToHexString(certificates[0].GetSerialNumber());
+
+            foreach (X509Certificate2 certificate in certificates)
+            {
+                Assert.IsTrue(LocalCertificateStore.TryGetClientId(certificate, out uint clientId));
+                Assert.AreEqual((uint)3000, clientId);
+                Assert.AreEqual(expectedSerialNumber, Convert.ToHexString(certificate.GetSerialNumber()));
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(TestPasswordVariable, null);
+            DeleteTemporaryCertificateDirectory(directory);
+            SecureSocketConnection.Configure(CreateSecurityConfig());
+        }
+    }
+
     private static SocketSecurityConfig CreateSecurityConfig(
         string certificateDirectory = "",
         bool requireClientCertificate = false,

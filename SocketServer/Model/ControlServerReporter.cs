@@ -322,7 +322,7 @@ public class ControlServerReporter : IDisposable
         }
         else
         {
-            Logger.Debug($"ControlServer session event queued. instanceId={this.server.InstanceId}, messageId={messageId}, sessionId={session.Id}, clientId={session.ClientId}");
+            Logger.Debug(() => $"ControlServer session event queued. instanceId={this.server.InstanceId}, messageId={messageId}, sessionId={session.Id}, clientId={session.ClientId}");
         }
 
         return Task.CompletedTask;
@@ -382,7 +382,7 @@ public class ControlServerReporter : IDisposable
             }
             else
             {
-                Logger.Debug($"ControlServer broadcast completed. messageId={messageId}, successEndpoints={completedSuccessCount}, endpointCount={this.connections.Count}");
+                Logger.Debug(() => $"ControlServer broadcast completed. messageId={messageId}, successEndpoints={completedSuccessCount}, endpointCount={this.connections.Count}");
             }
 
             return completedSuccessCount;
@@ -407,7 +407,7 @@ public class ControlServerReporter : IDisposable
         }
         else
         {
-            Logger.Debug($"ControlServer broadcast completed. messageId={messageId}, successEndpoints={successCount}, endpointCount={this.connections.Count}");
+            Logger.Debug(() => $"ControlServer broadcast completed. messageId={messageId}, successEndpoints={successCount}, endpointCount={this.connections.Count}");
         }
 
         return successCount;
@@ -438,13 +438,9 @@ public class ControlServerReporter : IDisposable
         {
             Logger.Warn($"ControlServer session event completed without successful endpoint. messageId={messageId}, endpointCount={tasks.Count}");
         }
-        else if (messageId == ControlMessageIds.SessionUpdated)
-        {
-            Logger.Debug($"ControlServer session event completed. messageId={messageId}, successEndpoints={successCount}, endpointCount={tasks.Count}");
-        }
         else
         {
-            Logger.Info($"ControlServer session event completed. messageId={messageId}, successEndpoints={successCount}, endpointCount={tasks.Count}");
+            Logger.Debug(() => $"ControlServer session event completed. messageId={messageId}, successEndpoints={successCount}, endpointCount={tasks.Count}");
         }
 
         return successCount;

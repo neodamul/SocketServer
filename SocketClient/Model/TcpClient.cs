@@ -54,7 +54,7 @@ public class TcpClient : IClient, IDisposable
         this.Connection?.Dispose();
         this.Socket?.Dispose();
         this.Socket = SocketFactory.CreateTcpSocket(this.Family);
-        Logger.Info($"Client socket initialized. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}");
+        Logger.Debug(() => $"Client socket initialized. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}");
     }
 
     public void SetIpAddress(IPAddress ipAddress)
@@ -100,7 +100,7 @@ public class TcpClient : IClient, IDisposable
 
             SocketFactory.ConnectAsync(this.Socket, this.IpAddress, this.Port).GetAwaiter().GetResult();
             this.Connection = SecureSocketConnection.AuthenticateClientAsync(this.Socket, this.GetCertificateModuleName()).GetAwaiter().GetResult();
-            Logger.Info($"Client connected. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}");
+            Logger.Debug(() => $"Client connected. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}");
             return true;
         }
         catch (SocketException exception)
@@ -186,7 +186,7 @@ public class TcpClient : IClient, IDisposable
             int serverPort;
             string serverInstanceId;
             string reservationId;
-            Logger.Info($"ControlServer route request started. clientId={this.ClientId}, endpoint={endpoint}");
+            Logger.Debug(() => $"ControlServer route request started. clientId={this.ClientId}, endpoint={endpoint}");
             using (Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family))
             {
                 await SocketFactory.ConnectAsync(controlSocket, controlHost, controlPort);
@@ -216,7 +216,7 @@ public class TcpClient : IClient, IDisposable
                 reservationId = response.ReservationId;
             }
 
-            Logger.Info($"ControlServer route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={serverInstanceId}, serverEndpoint={serverHost}:{serverPort}, reservationId={reservationId}");
+            Logger.Debug(() => $"ControlServer route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={serverInstanceId}, serverEndpoint={serverHost}:{serverPort}, reservationId={reservationId}");
             this.SetIpAddress(serverHost);
             this.SetPort(serverPort);
             return this.Connect();
@@ -305,7 +305,7 @@ public class TcpClient : IClient, IDisposable
             this.Connection = null;
             this.Socket?.Dispose();
             this.Socket = null;
-            Logger.Info($"Client disconnected. clientId={this.ClientId}");
+            Logger.Debug(() => $"Client disconnected. clientId={this.ClientId}");
         }
 
         return true;
@@ -333,7 +333,7 @@ public class TcpClient : IClient, IDisposable
         this.healthCheckTask = DedicatedWorker.Start(
             token => this.RunHealthCheckLoopAsync(interval, token),
             this.healthCheckCancellation.Token);
-        Logger.Info($"Healthcheck loop started. clientId={this.ClientId}, intervalSeconds={interval.TotalSeconds}");
+        Logger.Debug(() => $"Healthcheck loop started. clientId={this.ClientId}, intervalSeconds={interval.TotalSeconds}");
         return true;
     }
 
@@ -402,7 +402,7 @@ public class TcpClient : IClient, IDisposable
         }
 
         bool sent = await HealthCheckProtocol.SendAsync(this.Connection, HealthCheckProtocol.CreatePing(this.ClientId));
-        Logger.Debug($"Healthcheck ping sent. clientId={this.ClientId}, success={sent}");
+        Logger.Debug(() => $"Healthcheck ping sent. clientId={this.ClientId}, success={sent}");
         return sent;
     }
 
@@ -420,7 +420,7 @@ public class TcpClient : IClient, IDisposable
         }
 
         bool sent = await HealthCheckProtocol.SendAsync(this.Connection, HealthCheckProtocol.CreatePong(this.ClientId));
-        Logger.Debug($"Healthcheck pong sent. clientId={this.ClientId}, success={sent}");
+        Logger.Debug(() => $"Healthcheck pong sent. clientId={this.ClientId}, success={sent}");
         return sent;
     }
 
@@ -455,7 +455,7 @@ public class TcpClient : IClient, IDisposable
         }
 
         bool sent = await HelloWorldProtocol.SendAsync(this.Connection, HelloWorldProtocol.CreateRequest(this.ClientId));
-        Logger.Debug($"HelloWorld request sent. clientId={this.ClientId}, success={sent}");
+        Logger.Debug(() => $"HelloWorld request sent. clientId={this.ClientId}, success={sent}");
         return sent;
     }
 
@@ -479,11 +479,11 @@ public class TcpClient : IClient, IDisposable
             return (false, null);
         }
 
-        Logger.Info($"Client register request sent. clientId={this.ClientId}");
+        Logger.Debug(() => $"Client register request sent. clientId={this.ClientId}");
         (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Connection);
         ClientRegisterAck ack = null;
         bool decoded = success && ClientMessageProtocol.TryDecodeRegisterAck(frame, out ack);
-        Logger.Info($"Client register response received. clientId={this.ClientId}, success={decoded && ack.Success}");
+        Logger.Debug(() => $"Client register response received. clientId={this.ClientId}, success={decoded && ack.Success}");
         return decoded ? (true, ack) : (false, null);
     }
 
@@ -634,7 +634,7 @@ public class TcpClient : IClient, IDisposable
         (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Connection);
         if (!success || !ClientMessageProtocol.TryDecodeDelivery(frame, out ClientMessageDelivery delivery))
         {
-            Logger.Debug($"Client message delivery receive skipped. clientId={this.ClientId}, success={success}");
+            Logger.Debug(() => $"Client message delivery receive skipped. clientId={this.ClientId}, success={success}");
             return (false, null);
         }
 
