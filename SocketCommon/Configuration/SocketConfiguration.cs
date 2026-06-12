@@ -70,6 +70,8 @@ public class SocketServerConfigFile
 
     public SocketAsyncEventArgsPoolConfig SocketAsyncEventArgsPool { get; set; } = new();
 
+    public ClientLocationCacheConfig ClientLocationCache { get; set; } = new();
+
     public List<EndpointConfig> ControlServers { get; set; } = new()
     {
         new EndpointConfig { Host = Constants.LocalHostIpAddress, Port = Constants.LocalHostPort }
@@ -99,6 +101,15 @@ public class SocketServerInstanceConfig
     public int IdleTimeoutSeconds { get; set; } = 90;
 
     public int HeartbeatIntervalSeconds { get; set; } = 30;
+}
+
+public class ClientLocationCacheConfig
+{
+    public bool Enabled { get; set; } = true;
+
+    public int TtlSeconds { get; set; } = 60;
+
+    public int MaxEntries { get; set; } = 200000;
 }
 
 public class SocketClientConfigFile

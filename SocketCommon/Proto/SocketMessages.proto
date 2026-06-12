@@ -234,6 +234,18 @@ message ProtoRegistrySnapshotRequest {
   int64 requested_at_unix_ms = 1;
 }
 
+message ProtoControlRelayBatchItem {
+  uint32 client_id = 1;
+  uint32 message_id = 2;
+  bytes payload = 3;
+  string payload_type = 4;
+}
+
+message ProtoControlRelayBatchMessage {
+  repeated ProtoControlRelayBatchItem items = 1;
+  int64 created_at_unix_ms = 2;
+}
+
 message ProtoClientRegisterRequest {
   uint32 client_id = 1;
   int64 registered_at_unix_ms = 2;
@@ -291,4 +303,23 @@ message ProtoServerRelayMessage {
   string content = 6;
   int32 ttl_seconds = 7;
   int64 created_at_unix_ms = 8;
+}
+
+message ProtoServerRelayBatchMessage {
+  repeated ProtoServerRelayMessage items = 1;
+  int64 created_at_unix_ms = 2;
+}
+
+message ProtoServerRelayBatchResultItem {
+  string message_token = 1;
+  bool success = 2;
+  string target_instance_id = 3;
+  string error_code = 4;
+  string error_message = 5;
+  int32 item_index = 6;
+}
+
+message ProtoServerRelayBatchResult {
+  repeated ProtoServerRelayBatchResultItem items = 1;
+  int64 created_at_unix_ms = 2;
 }

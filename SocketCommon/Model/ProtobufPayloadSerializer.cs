@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Google.Protobuf;
 using SocketCommon.Protobuf;
 
@@ -59,6 +60,7 @@ internal static class ProtobufPayloadSerializer
             ClusterStatusSnapshot value => ToProto(value),
             ControlAckMessage value => ToProto(value),
             RegistrySnapshotRequest value => ToProto(value),
+            ControlRelayBatchMessage value => ToProto(value),
             ClientRegisterRequest value => ToProto(value),
             ClientRegisterAck value => ToProto(value),
             ClientMessageSendRequest value => ToProto(value),
@@ -66,6 +68,8 @@ internal static class ProtobufPayloadSerializer
             ClientMessageAck value => ToProto(value),
             ClientMessageError value => ToProto(value),
             ServerRelayMessage value => ToProto(value),
+            ServerRelayBatchMessage value => ToProto(value),
+            ServerRelayBatchResult value => ToProto(value),
             _ => throw new NotSupportedException($"Unsupported protobuf payload type: {typeof(T).FullName}")
         };
     }
@@ -167,6 +171,11 @@ internal static class ProtobufPayloadSerializer
             return FromProto(ProtoRegistrySnapshotRequest.Parser.ParseFrom(bytes));
         }
 
+        if (type == typeof(ControlRelayBatchMessage))
+        {
+            return FromProto(ProtoControlRelayBatchMessage.Parser.ParseFrom(bytes));
+        }
+
         if (type == typeof(ClientRegisterRequest))
         {
             return FromProto(ProtoClientRegisterRequest.Parser.ParseFrom(bytes));
@@ -200,6 +209,16 @@ internal static class ProtobufPayloadSerializer
         if (type == typeof(ServerRelayMessage))
         {
             return FromProto(ProtoServerRelayMessage.Parser.ParseFrom(bytes));
+        }
+
+        if (type == typeof(ServerRelayBatchMessage))
+        {
+            return FromProto(ProtoServerRelayBatchMessage.Parser.ParseFrom(bytes));
+        }
+
+        if (type == typeof(ServerRelayBatchResult))
+        {
+            return FromProto(ProtoServerRelayBatchResult.Parser.ParseFrom(bytes));
         }
 
         throw new NotSupportedException($"Unsupported protobuf payload type: {type.FullName}");
@@ -814,6 +833,41 @@ internal static class ProtobufPayloadSerializer
         };
     }
 
+    private static ProtoControlRelayBatchMessage ToProto(ControlRelayBatchMessage value)
+    {
+        ProtoControlRelayBatchMessage message = new()
+        {
+            CreatedAtUnixMs = ToUnixMs(value.CreatedAt)
+        };
+        foreach (ControlRelayBatchItem item in value.Items ?? Enumerable.Empty<ControlRelayBatchItem>())
+        {
+            message.Items.Add(new ProtoControlRelayBatchItem
+            {
+                ClientId = item.ClientId,
+                MessageId = item.MessageId,
+                Payload = ByteString.CopyFrom(item.Payload ?? Array.Empty<byte>()),
+                PayloadType = item.PayloadType ?? ""
+            });
+        }
+
+        return message;
+    }
+
+    private static ControlRelayBatchMessage FromProto(ProtoControlRelayBatchMessage value)
+    {
+        return new ControlRelayBatchMessage
+        {
+            Items = value.Items.Select(item => new ControlRelayBatchItem
+            {
+                ClientId = item.ClientId,
+                MessageId = item.MessageId,
+                Payload = item.Payload.ToByteArray(),
+                PayloadType = item.PayloadType
+            }).ToList(),
+            CreatedAt = FromUnixMs(value.CreatedAtUnixMs)
+        };
+    }
+
     private static ProtoClientRegisterRequest ToProto(ClientRegisterRequest value)
     {
         return new ProtoClientRegisterRequest
@@ -984,6 +1038,68 @@ internal static class ProtobufPayloadSerializer
             TargetClientId = value.TargetClientId,
             Content = value.Content,
             TtlSeconds = value.TtlSeconds,
+            CreatedAt = FromUnixMs(value.CreatedAtUnixMs)
+        };
+    }
+
+    private static ProtoServerRelayBatchMessage ToProto(ServerRelayBatchMessage value)
+    {
+        ProtoServerRelayBatchMessage message = new()
+        {
+            CreatedAtUnixMs = ToUnixMs(value.CreatedAt)
+        };
+        foreach (ServerRelayMessage item in value.Items ?? Enumerable.Empty<ServerRelayMessage>())
+        {
+            message.Items.Add(ToProto(item));
+        }
+
+        return message;
+    }
+
+    private static ServerRelayBatchMessage FromProto(ProtoServerRelayBatchMessage value)
+    {
+        return new ServerRelayBatchMessage
+        {
+            Items = value.Items.Select(FromProto).ToList(),
+            CreatedAt = FromUnixMs(value.CreatedAtUnixMs)
+        };
+    }
+
+    private static ProtoServerRelayBatchResult ToProto(ServerRelayBatchResult value)
+    {
+        ProtoServerRelayBatchResult result = new()
+        {
+            CreatedAtUnixMs = ToUnixMs(value.CreatedAt)
+        };
+        foreach (ServerRelayBatchResultItem item in value.Items ?? Enumerable.Empty<ServerRelayBatchResultItem>())
+        {
+            result.Items.Add(new ProtoServerRelayBatchResultItem
+            {
+                ItemIndex = item.ItemIndex,
+                MessageToken = item.MessageToken ?? "",
+                Success = item.Success,
+                TargetInstanceId = item.TargetInstanceId ?? "",
+                ErrorCode = item.ErrorCode ?? "",
+                ErrorMessage = item.ErrorMessage ?? ""
+            });
+        }
+
+        return result;
+    }
+
+    private static ServerRelayBatchResult FromProto(ProtoServerRelayBatchResult value)
+    {
+        return new ServerRelayBatchResult
+        {
+            Items = value.Items.Select(item => new ServerRelayBatchResultItem
+            {
+                ItemIndex = item.ItemIndex,
+                MessageToken = item.MessageToken,
+                Success = item.Success,
+                TargetInstanceId = item.TargetInstanceId,
+                ErrorCode = item.ErrorCode,
+                ErrorMessage = item.ErrorMessage
+            }).ToList(),
             CreatedAt = FromUnixMs(value.CreatedAtUnixMs)
         };
     }

@@ -68,6 +68,7 @@ class Program
                 serverConfig.PendingAcceptCount,
                 TimeSpan.FromSeconds(serverConfig.IdleTimeoutSeconds),
                 instanceId: serverConfig.InstanceId);
+            server.ConfigureClientLocationCache(config.ClientLocationCache);
 
             if (!server.BindInPortRange(serverConfig.PortRangeStart, serverConfig.PortRangeEnd) ||
                 !server.Listen() ||

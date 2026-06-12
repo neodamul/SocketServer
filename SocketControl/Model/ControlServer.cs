@@ -22,6 +22,8 @@ public class ControlServer : IDisposable
     private static readonly SocketLogger RelayLogger = SocketLogManager.GetRelayLogger<ControlServer>();
     private const int MinCommandWorkerCount = 4;
     private const int MaxCommandWorkerCount = 64;
+    private const int PeerRelayBatchFlushIntervalMilliseconds = 20;
+    private const int PeerRelayBatchMaxItems = 256;
 
     private readonly ControlServerNodeConfig config;
     private readonly IReadOnlyCollection<EndpointConfig> peers;
@@ -472,6 +474,9 @@ public class ControlServer : IDisposable
             case ControlMessageIds.RouteReservationRelease:
                 await HandlePeerReservationReleaseAsync(request.Connection, request.Frame);
                 break;
+            case ControlMessageIds.ControlRelayBatch:
+                await HandlePeerRelayBatchAsync(request.Connection, request.Frame);
+                break;
             case ControlMessageIds.RegistrySnapshotRequest:
                 await HandleRegistrySnapshotRequestAsync(request.Connection, request.Frame);
                 break;
@@ -789,6 +794,96 @@ public class ControlServer : IDisposable
         await SendPeerAckAsync(connection, frame.ClientId);
     }
 
+    private async Task HandlePeerRelayBatchAsync(SecureSocketConnection connection, SocketMessageFrame frame)
+    {
+        if (!ControlProtocol.TryDecode(frame, ControlMessageIds.ControlRelayBatch, out ControlRelayBatchMessage batch))
+        {
+            return;
+        }
+
+        int appliedCount = 0;
+        foreach (ControlRelayBatchItem item in batch.Items)
+        {
+            if (this.ApplyPeerRelayBatchItem(item))
+            {
+                appliedCount++;
+            }
+        }
+
+        RelayLogger.Debug(() => $"Control peer relay batch applied. controlNodeId={this.config.NodeId}, received={batch.Items.Count}, applied={appliedCount}");
+        await SendPeerAckAsync(connection, frame.ClientId);
+    }
+
+    private bool ApplyPeerRelayBatchItem(ControlRelayBatchItem item)
+    {
+        SocketMessageFrame itemFrame = new(item.ClientId, item.MessageId, item.Payload ?? Array.Empty<byte>());
+        switch (item.MessageId)
+        {
+            case ControlMessageIds.ServerRegistryUpsert:
+                if (ControlProtocol.TryDecode(itemFrame, item.MessageId, out BackendServerSnapshot snapshot))
+                {
+                    this.registry.UpsertPeerSnapshot(snapshot);
+                    return true;
+                }
+
+                break;
+            case ControlMessageIds.SessionSummaryUpsert:
+                if (ControlProtocol.TryDecode(itemFrame, item.MessageId, out SessionEventMessage upsertSession))
+                {
+                    this.registry.UpsertSession(upsertSession);
+                    return true;
+                }
+
+                break;
+            case ControlMessageIds.SessionSummaryRemove:
+                if (ControlProtocol.TryDecode(itemFrame, item.MessageId, out SessionEventMessage removeSession))
+                {
+                    this.registry.RemoveSession(removeSession);
+                    return true;
+                }
+
+                break;
+            case ControlMessageIds.ClientLocationUpsert:
+                if (ControlProtocol.TryDecode(itemFrame, item.MessageId, out ClientLocationMessage upsertLocation))
+                {
+                    this.registry.UpsertClientLocation(upsertLocation);
+                    return true;
+                }
+
+                break;
+            case ControlMessageIds.ClientLocationRemove:
+                if (ControlProtocol.TryDecode(itemFrame, item.MessageId, out ClientLocationMessage removeLocation))
+                {
+                    this.registry.RemoveClientLocation(removeLocation);
+                    return true;
+                }
+
+                break;
+            case ControlMessageIds.RouteReservationUpsert:
+                if (ControlProtocol.TryDecode(itemFrame, item.MessageId, out RouteReservationMessage upsertReservation))
+                {
+                    this.registry.UpsertReservation(upsertReservation);
+                    return true;
+                }
+
+                break;
+            case ControlMessageIds.RouteReservationRelease:
+                if (ControlProtocol.TryDecode(itemFrame, item.MessageId, out RouteReservationMessage releaseReservation))
+                {
+                    this.registry.ReleaseReservation(releaseReservation.ReservationId);
+                    return true;
+                }
+
+                break;
+            default:
+                RelayLogger.Warn($"Control peer relay batch ignored unsupported item. controlNodeId={this.config.NodeId}, messageId={item.MessageId}, payloadType={item.PayloadType}");
+                break;
+        }
+
+        RelayLogger.Warn($"Control peer relay batch item decode failed. controlNodeId={this.config.NodeId}, messageId={item.MessageId}, payloadType={item.PayloadType}");
+        return false;
+    }
+
     private async Task HandleRegistrySnapshotRequestAsync(SecureSocketConnection connection, SocketMessageFrame frame)
     {
         ClusterStatusSnapshot status = this.CreateClusterStatusSnapshot();
@@ -895,7 +990,8 @@ public class ControlServer : IDisposable
         {
             await foreach (PeerRelayCommand command in this.peerRelayRequestChannel.Reader.ReadAllAsync(cancellationToken))
             {
-                await PublishQueuedCommandAsync(command);
+                List<PeerRelayCommand> batch = await this.CollectPeerRelayBatchAsync(command, cancellationToken);
+                await PublishQueuedCommandsAsync(batch);
             }
         }
         catch (OperationCanceledException)
@@ -932,17 +1028,106 @@ public class ControlServer : IDisposable
         }
     }
 
-    private async Task PublishQueuedCommandAsync(PeerRelayCommand command)
+    private async Task<List<PeerRelayCommand>> CollectPeerRelayBatchAsync(
+        PeerRelayCommand firstCommand,
+        CancellationToken cancellationToken)
+    {
+        List<PeerRelayCommand> batch = new(PeerRelayBatchMaxItems) { firstCommand };
+        try
+        {
+            await Task.Delay(PeerRelayBatchFlushIntervalMilliseconds, cancellationToken);
+        }
+        catch (TaskCanceledException)
+        {
+            return batch;
+        }
+
+        while (batch.Count < PeerRelayBatchMaxItems &&
+            this.peerRelayRequestChannel.Reader.TryRead(out PeerRelayCommand? command))
+        {
+            batch.Add(command);
+        }
+
+        return batch;
+    }
+
+    private async Task PublishQueuedCommandsAsync(IReadOnlyList<PeerRelayCommand> commands)
     {
         List<Task> tasks = new();
-        RelayLogger.Debug(() => $"Control peer relay fanout started. controlNodeId={this.config.NodeId}, messageId={command.MessageId}, peerCount={this.peers.Count}, payloadType={command.PayloadType}");
+        RelayLogger.Debug(() => $"Control peer relay fanout started. controlNodeId={this.config.NodeId}, batchCount={commands.Count}, peerCount={this.peers.Count}");
         foreach (EndpointConfig peer in this.peers)
         {
-            tasks.Add(PublishToPeerAsync(peer, command.MessageId, command.Payload, command.PayloadType));
+            tasks.Add(commands.Count == 1
+                ? PublishToPeerAsync(peer, commands[0].MessageId, commands[0].Payload, commands[0].PayloadType)
+                : PublishBatchToPeerAsync(peer, commands));
         }
 
         await Task.WhenAll(tasks);
-        RelayLogger.Debug(() => $"Control peer relay fanout completed. controlNodeId={this.config.NodeId}, messageId={command.MessageId}, peerCount={this.peers.Count}, payloadType={command.PayloadType}");
+        RelayLogger.Debug(() => $"Control peer relay fanout completed. controlNodeId={this.config.NodeId}, batchCount={commands.Count}, peerCount={this.peers.Count}");
+    }
+
+    private async Task PublishBatchToPeerAsync(EndpointConfig peer, IReadOnlyList<PeerRelayCommand> commands)
+    {
+        ControlRelayBatchMessage batch = new()
+        {
+            CreatedAt = DateTimeOffset.UtcNow,
+            Items = commands
+                .Select(command =>
+                {
+                    SocketMessageFrame frame = ControlProtocol.CreateFrame(0, command.MessageId, command.Payload);
+                    return new ControlRelayBatchItem
+                    {
+                        ClientId = frame.ClientId,
+                        MessageId = frame.MessageId,
+                        Payload = frame.Payload,
+                        PayloadType = command.PayloadType
+                    };
+                })
+                .ToList()
+        };
+
+        try
+        {
+            RelayLogger.Debug(() => $"Control peer relay batch send started. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, count={batch.Items.Count}");
+            PersistentSecureChannel channel = this.GetPeerChannel(peer);
+            (bool success, SocketMessageFrame frame) = await channel.SendAndReceiveAsync(
+                connection => ControlProtocol.SendAndReceiveAsync(
+                    connection,
+                    0,
+                    ControlMessageIds.ControlRelayBatch,
+                    batch,
+                    GetPeerOperationTimeoutMilliseconds()),
+                GetPeerOperationTimeoutMilliseconds());
+            if (!success || frame.MessageId != ControlMessageIds.ControlRegisterAck)
+            {
+                RelayLogger.Warn($"Control peer relay batch response invalid. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, count={commands.Count}, fallback=single");
+                await PublishCommandsIndividuallyToPeerAsync(peer, commands);
+                return;
+            }
+
+            foreach (PeerRelayCommand command in commands)
+            {
+                this.peerRelayResponseChannel.Writer.TryWrite(new PeerRelayResult(peer, command.MessageId, command.PayloadType, success, success ? "" : "Peer relay batch response timed out or failed."));
+            }
+        }
+        catch (Exception exception) when (exception is SocketException ||
+            exception is IOException ||
+            exception is AuthenticationException ||
+            exception is TimeoutException ||
+            exception is ObjectDisposedException)
+        {
+            Logger.Warn($"ControlServer peer relay batch failed. peer={peer.Host}:{peer.Port}, count={commands.Count}", exception);
+            RelayLogger.Warn($"Control peer relay batch failed. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, count={commands.Count}", exception);
+            await PublishCommandsIndividuallyToPeerAsync(peer, commands);
+        }
+    }
+
+    private async Task PublishCommandsIndividuallyToPeerAsync(EndpointConfig peer, IReadOnlyList<PeerRelayCommand> commands)
+    {
+        foreach (PeerRelayCommand command in commands)
+        {
+            await PublishToPeerAsync(peer, command.MessageId, command.Payload, command.PayloadType);
+        }
     }
 
     private async Task PublishToPeerAsync(EndpointConfig peer, uint messageId, object payload, string payloadType)
