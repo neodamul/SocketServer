@@ -425,6 +425,11 @@ public class SocketLoadTestTests
             Assert.AreEqual(0, rejected.Counters.ConnectFail);
             Assert.AreEqual(1, rejected.Counters.RegisterFail);
 
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            LoadTestUiState afterDelay = service.GetState();
+            Assert.AreEqual(1, afterDelay.Counters.RegisterFail);
+            Assert.AreEqual(0, service.ActiveConnectWorkerCount);
+
             await service.StopAsync();
         }
         finally
@@ -632,6 +637,65 @@ public class SocketLoadTestTests
     }
 
     [TestMethod]
+    public async Task LoadTestUiScaleUpQueuesOnlyOnePendingBatchTest()
+    {
+        int port = GetAvailablePort();
+        Assert.IsTrue(LoadTestOptions.TryParse(new[] { "--ui" }, out LoadTestOptions options, out string error));
+        Assert.AreEqual(string.Empty, error);
+        LoadTestUiService service = new(options);
+
+        try
+        {
+            await service.ApplyAsync(new LoadTestUiStartRequest
+            {
+                Clients = 2,
+                StartClientId = 1,
+                BatchSize = 10,
+                Host = "127.0.0.1",
+                Port = port,
+                UseControlServer = false
+            });
+            await WaitForStateAsync(
+                service,
+                state => state.Counters.Attempted >= 2,
+                TimeSpan.FromSeconds(5));
+
+            await service.ApplyAsync(new LoadTestUiStartRequest
+            {
+                Clients = 100,
+                StartClientId = 1,
+                BatchSize = 10,
+                Host = "127.0.0.1",
+                Port = port,
+                UseControlServer = false
+            });
+            await WaitForActiveConnectWorkersAsync(service, 10);
+
+            await service.ApplyAsync(new LoadTestUiStartRequest
+            {
+                Clients = 200,
+                StartClientId = 1,
+                BatchSize = 10,
+                Host = "127.0.0.1",
+                Port = port,
+                UseControlServer = false
+            });
+            await Task.Delay(200);
+
+            Assert.IsTrue(
+                service.ActiveConnectWorkerCount <= 10,
+                $"Expected repeated scale-up to keep connect workers within the batch limit, observed {service.ActiveConnectWorkerCount}.");
+            Assert.IsTrue(
+                service.ActiveConnectQueueCount <= 1,
+                $"Expected repeated scale-up to keep at most one active dispatcher, observed {service.ActiveConnectQueueCount}.");
+        }
+        finally
+        {
+            await service.StopAsync();
+        }
+    }
+
+    [TestMethod]
     public async Task LoadTestUiRapidScaleDownAndUpDoesNotDuplicatePendingRetriesTest()
     {
         int port = GetAvailablePort();
@@ -772,6 +836,21 @@ public class SocketLoadTestTests
         Task completed = await Task.WhenAny(task, Task.Delay(timeout));
         Assert.AreSame(task, completed);
         await task;
+    }
+
+    private static async Task WaitForActiveConnectWorkersAsync(LoadTestUiService service, int expected)
+    {
+        for (int attempt = 0; attempt < 50; attempt++)
+        {
+            if (service.ActiveConnectWorkerCount >= expected)
+            {
+                return;
+            }
+
+            await Task.Delay(100);
+        }
+
+        Assert.Fail($"Expected at least {expected} active connect workers, observed {service.ActiveConnectWorkerCount}.");
     }
 
     private static async Task<LoadTestUiState> WaitForStateAsync(
