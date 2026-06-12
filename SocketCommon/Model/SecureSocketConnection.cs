@@ -231,7 +231,7 @@ public sealed class SecureSocketConnection : IDisposable
         {
             TargetHost = TargetHost,
             EnabledSslProtocols = ConfiguredProtocols,
-            ClientCertificates = GetClientCertificates(moduleName),
+            ClientCertificateContext = GetClientCertificateContext(moduleName),
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck
         }));
         EnsureTls13IfRequired(sslStream);
@@ -252,12 +252,11 @@ public sealed class SecureSocketConnection : IDisposable
                 moduleName);
         }
 
-        X509Certificate2 certificate = LocalCertificateStore.GetOrCreateCached(moduleName);
         SslStream sslStream = new(networkStream, leaveInnerStreamOpen: false);
 
         SslServerAuthenticationOptions options = new()
         {
-            ServerCertificate = certificate,
+            ServerCertificateContext = LocalCertificateStore.GetOrCreateCertificateContext(moduleName),
             EnabledSslProtocols = ConfiguredProtocols,
             ClientCertificateRequired = RequireClientCertificate,
             CertificateRevocationCheckMode = X509RevocationMode.NoCheck
@@ -557,18 +556,14 @@ public sealed class SecureSocketConnection : IDisposable
         return LocalCertificateStore.IsSignedByRoot(certificate2, rootCertificate);
     }
 
-    private static X509CertificateCollection GetClientCertificates(string moduleName)
+    private static SslStreamCertificateContext GetClientCertificateContext(string moduleName)
     {
         if (!RequireClientCertificate)
         {
             return null;
         }
 
-        X509CertificateCollection certificates = new()
-        {
-            LocalCertificateStore.GetOrCreateCached(moduleName)
-        };
-        return certificates;
+        return LocalCertificateStore.GetOrCreateCertificateContext(moduleName);
     }
 
     private static async Task WaitForAuthenticationAsync(Task authenticationTask)
@@ -786,6 +781,7 @@ public static class LocalCertificateStore
     private static readonly object ModuleCertificateCacheLock = new();
     private static readonly Dictionary<string, object> ModuleCertificateLocks = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, CachedModuleCertificate> CachedModuleCertificates = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, CachedCertificateContext> CachedCertificateContexts = new(StringComparer.Ordinal);
     private static X509Certificate2 cachedRootAuthority;
     private static string cachedRootAuthorityPath = "";
     private static string cachedRootAuthorityPassword = "";
@@ -890,6 +886,45 @@ public static class LocalCertificateStore
         }
     }
 
+    public static SslStreamCertificateContext GetOrCreateCertificateContext(string moduleName)
+    {
+        string key = NormalizeModuleName(moduleName);
+        string path = GetCertificatePath(key);
+        string password = GetCertificatePassword();
+        object moduleLock = GetModuleCertificateLock(key);
+
+        lock (moduleLock)
+        {
+            X509Certificate2 certificate = GetOrCreateCached(key);
+            DateTime writeTimeUtc = File.Exists(path)
+                ? File.GetLastWriteTimeUtc(path)
+                : DateTime.MinValue;
+
+            lock (ModuleCertificateCacheLock)
+            {
+                if (CachedCertificateContexts.TryGetValue(key, out CachedCertificateContext cached) &&
+                    string.Equals(cached.Path, path, StringComparison.Ordinal) &&
+                    string.Equals(cached.Password, password, StringComparison.Ordinal) &&
+                    cached.WriteTimeUtc == writeTimeUtc)
+                {
+                    return cached.Context;
+                }
+
+                CachedCertificateContexts.Remove(key);
+                SslStreamCertificateContext context = SslStreamCertificateContext.Create(
+                    certificate,
+                    additionalCertificates: null,
+                    offline: true);
+                CachedCertificateContexts[key] = new CachedCertificateContext(
+                    context,
+                    path,
+                    password,
+                    writeTimeUtc);
+                return context;
+            }
+        }
+    }
+
     internal static X509Certificate2 GetCachedRootAuthority()
     {
         lock (RootAuthorityCacheLock)
@@ -923,6 +958,7 @@ public static class LocalCertificateStore
         lock (ModuleCertificateCacheLock)
         {
             CachedModuleCertificates.Clear();
+            CachedCertificateContexts.Clear();
         }
 
         ClearRootAuthorityCache();
@@ -980,6 +1016,29 @@ public static class LocalCertificateStore
         }
 
         public X509Certificate2 Certificate { get; }
+
+        public string Path { get; }
+
+        public string Password { get; }
+
+        public DateTime WriteTimeUtc { get; }
+    }
+
+    private sealed class CachedCertificateContext
+    {
+        public CachedCertificateContext(
+            SslStreamCertificateContext context,
+            string path,
+            string password,
+            DateTime writeTimeUtc)
+        {
+            this.Context = context;
+            this.Path = path;
+            this.Password = password;
+            this.WriteTimeUtc = writeTimeUtc;
+        }
+
+        public SslStreamCertificateContext Context { get; }
 
         public string Path { get; }
 

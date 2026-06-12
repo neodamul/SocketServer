@@ -301,7 +301,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
             }
 
             Logger.Info($"Server socket bound. endpoint={this.IpAddress}:{this.Port}");
-            LocalCertificateStore.GetOrCreate("SocketServer");
+            LocalCertificateStore.GetOrCreateCertificateContext("SocketServer");
             return true;
         }
         catch (SocketException exception)

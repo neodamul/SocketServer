@@ -314,7 +314,7 @@ public class DashboardServerService : IDisposable
 
     private static async Task<ClusterStatusSnapshot?> QueryControlClusterStatusAsync(EndpointConfig endpoint)
     {
-        LocalCertificateStore.GetOrCreate("SocketDashboard");
+        LocalCertificateStore.GetOrCreateCertificateContext("SocketDashboard");
         using Socket socket = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
         Task<ClusterStatusSnapshot?> queryTask = QueryControlClusterStatusAsync(endpoint, socket);
         Task completedTask = await Task.WhenAny(

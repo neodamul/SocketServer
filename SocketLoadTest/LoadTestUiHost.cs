@@ -655,7 +655,7 @@ internal sealed class LoadTestUiService
                         return new LoadTestUiClientAttemptResult(clientId, session);
                     }
 
-                    if (session.LastFailure == SocketClientSessionFailure.Register)
+                    if (session.LastFailure == SocketClientSessionFailure.RegisterRejected)
                     {
                         Interlocked.Increment(ref runCounters.RegisterFail);
                         this.MarkTerminalRegisterFailure(clientId, generation);

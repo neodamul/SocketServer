@@ -12,7 +12,8 @@ public enum SocketClientSessionFailure
 {
     None = 0,
     Connect = 1,
-    Register = 2
+    RegisterUnavailable = 2,
+    RegisterRejected = 3
 }
 
 public sealed class SocketClientSession : IDisposable
@@ -203,10 +204,18 @@ public sealed class SocketClientSession : IDisposable
         }
 
         (bool registerReceived, ClientRegisterAck registerAck) = await nextClient.RegisterClientWithAckAsync();
-        if (!registerReceived || !registerAck.Success)
+        if (!registerReceived)
         {
             nextClient.Dispose();
-            this.SetLastFailure(SocketClientSessionFailure.Register);
+            this.SetLastFailure(SocketClientSessionFailure.RegisterUnavailable);
+            this.nextReconnectDelay = TimeSpan.FromSeconds(settings.ReconnectRetrySeconds);
+            return false;
+        }
+
+        if (!registerAck.Success)
+        {
+            nextClient.Dispose();
+            this.SetLastFailure(SocketClientSessionFailure.RegisterRejected);
             int delaySeconds = registerAck?.RetryAfterSeconds > 0
                 ? registerAck.RetryAfterSeconds
                 : settings.DuplicateRejectBackoffSeconds;
