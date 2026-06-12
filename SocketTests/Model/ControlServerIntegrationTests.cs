@@ -215,7 +215,6 @@ public class ControlServerIntegrationTests
                 ClusterId = "socket-cluster-1",
                 ServerId = 201,
                 InstanceId = "server-strict-route",
-                Name = "server-strict-route",
                 Host = "127.0.0.1",
                 Port = 56201,
                 PortRangeStart = 56201,
