@@ -786,6 +786,7 @@ public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDispos
     {
         if (SecureSocketConnection.SecurityProfile != SocketSecurityProfile.EndToEndTls ||
             !SecureSocketConnection.RequireClientCertificate ||
+            !SecureSocketConnection.EnforceClientCertificateId ||
             clientId == 0)
         {
             return true;

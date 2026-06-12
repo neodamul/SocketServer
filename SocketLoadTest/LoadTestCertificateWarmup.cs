@@ -12,7 +12,17 @@ internal static class LoadTestCertificateWarmup
 
     public static string GetClientCertificateModuleName(int clientId)
     {
-        return $"SocketClient-{clientId}";
+        return SecureSocketConnection.EnforceClientCertificateId && clientId > 0
+            ? $"SocketClient-{clientId}"
+            : "SocketClient";
+    }
+
+    public static int GetRequiredCertificateCount(IEnumerable<int> clientIds)
+    {
+        return clientIds
+            .Select(GetClientCertificateModuleName)
+            .Distinct(StringComparer.Ordinal)
+            .Count();
     }
 
     public static int GetDefaultConcurrency()
@@ -26,16 +36,20 @@ internal static class LoadTestCertificateWarmup
         Action<int>? onCompleted,
         CancellationToken cancellationToken)
     {
-        int[] ids = clientIds.Distinct().OrderBy(id => id).ToArray();
-        if (ids.Length == 0 || !IsRequired)
+        string[] moduleNames = clientIds
+            .Select(GetClientCertificateModuleName)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(moduleName => moduleName, StringComparer.Ordinal)
+            .ToArray();
+        if (moduleNames.Length == 0 || !IsRequired)
         {
-            return new LoadTestCertificateWarmupResult(ids.Length, 0, TimeSpan.Zero);
+            return new LoadTestCertificateWarmupResult(moduleNames.Length, 0, TimeSpan.Zero);
         }
 
         Stopwatch stopwatch = Stopwatch.StartNew();
         int completed = 0;
         int nextIndex = -1;
-        int workerCount = Math.Min(ids.Length, Math.Max(1, maxConcurrency));
+        int workerCount = Math.Min(moduleNames.Length, Math.Max(1, maxConcurrency));
         Task[] tasks = new Task[workerCount];
 
         for (int worker = 0; worker < workerCount; worker++)
@@ -47,13 +61,12 @@ internal static class LoadTestCertificateWarmup
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         int currentIndex = Interlocked.Increment(ref nextIndex);
-                        if (currentIndex >= ids.Length)
+                        if (currentIndex >= moduleNames.Length)
                         {
                             break;
                         }
 
-                        int clientId = ids[currentIndex];
-                        LocalCertificateStore.GetOrCreateCached(GetClientCertificateModuleName(clientId));
+                        LocalCertificateStore.GetOrCreateCached(moduleNames[currentIndex]);
                         int current = Interlocked.Increment(ref completed);
                         onCompleted?.Invoke(current);
                     }
@@ -63,7 +76,7 @@ internal static class LoadTestCertificateWarmup
 
         await Task.WhenAll(tasks);
         stopwatch.Stop();
-        return new LoadTestCertificateWarmupResult(ids.Length, completed, stopwatch.Elapsed);
+        return new LoadTestCertificateWarmupResult(moduleNames.Length, completed, stopwatch.Elapsed);
     }
 }
 

@@ -112,6 +112,7 @@ public class SecureSocketConnectionTests
             TlsProtocol = "Tls13",
             RequireTls13 = true,
             RequireClientCertificate = true,
+            EnforceClientCertificateId = true,
             CertificatePasswordEnvironmentVariable = TestPasswordVariable,
             CertificateRenewBeforeDays = 15,
             RootCertificateLifetimeYears = 8,
@@ -124,6 +125,7 @@ public class SecureSocketConnectionTests
         Assert.AreEqual(SocketTransportSecurityMode.Tls, SecureSocketConnection.ConfiguredTransportMode);
         Assert.IsTrue(SecureSocketConnection.RequireTls13);
         Assert.IsTrue(SecureSocketConnection.RequireClientCertificate);
+        Assert.IsTrue(SecureSocketConnection.EnforceClientCertificateId);
         Assert.AreEqual(2500, SecureSocketConnection.AuthenticationTimeoutMilliseconds);
 
         SecureSocketConnection.Configure(CreateSecurityConfig());
@@ -141,6 +143,7 @@ public class SecureSocketConnectionTests
         });
 
         Assert.IsFalse(SecureSocketConnection.RequireClientCertificate);
+        Assert.IsFalse(SecureSocketConnection.EnforceClientCertificateId);
 
         SecureSocketConnection.Configure(new SocketSecurityConfig
         {
@@ -152,6 +155,7 @@ public class SecureSocketConnectionTests
         });
 
         Assert.IsFalse(SecureSocketConnection.RequireClientCertificate);
+        Assert.IsFalse(SecureSocketConnection.EnforceClientCertificateId);
 
         SecureSocketConnection.Configure(CreateSecurityConfig());
     }

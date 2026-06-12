@@ -131,6 +131,8 @@ public class SocketSecurityConfig
 
     public bool RequireClientCertificate { get; set; } = true;
 
+    public bool EnforceClientCertificateId { get; set; }
+
     public string CertificateDirectory { get; set; } = "";
 
     public string CertificatePasswordEnvironmentVariable { get; set; } = "SOCKET_CERTIFICATE_PASSWORD";

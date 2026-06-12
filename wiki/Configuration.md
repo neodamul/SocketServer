@@ -26,6 +26,7 @@ Executable projects apply transport security via `security` (default TLS). Profi
     "tlsProtocol": "Tls13",
     "requireTls13": true,
     "requireClientCertificate": true,
+    "enforceClientCertificateId": false,
     "certificateDirectory": "",
     "certificatePasswordEnvironmentVariable": "SOCKET_CERTIFICATE_PASSWORD",
     "certificateRenewBeforeDays": 30,
@@ -40,7 +41,8 @@ Executable projects apply transport security via `security` (default TLS). Profi
 - `profile`: `EndToEndTls` (default, TLS to the app) · `EdgeTerminated` (edge terminates TLS; requires `trustedNetwork=true` and a loopback/private SocketServer `bindHost`; rejected with `transportMode=Tls`; edge identity propagation not yet implemented) · `AppTokenSession` (reserved, rejected at startup).
 - `transportMode`: `Tls` (`SslStream`) or `MessageEncryption` (per-frame AES-GCM-256 + HMAC-SHA256, no TLS handshake). `EdgeTerminated` currently uses the `MessageEncryption` path for non-TLS app transport. See [Protocols → Transport security](Protocols.md#transport-security).
 - `MessageEncryption` requires every node and client to share the same secret via env var (default `SOCKET_MESSAGE_SECRET`; override with `messageEncryptionSecretEnvironmentVariable`). The secret may be base64 or plain text; AES-GCM and HMAC keys are derived separately.
-- `tlsProtocol`: default `Tls13`; `Auto` uses OS/.NET negotiation. Production forces TLS 1.3. `EndToEndTls` uses mTLS when `requireClientCertificate=true`. Cert validation checks Root CA signature, SAN/name match, serverAuth/clientAuth EKU; the SocketClient cert SAN includes `socket-client-{clientId}` and the SocketServer refuses a connection whose client-facing frame header clientId differs when mTLS is enabled.
+- `tlsProtocol`: default `Tls13`; `Auto` uses OS/.NET negotiation. Production forces TLS 1.3. `EndToEndTls` uses mTLS when `requireClientCertificate=true`. Cert validation checks Root CA signature, SAN/name match, and serverAuth/clientAuth EKU.
+- `enforceClientCertificateId`: default `false`. In normal production-style deployments, a shared trusted SocketClient certificate proves the client application/device group and `CLIENT_REGISTER` owns the logical `clientId` for the session. Set this to `true` only when certificates are issued per client ID; then the SocketServer refuses a client-facing frame whose header `clientId` differs from the SocketClient certificate identity.
 
 > Note: on macOS, `SslStream` cannot explicitly request `Tls13`; use `Auto` (OS negotiation) for non-server components.
 
