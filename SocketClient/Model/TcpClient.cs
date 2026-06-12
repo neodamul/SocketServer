@@ -91,6 +91,11 @@ public class TcpClient : IClient, IDisposable
 
     public bool Connect()
     {
+        return this.ConnectAsync().GetAwaiter().GetResult();
+    }
+
+    public async Task<bool> ConnectAsync()
+    {
         try
         {
             if (this.Socket == null)
@@ -98,8 +103,8 @@ public class TcpClient : IClient, IDisposable
                 this.Initialize();
             }
 
-            SocketFactory.ConnectAsync(this.Socket, this.IpAddress, this.Port).GetAwaiter().GetResult();
-            this.Connection = SecureSocketConnection.AuthenticateClientAsync(this.Socket, this.GetCertificateModuleName()).GetAwaiter().GetResult();
+            await SocketFactory.ConnectAsync(this.Socket, this.IpAddress, this.Port);
+            this.Connection = await SecureSocketConnection.AuthenticateClientAsync(this.Socket, this.GetCertificateModuleName());
             Logger.Debug(() => $"Client connected. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}");
             return true;
         }
@@ -219,7 +224,7 @@ public class TcpClient : IClient, IDisposable
             Logger.Debug(() => $"ControlServer route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={serverInstanceId}, serverEndpoint={serverHost}:{serverPort}, reservationId={reservationId}");
             this.SetIpAddress(serverHost);
             this.SetPort(serverPort);
-            return this.Connect();
+            return await this.ConnectAsync();
         }
         catch (SocketException exception)
         {
