@@ -25,9 +25,14 @@ public class ResponseWorkerConfigurationTests
     [TestMethod]
     public void ControlServerCommandResponsesUseMultipleWorkersTest()
     {
-        Assert.AreEqual(4, ReadPrivateConstInt(typeof(ControlServer), "CommandResponseWorkerCount"));
+        Assert.AreEqual(4, InvokePrivateStaticInt(typeof(ControlServer), "CalculateWorkerCount", 1, 2, 4, 64));
+        Assert.AreEqual(16, InvokePrivateStaticInt(typeof(ControlServer), "CalculateWorkerCount", 8, 2, 4, 64));
+        Assert.AreEqual(64, InvokePrivateStaticInt(typeof(ControlServer), "CalculateWorkerCount", 128, 2, 4, 64));
 
         string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketControl/Model/ControlServer.cs"));
+        Assert.IsTrue(source.Contains("GetCommandWorkerCount()", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("GetCommandResponseWorkerCount()", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("commandRequestChannel = Channel.CreateUnbounded<ControlCommandRequest>", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("commandResponseChannel = Channel.CreateUnbounded<ControlResponseCommand>", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("SingleReader = false", StringComparison.Ordinal));
     }
@@ -75,13 +80,6 @@ public class ResponseWorkerConfigurationTests
 
         Assert.IsTrue(source.Contains("activeConnectionsBySecureConnection", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("SendAfterAsync(this.sendQueueTail", StringComparison.Ordinal));
-    }
-
-    private static int ReadPrivateConstInt(Type type, string fieldName)
-    {
-        FieldInfo field = type.GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Static)!;
-        Assert.IsNotNull(field);
-        return (int)field.GetRawConstantValue()!;
     }
 
     private static int InvokePrivateStaticInt(Type type, string methodName, params object[] args)

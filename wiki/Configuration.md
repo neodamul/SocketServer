@@ -92,7 +92,7 @@ Default location is the solution-root `Certificates/`; override with `security.c
 - `degraded*Percent`: marks `Degraded` above resource thresholds — evaluated on **machine-wide** usage (not the process)
 - `registry.provider`: `InMemory` or `File`; `registry.connectionString`: file path (empty → `{nodeId}-registry.json` in the run dir)
 
-The default config uses `File`; tests/ephemeral runs use `InMemory`. The registry file stores server snapshots, route reservations, session summaries, client locations (payload protocol stays protobuf).
+The default config uses `File`; tests/ephemeral runs use `InMemory`. The registry file stores server snapshots, session summaries, and client locations (payload protocol stays protobuf). Route reservations are transient and excluded from file persistence to avoid one full registry write per route request and stale capacity holds after restart.
 
 ## SocketServer
 ```json
