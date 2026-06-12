@@ -169,7 +169,6 @@ public class DashboardServerServiceTests
             ClusterId = "socket-cluster-1",
             ServerId = 7,
             InstanceId = "server-dashboard",
-            Name = "server-dashboard",
             Host = "127.0.0.1",
             Port = 5107,
             PortRangeStart = 5100,

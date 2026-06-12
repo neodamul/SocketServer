@@ -175,7 +175,7 @@ function healthText(value) {
 function buildSocketServerRow(server) {
   return {
     type: "SocketServer",
-    instanceId: server.instanceId || server.name || "-",
+    instanceId: server.instanceId || "-",
     health: healthText(server.health),
     host: server.host || server.ipAddress || "-",
     port: server.port ?? "-",

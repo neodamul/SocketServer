@@ -407,7 +407,6 @@ public class DashboardServerService : IDisposable
             ClusterId = "socket-cluster-1",
             ServerId = status.ServerId,
             InstanceId = status.InstanceId,
-            Name = status.InstanceId,
             Host = status.IpAddress,
             Port = status.Port,
             MaxConnections = status.MaxConnections,

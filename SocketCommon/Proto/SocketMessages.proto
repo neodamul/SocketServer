@@ -33,10 +33,11 @@ message ProtoResourceUsageSnapshot {
 }
 
 message ProtoServerRegisterRequest {
+  reserved 4;
+  reserved "name";
   string cluster_id = 1;
   int32 server_id = 2;
   string instance_id = 3;
-  string name = 4;
   string host = 5;
   int32 port = 6;
   int32 port_range_start = 7;
@@ -145,11 +146,12 @@ message ProtoClientLocationResponse {
 }
 
 message ProtoBackendServerSnapshot {
+  reserved 5;
+  reserved "name";
   string cluster_id = 1;
   string source_control_node_id = 2;
   int32 server_id = 3;
   string instance_id = 4;
-  string name = 5;
   string host = 6;
   int32 port = 7;
   int32 port_range_start = 8;

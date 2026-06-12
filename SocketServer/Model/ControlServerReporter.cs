@@ -79,7 +79,6 @@ public class ControlServerReporter : IDisposable
             ClusterId = this.clusterId,
             ServerId = status.ServerId,
             InstanceId = status.InstanceId,
-            Name = status.InstanceId,
             Host = status.IpAddress,
             Port = status.Port,
             PortRangeStart = this.portRangeStart,

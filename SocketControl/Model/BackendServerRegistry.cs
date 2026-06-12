@@ -66,7 +66,6 @@ public class BackendServerRegistry
                 SourceControlNodeId = controlNodeId,
                 ServerId = request.ServerId,
                 InstanceId = request.InstanceId,
-                Name = request.Name,
                 Host = request.Host,
                 Port = request.Port,
                 PortRangeStart = request.PortRangeStart,
@@ -89,7 +88,6 @@ public class BackendServerRegistry
                 existing.ClusterId = request.ClusterId;
                 existing.SourceControlNodeId = controlNodeId;
                 existing.ServerId = request.ServerId;
-                existing.Name = request.Name;
                 existing.Host = request.Host;
                 existing.Port = request.Port;
                 existing.PortRangeStart = request.PortRangeStart;
@@ -1021,7 +1019,6 @@ public class BackendServerRegistry
             SourceControlNodeId = server.SourceControlNodeId,
             ServerId = server.ServerId,
             InstanceId = server.InstanceId,
-            Name = server.Name,
             Host = server.Host,
             Port = server.Port,
             PortRangeStart = server.PortRangeStart,

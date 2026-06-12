@@ -64,8 +64,6 @@ public class ServerRegisterRequest
 
     public string InstanceId { get; set; } = "";
 
-    public string Name { get; set; } = "";
-
     public string Host { get; set; } = "";
 
     public int Port { get; set; }
@@ -262,8 +260,6 @@ public class BackendServerSnapshot
     public int ServerId { get; set; }
 
     public string InstanceId { get; set; } = "";
-
-    public string Name { get; set; } = "";
 
     public string Host { get; set; } = "";
 
