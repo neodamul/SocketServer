@@ -20,8 +20,8 @@ public class ControlServer : IDisposable
 {
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<ControlServer>();
     private static readonly SocketLogger RelayLogger = SocketLogManager.GetRelayLogger<ControlServer>();
-    private const int CommandWorkerCount = 4;
-    private const int CommandResponseWorkerCount = 4;
+    private const int MinCommandWorkerCount = 4;
+    private const int MaxCommandWorkerCount = 64;
 
     private readonly ControlServerNodeConfig config;
     private readonly IReadOnlyCollection<EndpointConfig> peers;
@@ -108,11 +108,11 @@ public class ControlServer : IDisposable
             this.connectionCleanupTask = DedicatedWorker.Start(this.RunConnectionCleanupLoopAsync, this.cancellation.Token);
             this.peerSnapshotSyncTask = DedicatedWorker.Start(this.RunPeerSnapshotSyncLoopAsync, this.cancellation.Token);
             this.commandWorkerTasks = DedicatedWorker.StartMany(
-                CommandWorkerCount,
+                GetCommandWorkerCount(),
                 this.RunCommandRequestLoopAsync,
                 this.cancellation.Token);
             this.commandResponseWorkerTasks = DedicatedWorker.StartMany(
-                CommandResponseWorkerCount,
+                GetCommandResponseWorkerCount(),
                 this.RunCommandResponseLoopAsync,
                 this.cancellation.Token);
             this.peerRelayRequestTask = DedicatedWorker.Start(
@@ -131,7 +131,7 @@ public class ControlServer : IDisposable
                     this.cancellation.Token);
             }
 
-            Logger.Info($"ControlServer started. nodeId={this.config.NodeId}, endpoint={this.config.Host}:{this.Port}");
+            Logger.Info($"ControlServer started. nodeId={this.config.NodeId}, endpoint={this.config.Host}:{this.Port}, commandWorkers={this.commandWorkerTasks.Length}, responseWorkers={this.commandResponseWorkerTasks.Length}");
             return true;
         }
         catch (SocketException exception)
@@ -139,6 +139,23 @@ public class ControlServer : IDisposable
             Logger.Warn($"ControlServer start failed. endpoint={this.config.Host}:{this.config.Port}", exception);
             return false;
         }
+    }
+
+    private static int GetCommandWorkerCount()
+    {
+        return CalculateWorkerCount(Environment.ProcessorCount, 2, MinCommandWorkerCount, MaxCommandWorkerCount);
+    }
+
+    private static int GetCommandResponseWorkerCount()
+    {
+        return CalculateWorkerCount(Environment.ProcessorCount, 2, MinCommandWorkerCount, MaxCommandWorkerCount);
+    }
+
+    private static int CalculateWorkerCount(int processorCount, int multiplier, int minimum, int maximum)
+    {
+        int normalizedProcessorCount = Math.Max(1, processorCount);
+        int calculated = normalizedProcessorCount * Math.Max(1, multiplier);
+        return Math.Min(Math.Max(calculated, minimum), maximum);
     }
 
     public void Stop()

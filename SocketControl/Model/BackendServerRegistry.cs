@@ -298,7 +298,6 @@ public class BackendServerRegistry
             this.reservations[reservation.ReservationId] = reservation;
             selected.ReservedConnections++;
             UpdateAvailable(selected);
-            this.SaveState();
 
             return new RouteResponse
             {
@@ -364,7 +363,6 @@ public class BackendServerRegistry
                 if (existing.InstanceId == reservation.InstanceId)
                 {
                     this.reservations[reservation.ReservationId] = reservation;
-                    this.SaveState();
                     return;
                 }
 
@@ -373,7 +371,6 @@ public class BackendServerRegistry
 
             this.reservations[reservation.ReservationId] = reservation;
             this.AdjustReservationCount(reservation.InstanceId, 1);
-            this.SaveState();
         }
     }
 
@@ -387,7 +384,6 @@ public class BackendServerRegistry
             }
 
             this.AdjustReservationCount(reservation.InstanceId, -1);
-            this.SaveState();
         }
     }
 
@@ -705,12 +701,6 @@ public class BackendServerRegistry
             }
         }
 
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        foreach (RouteReservationMessage reservation in (state.Reservations ?? Enumerable.Empty<RouteReservationMessage>()).Where(item => item.ExpiresAt > now))
-        {
-            this.reservations[reservation.ReservationId] = reservation;
-        }
-
         foreach (SessionEventMessage session in state.Sessions ?? Enumerable.Empty<SessionEventMessage>())
         {
             this.sessions[CreateSessionKey(session)] = session;
@@ -1015,11 +1005,57 @@ public class BackendServerRegistry
         return new BackendRegistryState
         {
             Version = this.version,
-            Servers = this.servers.Values.ToList(),
-            Reservations = this.reservations.Values.ToList(),
+            Servers = this.servers.Values.Select(CreatePersistentServerSnapshot).ToList(),
+            Reservations = new List<RouteReservationMessage>(),
             Sessions = this.sessions.Values.ToList(),
             SessionTombstones = this.sessionTombstones.Values.ToList(),
             ClientLocations = this.clientLocations.Values.ToList()
+        };
+    }
+
+    private static BackendServerSnapshot CreatePersistentServerSnapshot(BackendServerSnapshot server)
+    {
+        return new BackendServerSnapshot
+        {
+            ClusterId = server.ClusterId,
+            SourceControlNodeId = server.SourceControlNodeId,
+            ServerId = server.ServerId,
+            InstanceId = server.InstanceId,
+            Name = server.Name,
+            Host = server.Host,
+            Port = server.Port,
+            PortRangeStart = server.PortRangeStart,
+            PortRangeEnd = server.PortRangeEnd,
+            MaxConnections = server.MaxConnections,
+            CurrentConnections = server.CurrentConnections,
+            RegisteredSessionCount = server.RegisteredSessionCount,
+            StaleConnectionCount = server.StaleConnectionCount,
+            ReservedConnections = 0,
+            AvailableConnections = Math.Max(0, server.MaxConnections - server.CurrentConnections),
+            Health = server.Health,
+            ResourceUsage = server.ResourceUsage,
+            TotalAcceptedClients = server.TotalAcceptedClients,
+            TotalClosedClients = server.TotalClosedClients,
+            TotalRejectedClients = server.TotalRejectedClients,
+            TotalIdleTimeoutClients = server.TotalIdleTimeoutClients,
+            TotalReceivedMessages = server.TotalReceivedMessages,
+            TotalSentMessages = server.TotalSentMessages,
+            TotalReceivedMessageBytes = server.TotalReceivedMessageBytes,
+            TotalSentMessageBytes = server.TotalSentMessageBytes,
+            ListenBacklog = server.ListenBacklog,
+            PendingAcceptCount = server.PendingAcceptCount,
+            IdleTimeoutSeconds = server.IdleTimeoutSeconds,
+            NoDelay = server.NoDelay,
+            MaxPayloadLength = server.MaxPayloadLength,
+            SocketAsyncEventArgsAvailableCount = server.SocketAsyncEventArgsAvailableCount,
+            SocketAsyncEventArgsTotalCreatedCount = server.SocketAsyncEventArgsTotalCreatedCount,
+            SocketAsyncEventArgsInUseCount = server.SocketAsyncEventArgsInUseCount,
+            SocketAsyncEventArgsHighWatermarkInUseCount = server.SocketAsyncEventArgsHighWatermarkInUseCount,
+            SocketAsyncEventArgsGrowthCount = server.SocketAsyncEventArgsGrowthCount,
+            Version = server.Version,
+            StartedAt = server.StartedAt,
+            LastHeartbeatAt = server.LastHeartbeatAt,
+            UpdatedAt = server.UpdatedAt
         };
     }
 

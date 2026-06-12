@@ -956,7 +956,7 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
-    public void BackendRegistryFileStoreRestoresServerReservationAndClientLocationTest()
+    public void BackendRegistryFileStoreRestoresServerAndClientLocationTest()
     {
         string path = CreateRegistryPath();
         try
@@ -989,8 +989,8 @@ public class ControlProtocolTests
             Assert.AreEqual(1, status.ServerCount);
             Assert.AreEqual(1, status.HealthyServerCount);
             Assert.AreEqual(3, status.TotalCurrentConnections);
-            Assert.AreEqual(1, status.TotalReservedConnections);
-            Assert.AreEqual(6, status.TotalAvailableConnections);
+            Assert.AreEqual(0, status.TotalReservedConnections);
+            Assert.AreEqual(7, status.TotalAvailableConnections);
             Assert.IsTrue(location.Success);
             Assert.AreEqual("server-1", location.InstanceId);
         }
@@ -1023,6 +1023,42 @@ public class ControlProtocolTests
 
         Assert.IsTrue(location.Success);
         Assert.AreEqual(saveCountAfterOpen, store.SaveCount);
+    }
+
+    [TestMethod]
+    public void BackendRegistryCoalescesRouteReservationSavesTest()
+    {
+        CountingBackendRegistryStore store = new();
+        BackendServerRegistry registry = new(TimeSpan.FromSeconds(90), store);
+        registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
+        int saveCountAfterRegister = store.SaveCount;
+
+        for (uint clientId = 1; clientId <= 50; clientId++)
+        {
+            RouteResponse response = registry.Resolve(new RouteRequest { ClientId = clientId }, "control-1", TimeSpan.FromSeconds(10));
+            Assert.IsTrue(response.Success);
+        }
+
+        Assert.AreEqual(saveCountAfterRegister, store.SaveCount);
+    }
+
+    [TestMethod]
+    public void BackendRegistryDoesNotPersistRouteReservationsTest()
+    {
+        CountingBackendRegistryStore store = new();
+        BackendServerRegistry registry = new(TimeSpan.FromSeconds(90), store);
+        registry.Upsert(CreateRegister(1, "server-1", 5101, 100), "control-1");
+
+        RouteResponse response = registry.Resolve(new RouteRequest { ClientId = 1 }, "control-1", TimeSpan.FromSeconds(10));
+
+        Assert.IsTrue(response.Success);
+        Assert.AreEqual(1, registry.Reservations.Count);
+        Assert.AreEqual(0, store.LastState.Reservations.Count);
+        Assert.AreEqual(0, store.LastState.Servers.Single().ReservedConnections);
+        Assert.AreEqual(100, store.LastState.Servers.Single().AvailableConnections);
+
+        BackendServerRegistry restored = new(TimeSpan.FromSeconds(90), store);
+        Assert.AreEqual(0, restored.Reservations.Count);
     }
 
     [TestMethod]
@@ -1401,13 +1437,16 @@ public class ControlProtocolTests
     {
         public int SaveCount { get; private set; }
 
+        public BackendRegistryState LastState { get; private set; } = new();
+
         public BackendRegistryState Load()
         {
-            return new BackendRegistryState();
+            return this.LastState;
         }
 
         public void Save(BackendRegistryState state)
         {
+            this.LastState = state;
             this.SaveCount++;
         }
     }
