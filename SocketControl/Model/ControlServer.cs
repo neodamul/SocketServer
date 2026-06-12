@@ -102,7 +102,7 @@ public class ControlServer : IDisposable
             this.listener = SocketFactory.CreateTcpSocket(AddressFamily.InterNetwork);
             this.listener.Bind(new IPEndPoint(SocketFactory.ResolveAddress(this.config.Host), this.config.Port));
             this.listener.Listen(SocketFactory.ListenBacklog);
-            LocalCertificateStore.GetOrCreate("SocketControl");
+            LocalCertificateStore.GetOrCreateCertificateContext("SocketControl");
             this.cancellation = new CancellationTokenSource();
             this.acceptTask = DedicatedWorker.Start(this.RunAcceptLoopAsync, this.cancellation.Token);
             this.connectionCleanupTask = DedicatedWorker.Start(this.RunConnectionCleanupLoopAsync, this.cancellation.Token);

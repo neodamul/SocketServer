@@ -50,7 +50,7 @@ public class TcpClient : IClient, IDisposable
 
     public void Initialize()
     {
-        LocalCertificateStore.GetOrCreate("SocketClient");
+        LocalCertificateStore.GetOrCreateCertificateContext(this.GetCertificateModuleName());
         this.Connection?.Dispose();
         this.Socket?.Dispose();
         this.Socket = SocketFactory.CreateTcpSocket(this.Family);

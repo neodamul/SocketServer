@@ -66,7 +66,7 @@ internal static class LoadTestCertificateWarmup
                             break;
                         }
 
-                        LocalCertificateStore.GetOrCreateCached(moduleNames[currentIndex]);
+                        LocalCertificateStore.GetOrCreateCertificateContext(moduleNames[currentIndex]);
                         int current = Interlocked.Increment(ref completed);
                         onCompleted?.Invoke(current);
                     }

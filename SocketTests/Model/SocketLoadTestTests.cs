@@ -440,6 +440,47 @@ public class SocketLoadTestTests
     }
 
     [TestMethod]
+    public async Task LoadTestUiRetriesRegisterUnavailableFailuresTest()
+    {
+        using NoAckRegisterServer server = new();
+        Assert.IsTrue(LoadTestOptions.TryParse(
+            new[]
+            {
+                "--ui",
+                "--clients", "1",
+                "--batch-size", "1",
+                "--host", "127.0.0.1",
+                "--port", server.Port.ToString(),
+                "--external-server"
+            },
+            out LoadTestOptions options,
+            out string error));
+        Assert.AreEqual(string.Empty, error);
+
+        LoadTestUiService service = new(options);
+        try
+        {
+            await service.StartAsync(new LoadTestUiStartRequest());
+
+            LoadTestUiState retrying = await WaitForStateAsync(
+                service,
+                state => state.Counters.Attempted >= 2,
+                TimeSpan.FromSeconds(10));
+
+            Assert.IsTrue(retrying.IsRunning);
+            Assert.AreEqual("Connecting", retrying.Status);
+            Assert.AreEqual(0, retrying.ConnectedNow);
+            Assert.AreEqual(0, retrying.Counters.RegisterFail);
+            Assert.IsTrue(retrying.Counters.ConnectFail >= 1);
+            Assert.IsTrue(server.AcceptedConnections >= 1);
+        }
+        finally
+        {
+            await service.StopAsync();
+        }
+    }
+
+    [TestMethod]
     public async Task RunMessageLoadTestWithTwoClientsTest()
     {
         int exitCode = await Program.RunAsync(new[]
@@ -934,6 +975,77 @@ public class SocketLoadTestTests
                 {
                     return;
                 }
+            }
+        }
+    }
+
+    private sealed class NoAckRegisterServer : IDisposable
+    {
+        private readonly Socket listener;
+        private readonly CancellationTokenSource cancellation = new();
+        private readonly Task acceptTask;
+        private int acceptedConnections;
+
+        public NoAckRegisterServer()
+        {
+            this.listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            this.listener.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+            this.listener.Listen(128);
+            this.Port = ((IPEndPoint)this.listener.LocalEndPoint!).Port;
+            this.acceptTask = Task.Run(() => this.AcceptLoopAsync(this.cancellation.Token));
+        }
+
+        public int Port { get; }
+
+        public int AcceptedConnections => Volatile.Read(ref this.acceptedConnections);
+
+        public void Dispose()
+        {
+            this.cancellation.Cancel();
+            this.listener.Dispose();
+            this.acceptTask.Wait(TimeSpan.FromSeconds(1));
+            this.cancellation.Dispose();
+        }
+
+        private async Task AcceptLoopAsync(CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                Socket? socket = null;
+                try
+                {
+                    socket = await this.listener.AcceptAsync(cancellationToken);
+                    Interlocked.Increment(ref this.acceptedConnections);
+                    _ = Task.Run(() => this.HandleConnectionAsync(socket, cancellationToken), cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    socket?.Dispose();
+                    return;
+                }
+                catch (ObjectDisposedException)
+                {
+                    socket?.Dispose();
+                    return;
+                }
+                catch (SocketException)
+                {
+                    socket?.Dispose();
+                    return;
+                }
+            }
+        }
+
+        private async Task HandleConnectionAsync(Socket socket, CancellationToken cancellationToken)
+        {
+            try
+            {
+                using SecureSocketConnection connection =
+                    await SecureSocketConnection.AuthenticateServerAsync(socket, "SocketLoadTestNoAckServer");
+                await SocketMessageFrame.TryReceiveAsync(connection);
+            }
+            catch (Exception exception) when (exception is IOException or InvalidOperationException or SocketException)
+            {
             }
         }
     }
