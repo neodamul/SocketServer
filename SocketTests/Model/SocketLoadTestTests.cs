@@ -163,6 +163,62 @@ public class SocketLoadTestTests
         Assert.AreEqual(0, state.TargetServers.Count);
         Assert.AreEqual(0, state.Clients.Count);
         Assert.AreEqual(0, state.Counters.Attempted);
+        Assert.AreEqual(0, state.CertificateWarmupTotal);
+        Assert.AreEqual(0, state.CertificateWarmupCompleted);
+    }
+
+    [TestMethod]
+    public async Task LoadTestCertificateWarmupCreatesPerClientCertificatesTest()
+    {
+        string directory = Path.Combine(
+            Path.GetTempPath(),
+            $"socket-loadtest-certs-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        int maxProgress = 0;
+
+        try
+        {
+            SecureSocketConnection.Configure(new SocketSecurityConfig
+            {
+                TransportMode = "Tls",
+                TlsProtocol = "Auto",
+                RequireTls13 = false,
+                RequireClientCertificate = true,
+                CertificateDirectory = directory,
+                AuthenticationTimeoutMilliseconds = 30000
+            });
+
+            Assert.IsTrue(LoadTestCertificateWarmup.IsRequired);
+            Assert.AreEqual("SocketClient-1201", LoadTestCertificateWarmup.GetClientCertificateModuleName(1201));
+
+            LoadTestCertificateWarmupResult result = await LoadTestCertificateWarmup.WarmUpAsync(
+                new[] { 1201, 1202, 1201 },
+                maxConcurrency: 2,
+                onCompleted: completed => UpdateMax(ref maxProgress, completed),
+                CancellationToken.None);
+
+            Assert.AreEqual(2, result.Total);
+            Assert.AreEqual(2, result.Completed);
+            Assert.AreEqual(2, Volatile.Read(ref maxProgress));
+            Assert.IsTrue(File.Exists(LocalCertificateStore.GetCertificatePath("SocketClient-1201")));
+            Assert.IsTrue(File.Exists(LocalCertificateStore.GetCertificatePath("SocketClient-1202")));
+        }
+        finally
+        {
+            SecureSocketConnection.Configure(new SocketSecurityConfig
+            {
+                TransportMode = "Tls",
+                TlsProtocol = "Auto",
+                RequireTls13 = false,
+                RequireClientCertificate = false,
+                AuthenticationTimeoutMilliseconds = 30000
+            });
+
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
     }
 
     [TestMethod]
@@ -605,6 +661,20 @@ public class SocketLoadTestTests
             UseControlServer = false,
             RampDelayMilliseconds = 0
         };
+    }
+
+    private static void UpdateMax(ref int target, int value)
+    {
+        int current;
+        do
+        {
+            current = Volatile.Read(ref target);
+            if (value <= current)
+            {
+                return;
+            }
+        }
+        while (Interlocked.CompareExchange(ref target, value, current) != current);
     }
 
     private static int[] ConnectedIds(LoadTestUiService service)

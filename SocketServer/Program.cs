@@ -25,11 +25,32 @@ class Program
             config.SocketAsyncEventArgsPool.GrowthSize,
             config.SocketAsyncEventArgsPool.MaxRetained);
         int? selectedServerId = ReadServerId(args);
-        bool runAll = args.Contains("--all", StringComparer.OrdinalIgnoreCase) || !selectedServerId.HasValue;
+        bool runAll = args.Contains("--all", StringComparer.OrdinalIgnoreCase);
+        SocketServerInstanceConfig[] configuredServers = config.Servers.ToArray();
+        if (!runAll && !selectedServerId.HasValue && configuredServers.Length > 1)
+        {
+            const string message = "Multiple SocketServer instances are configured. Specify --server-id N for one process per instance, or --all to intentionally run every instance in this process.";
+            logger.Warn(message);
+            Console.Error.WriteLine(message);
+            Environment.ExitCode = 1;
+            return;
+        }
 
-        IEnumerable<SocketServerInstanceConfig> serverConfigs = runAll
-            ? config.Servers
-            : config.Servers.Where(server => server.ServerId == selectedServerId.Value);
+        SocketServerInstanceConfig[] serverConfigs = (runAll
+            ? configuredServers
+            : selectedServerId.HasValue
+                ? configuredServers.Where(server => server.ServerId == selectedServerId.Value)
+                : configuredServers).ToArray();
+        if (serverConfigs.Length == 0)
+        {
+            string message = selectedServerId.HasValue
+                ? $"No SocketServer instance is configured for --server-id {selectedServerId.Value}."
+                : "No SocketServer instances are configured.";
+            logger.Warn(message);
+            Console.Error.WriteLine(message);
+            Environment.ExitCode = 1;
+            return;
+        }
 
         List<TcpServer> servers = new();
         List<ControlServerReporter> reporters = new();

@@ -25,10 +25,10 @@ ControlServer:
 ```bash
 dotnet run --project SocketControl/SocketControl.csproj
 ```
-SocketServer — all configured instances, or a specific id:
+SocketServer — run one process per configured instance for high-load TLS validation. `--all` is still available for intentional single-process multi-instance runs:
 ```bash
-dotnet run --project SocketServer/SocketServer.csproj -- --all
 dotnet run --project SocketServer/SocketServer.csproj -- --server-id 1
+dotnet run --project SocketServer/SocketServer.csproj -- --all
 ```
 Dashboard (`http://127.0.0.1:10050`):
 ```bash
@@ -68,7 +68,7 @@ Sizing procedure:
 4. Budget only 60-70% of node memory for connections.
 5. Node count = target concurrency / safe connections per node.
 ```
-Example: a validated 10,000 safe connections/node implies ≥30 SocketServer instances for 300,000. TLS handshake CPU is a transient spike for long-lived connections — measure restart/reconnect-storm scenarios separately.
+Example: a validated 10,000 safe connections/node implies ≥30 SocketServer instances for 300,000. TLS handshake CPU is a transient spike for long-lived connections — measure restart/reconnect-storm scenarios separately. `SocketLoadTest` performs a separate certificate warm-up phase before connect ramp timing when mTLS client certificates are required. Treat warm-up elapsed time as certificate provisioning/caching cost, and treat the following connect/register/healthcheck elapsed time as the socket ramp measurement.
 
 For control-plane / server-to-server relay message-size estimates and broadcast amplification at scale, see [Relay Traffic Sizing](RelayTrafficSizing.md).
 
