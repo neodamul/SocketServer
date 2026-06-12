@@ -2,6 +2,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.IO;
 using System.Reflection;
+using SocketCommon.Model;
 using SocketControl.Model;
 using SocketServer.Model;
 
@@ -35,6 +36,17 @@ public class ResponseWorkerConfigurationTests
         Assert.IsTrue(source.Contains("commandRequestChannel = Channel.CreateUnbounded<ControlCommandRequest>", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("commandResponseChannel = Channel.CreateUnbounded<ControlResponseCommand>", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("SingleReader = false", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public void ControlServerClosesClientRouteRequestAfterResponseTest()
+    {
+        Assert.IsTrue(InvokePrivateStaticBool(typeof(ControlServer), "ShouldCloseAfterResponse", ControlMessageIds.RouteRequest));
+        Assert.IsFalse(InvokePrivateStaticBool(typeof(ControlServer), "ShouldCloseAfterResponse", ControlMessageIds.ServerHeartbeat));
+        Assert.IsFalse(InvokePrivateStaticBool(typeof(ControlServer), "ShouldCloseAfterResponse", ControlMessageIds.RegistrySnapshotRequest));
+
+        string source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "SocketControl/Model/ControlServer.cs"));
+        Assert.IsTrue(source.Contains("ShouldCloseAfterResponse(frame.MessageId)", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -87,6 +99,13 @@ public class ResponseWorkerConfigurationTests
         MethodInfo method = type.GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!;
         Assert.IsNotNull(method);
         return (int)method.Invoke(null, args)!;
+    }
+
+    private static bool InvokePrivateStaticBool(Type type, string methodName, params object[] args)
+    {
+        MethodInfo method = type.GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!;
+        Assert.IsNotNull(method);
+        return (bool)method.Invoke(null, args)!;
     }
 
     private static string FindRepositoryRoot()

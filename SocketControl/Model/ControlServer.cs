@@ -287,6 +287,11 @@ public class ControlServer : IDisposable
                     activeConnection,
                     serverInstanceId);
                 serverInstanceId = result.ServerInstanceId;
+                if (ShouldCloseAfterResponse(frame.MessageId))
+                {
+                    Logger.Debug($"ControlServer closing one-shot request connection. messageId={frame.MessageId}");
+                    break;
+                }
             }
         }
         catch (SocketException exception)
@@ -330,6 +335,11 @@ public class ControlServer : IDisposable
                 Logger.Debug($"ControlServer request channel closed. instanceId={disconnectedInstanceId}");
             }
         }
+    }
+
+    private static bool ShouldCloseAfterResponse(uint messageId)
+    {
+        return messageId == ControlMessageIds.RouteRequest;
     }
 
     private async Task RunConnectionCleanupLoopAsync(CancellationToken cancellationToken)
