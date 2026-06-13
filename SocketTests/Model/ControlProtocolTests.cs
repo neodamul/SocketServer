@@ -1283,6 +1283,7 @@ public class ControlProtocolTests
         Assert.IsTrue(source.Contains("MachHostPort", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("HostVmInfo64Count = 62", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("vm.page_free_count", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("/usr/bin/vm_stat", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -1320,6 +1321,23 @@ public class ControlProtocolTests
         ResourceUsageProvider provider = new();
 
         Assert.AreEqual(0, provider.NormalizeMemoryUsagePercent(0), 0.0001);
+    }
+
+    [TestMethod]
+    public void ResourceUsageProviderParsesMacVmStatOutputTest()
+    {
+        string output = """
+            Mach Virtual Memory Statistics: (page size of 16384 bytes)
+            Pages free:                                123.
+            Pages active:                            4,567.
+            Pages inactive:                            890.
+            Pages speculative:                          12.
+            """;
+
+        Assert.AreEqual(16384, ResourceUsageProvider.ParseVmStatPageSize(output));
+        Assert.AreEqual(123, ResourceUsageProvider.ParseVmStatPages(output, "Pages free"));
+        Assert.AreEqual(890, ResourceUsageProvider.ParseVmStatPages(output, "Pages inactive"));
+        Assert.AreEqual(12, ResourceUsageProvider.ParseVmStatPages(output, "Pages speculative"));
     }
 
     [TestMethod]
