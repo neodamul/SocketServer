@@ -29,6 +29,7 @@ public class TcpClient : IClient, IDisposable
     private string Name { get; set; }
     private AddressFamily Family { get; set; }
     protected IPAddress IpAddress { get; private set; }
+    protected IPAddress SourceIpAddress { get; private set; }
     protected int Port { get; private set; }
     protected uint ClientId => this.Id < 0 ? 0 : (uint)this.Id;
 
@@ -54,6 +55,7 @@ public class TcpClient : IClient, IDisposable
         this.Connection?.Dispose();
         this.Socket?.Dispose();
         this.Socket = SocketFactory.CreateTcpSocket(this.Family);
+        SocketFactory.BindSourceAddress(this.Socket, this.SourceIpAddress);
         Logger.Debug(() => $"Client socket initialized. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}");
     }
 
@@ -77,6 +79,22 @@ public class TcpClient : IClient, IDisposable
     public string GetIpAddress()
     {
         return this.IpAddress.ToString();
+    }
+
+    public void SetSourceIpAddress(IPAddress sourceIpAddress)
+    {
+        this.SourceIpAddress = sourceIpAddress;
+    }
+
+    public void SetSourceIpAddress(string sourceIpAddress)
+    {
+        if (string.IsNullOrWhiteSpace(sourceIpAddress))
+        {
+            this.SetSourceIpAddress((IPAddress)null);
+            return;
+        }
+
+        this.SetSourceIpAddress(SocketFactory.ResolveAddress(sourceIpAddress, this.Family));
     }
 
     public void SetPort(int port)
@@ -194,6 +212,7 @@ public class TcpClient : IClient, IDisposable
             Logger.Debug(() => $"ControlServer route request started. clientId={this.ClientId}, endpoint={endpoint}");
             using (Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family))
             {
+                SocketFactory.BindSourceAddress(controlSocket, this.SourceIpAddress);
                 await SocketFactory.ConnectAsync(controlSocket, controlHost, controlPort);
                 using SecureSocketConnection controlConnection =
                     await SecureSocketConnection.AuthenticateClientAsync(controlSocket, this.GetCertificateModuleName());

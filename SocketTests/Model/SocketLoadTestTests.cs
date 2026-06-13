@@ -74,6 +74,80 @@ public class SocketLoadTestTests
     }
 
     [TestMethod]
+    public void ParseSourceIpOptionsTest()
+    {
+        Assert.IsTrue(LoadTestOptions.TryParse(
+            new[]
+            {
+                "--source-ips", "127.0.0.1"
+            },
+            out LoadTestOptions options,
+            out string error));
+
+        Assert.AreEqual(string.Empty, error);
+        Assert.AreEqual("127.0.0.1", options.SourceIps);
+        CollectionAssert.AreEqual(
+            new[] { IPAddress.Parse("127.0.0.1") },
+            LoadTestOptions.ParseSourceIpAddresses(options.SourceIps));
+    }
+
+    [TestMethod]
+    public void ParseSourceIpOptionsRejectsInvalidAddressTest()
+    {
+        Assert.IsFalse(LoadTestOptions.TryParse(
+            new[] { "--source-ips", "127.0.0.1,not-an-ip" },
+            out _,
+            out string error));
+
+        Assert.AreEqual("--source-ips contains an invalid IP address: not-an-ip", error);
+    }
+
+    [TestMethod]
+    public void ParseSourceIpOptionsRejectsIpv6AddressTest()
+    {
+        Assert.IsFalse(LoadTestOptions.TryParse(
+            new[] { "--source-ips", "::1" },
+            out _,
+            out string error));
+
+        Assert.AreEqual("--source-ips supports IPv4 addresses only: ::1", error);
+    }
+
+    [TestMethod]
+    public void ParseSourceIpOptionsRejectsUnboundAddressTest()
+    {
+        Assert.IsFalse(LoadTestOptions.TryParse(
+            new[] { "--source-ips", "127.0.0.2" },
+            out _,
+            out string error));
+
+        Assert.AreEqual("--source-ips contains an address that cannot be bound on this host: 127.0.0.2", error);
+    }
+
+    [TestMethod]
+    public void SelectSourceIpAddressUsesClientIdRoundRobinTest()
+    {
+        Assert.IsTrue(LoadTestOptions.TryParse(
+            new[]
+            {
+                "--start-client-id", "10"
+            },
+            out LoadTestOptions options,
+            out string error));
+        Assert.AreEqual(string.Empty, error);
+
+        IPAddress[] sourceIps =
+        {
+            IPAddress.Parse("127.0.0.1"),
+            IPAddress.Parse("127.0.0.2")
+        };
+
+        Assert.AreEqual(IPAddress.Parse("127.0.0.1"), Program.SelectSourceIpAddress(options, sourceIps, 10));
+        Assert.AreEqual(IPAddress.Parse("127.0.0.2"), Program.SelectSourceIpAddress(options, sourceIps, 11));
+        Assert.AreEqual(IPAddress.Parse("127.0.0.1"), Program.SelectSourceIpAddress(options, sourceIps, 12));
+    }
+
+    [TestMethod]
     public void ParseMessageTestRejectsValueTest()
     {
         Assert.IsFalse(LoadTestOptions.TryParse(

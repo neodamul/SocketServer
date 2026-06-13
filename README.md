@@ -112,6 +112,12 @@ Broker-routed 10k connection test:
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 10000 --batch-size 100 --hold-seconds 60 --host 127.0.0.1 --port 10000 --use-control-server
 ```
 
+For high local fan-out from one machine, shard client source addresses to avoid exhausting the host ephemeral port range. Each source IP must be configured on the host loopback interface before the run starts:
+
+```bash
+dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 35000 --batch-size 100 --hold-seconds 60 --host 127.0.0.1 --port 10000 --use-control-server --source-ips 127.0.0.1,127.0.0.2,127.0.0.3,127.0.0.4
+```
+
 ControlServer route profile:
 
 ```bash

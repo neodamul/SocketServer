@@ -111,6 +111,30 @@ public sealed class SocketClientSession : IDisposable
     public async Task<bool> ConnectAndRegisterAsync(
         int clientId,
         string clientName,
+        string host,
+        int port,
+        bool useControlServer,
+        int healthCheckIntervalSeconds,
+        int reconnectRetrySeconds,
+        int duplicateRejectBackoffSeconds,
+        IPAddress sourceIpAddress)
+    {
+        return await this.ConnectAndRegisterAsync(
+            clientId,
+            clientName,
+            host,
+            port,
+            useControlServer,
+            Array.Empty<IPEndPoint>(),
+            healthCheckIntervalSeconds,
+            reconnectRetrySeconds,
+            duplicateRejectBackoffSeconds,
+            sourceIpAddress);
+    }
+
+    public async Task<bool> ConnectAndRegisterAsync(
+        int clientId,
+        string clientName,
         IEnumerable<IPEndPoint> controlEndpoints,
         int healthCheckIntervalSeconds,
         int reconnectRetrySeconds,
@@ -129,7 +153,8 @@ public sealed class SocketClientSession : IDisposable
             endpoints,
             healthCheckIntervalSeconds,
             reconnectRetrySeconds,
-            duplicateRejectBackoffSeconds);
+            duplicateRejectBackoffSeconds,
+            null);
     }
 
     public async Task<bool> ConnectAndRegisterAsync(
@@ -151,7 +176,8 @@ public sealed class SocketClientSession : IDisposable
             Array.Empty<IPEndPoint>(),
             healthCheckIntervalSeconds,
             reconnectRetrySeconds,
-            duplicateRejectBackoffSeconds);
+            duplicateRejectBackoffSeconds,
+            null);
     }
 
     private async Task<bool> ConnectAndRegisterAsync(
@@ -163,7 +189,8 @@ public sealed class SocketClientSession : IDisposable
         IPEndPoint[] controlEndpoints,
         int healthCheckIntervalSeconds,
         int reconnectRetrySeconds,
-        int duplicateRejectBackoffSeconds)
+        int duplicateRejectBackoffSeconds,
+        IPAddress sourceIpAddress)
     {
         this.reconnectSettings = new ReconnectSettings(
             clientId,
@@ -172,6 +199,7 @@ public sealed class SocketClientSession : IDisposable
             port,
             useControlServer,
             controlEndpoints,
+            sourceIpAddress,
             Math.Max(1, healthCheckIntervalSeconds),
             Math.Max(1, reconnectRetrySeconds),
             Math.Max(1, duplicateRejectBackoffSeconds));
@@ -190,6 +218,7 @@ public sealed class SocketClientSession : IDisposable
     {
         ReconnectSettings settings = this.reconnectSettings;
         TcpClient nextClient = new(settings.ClientId, settings.ClientName, settings.Host, settings.Port);
+        nextClient.SetSourceIpAddress(settings.SourceIpAddress);
         bool connected = settings.UseControlServer
             ? settings.ControlEndpoints.Length > 0
                 ? await nextClient.ConnectViaControlServersAsync(settings.ControlEndpoints)
@@ -538,6 +567,7 @@ public sealed class SocketClientSession : IDisposable
         int Port,
         bool UseControlServer,
         IPEndPoint[] ControlEndpoints,
+        IPAddress SourceIpAddress,
         int HealthCheckIntervalSeconds,
         int ReconnectRetrySeconds,
         int DuplicateRejectBackoffSeconds);

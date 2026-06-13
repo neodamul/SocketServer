@@ -27,6 +27,16 @@ public class SocketFactoryTests
     }
 
     [TestMethod]
+    public void BindSourceAddressUsesRequestedLocalAddressTest()
+    {
+        using Socket socket = SocketFactory.CreateTcpSocket();
+
+        SocketFactory.BindSourceAddress(socket, IPAddress.Loopback);
+
+        Assert.AreEqual(IPAddress.Loopback, ((IPEndPoint)socket.LocalEndPoint!).Address);
+    }
+
+    [TestMethod]
     public async Task CreateTcpSocketRejectsDuplicateListenerOnSamePortTest()
     {
         using Socket first = SocketFactory.CreateTcpSocket();

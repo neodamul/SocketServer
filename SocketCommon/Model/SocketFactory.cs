@@ -85,6 +85,30 @@ public static class SocketFactory
         }
     }
 
+    public static void BindSourceAddress(Socket socket, IPAddress sourceAddress)
+    {
+        if (sourceAddress == null)
+        {
+            return;
+        }
+
+        try
+        {
+            socket.Bind(new IPEndPoint(sourceAddress, 0));
+            Logger.Debug(() => $"TCP socket source address bound. sourceAddress={sourceAddress}");
+        }
+        catch (SocketException exception)
+        {
+            Logger.Warn($"TCP socket source address bind failed. sourceAddress={sourceAddress}", exception);
+            throw;
+        }
+        catch (ObjectDisposedException)
+        {
+            Logger.Warn("TCP socket source address bind skipped because the socket was already disposed.");
+            throw;
+        }
+    }
+
     public static Task ConnectAsync(Socket socket, IPAddress address, int port)
     {
         return ConnectAsync(socket, new IPEndPoint(address, port));
