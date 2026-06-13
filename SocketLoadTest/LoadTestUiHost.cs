@@ -597,6 +597,7 @@ internal sealed class LoadTestUiService
         CancellationToken cancellationToken)
     {
         int failedAttempts = 0;
+        IPAddress[] sourceIpAddresses = LoadTestOptions.ParseSourceIpAddresses(options.SourceIps);
         try
         {
             while (!cancellationToken.IsCancellationRequested &&
@@ -618,6 +619,10 @@ internal sealed class LoadTestUiService
                     Interlocked.Increment(ref runCounters.Attempted);
                     session = new SocketClientSession();
                     session.HealthCheckReceived += _ => Interlocked.Increment(ref runCounters.HealthCheckSuccess);
+                    IPAddress sourceIpAddress = Program.SelectSourceIpAddress(
+                        options,
+                        sourceIpAddresses,
+                        clientId);
                     bool connected = options.UseControlServer
                         ? await session.ConnectAndRegisterAsync(
                             clientId,
@@ -627,7 +632,8 @@ internal sealed class LoadTestUiService
                             true,
                             HealthCheckProtocol.KeepAliveIntervalSeconds,
                             30,
-                            90)
+                            90,
+                            sourceIpAddress)
                         : await session.ConnectAndRegisterAsync(
                             clientId,
                             $"ui-client-{clientId}",
@@ -636,7 +642,8 @@ internal sealed class LoadTestUiService
                             false,
                             HealthCheckProtocol.KeepAliveIntervalSeconds,
                             30,
-                            90);
+                            90,
+                            sourceIpAddress);
                     if (connected)
                     {
                         if (!this.IsDesiredClient(clientId))

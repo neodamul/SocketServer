@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net;
 using System.Text.Json;
 using SocketClient.Model;
 using SocketCommon.Configuration;
@@ -50,8 +51,9 @@ internal static class Program
             options = options with { Port = server.GetPort() };
         }
 
+        IPAddress[] sourceIpAddresses = LoadTestOptions.ParseSourceIpAddresses(options.SourceIps);
         Console.WriteLine(
-            $"Starting load test: clients={options.Clients}, batch-size={options.BatchSize}, hold-seconds={options.HoldSeconds}, endpoint={options.Host}:{options.Port}, external-server={options.ExternalServer}, use-control-server={options.UseControlServer}, message-test={options.MessageTest}, message-rounds={options.MessageRounds}, ramp-delay-ms={options.RampDelayMilliseconds}, expected-connected={options.ExpectedConnected}");
+            $"Starting load test: clients={options.Clients}, batch-size={options.BatchSize}, hold-seconds={options.HoldSeconds}, endpoint={options.Host}:{options.Port}, external-server={options.ExternalServer}, use-control-server={options.UseControlServer}, message-test={options.MessageTest}, message-rounds={options.MessageRounds}, ramp-delay-ms={options.RampDelayMilliseconds}, expected-connected={options.ExpectedConnected}, source-ips={FormatSourceIps(sourceIpAddresses)}");
 
         Stopwatch stopwatch = Stopwatch.StartNew();
         LoadTestCounters counters = new();
@@ -74,7 +76,12 @@ internal static class Program
                 PrintDebug(
                     $"batch start first-client-id={firstClientId}, count={batchCount}, " +
                     $"elapsed={stopwatch.Elapsed}");
-                ClientAttemptResult[] results = await ConnectBatchAsync(options, firstClientId, batchCount, counters);
+                ClientAttemptResult[] results = await ConnectBatchAsync(
+                    options,
+                    firstClientId,
+                    batchCount,
+                    counters,
+                    sourceIpAddresses);
                 batchStopwatch.Stop();
 
                 foreach (ClientAttemptResult result in results)
@@ -164,13 +171,14 @@ internal static class Program
         LoadTestOptions options,
         int firstClientId,
         int batchCount,
-        LoadTestCounters counters)
+        LoadTestCounters counters,
+        IPAddress[] sourceIpAddresses)
     {
         Task<ClientAttemptResult>[] tasks = new Task<ClientAttemptResult>[batchCount];
         for (int index = 0; index < batchCount; index++)
         {
             int clientId = firstClientId + index;
-            tasks[index] = Task.Run(() => ConnectClientAsync(options, clientId, counters));
+            tasks[index] = Task.Run(() => ConnectClientAsync(options, clientId, counters, sourceIpAddresses));
         }
 
         return await Task.WhenAll(tasks);
@@ -211,11 +219,18 @@ internal static class Program
     private static async Task<ClientAttemptResult> ConnectClientAsync(
         LoadTestOptions options,
         int clientId,
-        LoadTestCounters counters)
+        LoadTestCounters counters,
+        IPAddress[] sourceIpAddresses)
     {
         Interlocked.Increment(ref counters.Attempted);
 
         TcpClient client = new(clientId, $"load-client-{clientId}", options.Host, options.Port);
+        IPAddress sourceIpAddress = SelectSourceIpAddress(options, sourceIpAddresses, clientId);
+        if (sourceIpAddress != null)
+        {
+            client.SetSourceIpAddress(sourceIpAddress);
+        }
+
         try
         {
             bool connected = options.UseControlServer
@@ -456,6 +471,7 @@ internal static class Program
             RampDelayMilliseconds = options.RampDelayMilliseconds,
             ExpectedConnected = options.ExpectedConnected,
             StartClientId = options.StartClientId,
+            SourceIps = options.SourceIps,
             Attempted = counters.Attempted,
             Connected = counters.Connected,
             ConnectFail = counters.ConnectFail,
@@ -478,7 +494,28 @@ internal static class Program
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: dotnet run --project SocketLoadTest -- [--ui] [--ui-port N] [--profile smoke|soak-1k|soak-10k|soak-50k|message-1k] [--clients N] [--start-client-id N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--external-server] [--use-control-server] [--message-test] [--message-rounds N] [--ramp-delay-ms N] [--expected-connected N] [--healthcheck-timeout-seconds N] [--message-timeout-seconds N] [--report-file PATH]");
+            "Usage: dotnet run --project SocketLoadTest -- [--ui] [--ui-port N] [--profile smoke|soak-1k|soak-10k|soak-50k|message-1k] [--clients N] [--start-client-id N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--source-ips IP[,IP...]] [--external-server] [--use-control-server] [--message-test] [--message-rounds N] [--ramp-delay-ms N] [--expected-connected N] [--healthcheck-timeout-seconds N] [--message-timeout-seconds N] [--report-file PATH]");
+    }
+
+    internal static IPAddress SelectSourceIpAddress(
+        LoadTestOptions options,
+        IPAddress[] sourceIpAddresses,
+        int clientId)
+    {
+        if (sourceIpAddresses.Length == 0)
+        {
+            return null!;
+        }
+
+        int index = Math.Abs(clientId - options.StartClientId) % sourceIpAddresses.Length;
+        return sourceIpAddresses[index];
+    }
+
+    private static string FormatSourceIps(IPAddress[] sourceIpAddresses)
+    {
+        return sourceIpAddresses.Length == 0
+            ? "default"
+            : string.Join(",", sourceIpAddresses.Select(address => address.ToString()));
     }
 }
 
@@ -519,6 +556,7 @@ internal sealed record LoadTestOptions(
     int MessageTimeoutSeconds,
     string Profile,
     string ReportFile,
+    string SourceIps,
     bool UiMode,
     int UiPort)
 {
@@ -541,6 +579,7 @@ internal sealed record LoadTestOptions(
             MessageTimeoutSeconds: 10,
             Profile: "custom",
             ReportFile: "",
+            SourceIps: "",
             UiMode: false,
             UiPort: 10060);
         error = string.Empty;
@@ -709,6 +748,23 @@ internal sealed record LoadTestOptions(
                     options = options with { ReportFile = reportFile };
                     break;
 
+                case "--source-ips":
+                    if (!TryReadString(args, ref index, value, arg, out string sourceIps, out error))
+                    {
+                        return false;
+                    }
+
+                    if (!TryParseSourceIpAddresses(sourceIps, out IPAddress[] parsedSourceIps, out error))
+                    {
+                        return false;
+                    }
+
+                    options = options with
+                    {
+                        SourceIps = string.Join(",", parsedSourceIps.Select(address => address.ToString()))
+                    };
+                    break;
+
                 case "--ui":
                     if (value != null)
                     {
@@ -735,6 +791,82 @@ internal sealed record LoadTestOptions(
         }
 
         return true;
+    }
+
+    internal static IPAddress[] ParseSourceIpAddresses(string sourceIps)
+    {
+        if (!TryParseSourceIpAddresses(sourceIps, out IPAddress[] addresses, out string error))
+        {
+            throw new ArgumentException(error, nameof(sourceIps));
+        }
+
+        return addresses;
+    }
+
+    internal static bool TryParseSourceIpAddresses(string sourceIps, out IPAddress[] addresses, out string error)
+    {
+        addresses = Array.Empty<IPAddress>();
+        error = string.Empty;
+        if (string.IsNullOrWhiteSpace(sourceIps))
+        {
+            return true;
+        }
+
+        string[] parts = sourceIps.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            return true;
+        }
+
+        List<IPAddress> parsed = new(parts.Length);
+        foreach (string part in parts)
+        {
+            IPAddress address;
+            try
+            {
+                address = IPAddress.Parse(part);
+            }
+            catch (FormatException)
+            {
+                error = $"--source-ips contains an invalid IP address: {part}";
+                return false;
+            }
+
+            if (address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+            {
+                error = $"--source-ips supports IPv4 addresses only: {part}";
+                return false;
+            }
+
+            if (!CanBindSourceIpAddress(address))
+            {
+                error = $"--source-ips contains an address that cannot be bound on this host: {part}";
+                return false;
+            }
+
+            parsed.Add(address);
+        }
+
+        addresses = parsed.ToArray();
+        return true;
+    }
+
+    private static bool CanBindSourceIpAddress(IPAddress address)
+    {
+        try
+        {
+            using System.Net.Sockets.Socket socket = SocketFactory.CreateTcpSocket();
+            SocketFactory.BindSourceAddress(socket, address);
+            return true;
+        }
+        catch (System.Net.Sockets.SocketException)
+        {
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
     }
 
     private static bool TryCreateProfile(
@@ -881,6 +1013,8 @@ internal sealed class LoadTestReport
     public int ExpectedConnected { get; init; }
 
     public int StartClientId { get; init; }
+
+    public string SourceIps { get; init; } = "";
 
     public int Attempted { get; init; }
 

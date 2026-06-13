@@ -41,6 +41,8 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --ui --ui-port 1006
 ```
 Options: `--profile`, `--clients`, `--start-client-id`, `--batch-size`, `--hold-seconds`, `--use-control-server`, `--message-test`, `--message-rounds`, `--ramp-delay-ms`, `--expected-connected`, `--healthcheck-timeout-seconds`, `--message-timeout-seconds`, `--report-file` (JSON of options, counters, elapsed time).
 
+For large local-only runs from a single host, add `--source-ips IP[,IP...]` so load clients bind outbound sockets across multiple loopback source addresses. This avoids exhausting the host ephemeral port range before the SocketServer connection limit is reached. Each source IP must be IPv4 and already bindable on the host; on macOS, add loopback aliases before using addresses such as `127.0.0.2`.
+
 `SocketLoadTest` emits `[load-test-debug]` lines for certificate warm-up start/progress/complete, batch start/complete, ramp delay, hold stage, message-test stage, per-round timing, and message/healthcheck timeout points. These logs make certificate setup cost, connection ramp latency, and message relay stalls visible without waiting for the final summary.
 
 ## Log analysis
