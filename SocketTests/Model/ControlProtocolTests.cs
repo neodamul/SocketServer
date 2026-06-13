@@ -1282,6 +1282,7 @@ public class ControlProtocolTests
         Assert.IsTrue(source.Contains("GlobalMemoryStatusEx", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("MachHostPort", StringComparison.Ordinal));
         Assert.IsTrue(source.Contains("HostVmInfo64Count = 62", StringComparison.Ordinal));
+        Assert.IsTrue(source.Contains("vm.page_free_count", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -1301,6 +1302,24 @@ public class ControlProtocolTests
 
         Assert.IsTrue(snapshot.MemoryUsagePercent > 0 && snapshot.MemoryUsagePercent <= 100);
         Assert.IsTrue(snapshot.StorageUsagePercent > 0 && snapshot.StorageUsagePercent <= 100);
+    }
+
+    [TestMethod]
+    public void ResourceUsageProviderKeepsLastMemorySampleWhenNativeCaptureFailsTest()
+    {
+        ResourceUsageProvider provider = new();
+
+        Assert.AreEqual(62.5, provider.NormalizeMemoryUsagePercent(62.5), 0.0001);
+        Assert.AreEqual(62.5, provider.NormalizeMemoryUsagePercent(0), 0.0001);
+        Assert.AreEqual(62.5, provider.NormalizeMemoryUsagePercent(double.NaN), 0.0001);
+    }
+
+    [TestMethod]
+    public void ResourceUsageProviderKeepsZeroMemoryWhenNoValidSampleExistsTest()
+    {
+        ResourceUsageProvider provider = new();
+
+        Assert.AreEqual(0, provider.NormalizeMemoryUsagePercent(0), 0.0001);
     }
 
     [TestMethod]
