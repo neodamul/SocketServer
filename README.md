@@ -146,3 +146,7 @@ The UI shows connected clients, target server distribution, per-client connectio
 - [Operations](wiki/Operations.md)
 - [Testing](wiki/Testing.md)
 - [Open Source Libraries](wiki/OpenSourceLibraries.md)
+
+## License
+
+[MIT License](LICENSE)
