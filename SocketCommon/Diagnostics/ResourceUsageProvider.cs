@@ -1,7 +1,10 @@
 ﻿using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using SocketCommon.Model;
 
 namespace SocketCommon.Diagnostics;
@@ -203,7 +206,13 @@ public class ResourceUsageProvider
             return hostStatisticsMemoryUsagePercent;
         }
 
-        return GetMacSysctlMemoryUsagePercent(totalMemoryBytes);
+        double sysctlMemoryUsagePercent = GetMacSysctlMemoryUsagePercent(totalMemoryBytes);
+        if (sysctlMemoryUsagePercent > 0)
+        {
+            return sysctlMemoryUsagePercent;
+        }
+
+        return GetMacVmStatMemoryUsagePercent(totalMemoryBytes);
     }
 
     private static double GetMacHostStatisticsMemoryUsagePercent(long totalMemoryBytes)
@@ -237,6 +246,95 @@ public class ResourceUsageProvider
         ulong availablePages = (ulong)freePages + inactivePages + speculativePages;
         ulong availableBytes = availablePages * (ulong)Environment.SystemPageSize;
         return (totalMemoryBytes - (double)availableBytes) / totalMemoryBytes * 100;
+    }
+
+    private static double GetMacVmStatMemoryUsagePercent(long totalMemoryBytes)
+    {
+        try
+        {
+            using Process process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "/usr/bin/vm_stat",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            if (process == null)
+            {
+                return 0;
+            }
+
+            Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+            Task<string> errorTask = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(2000) || process.ExitCode != 0)
+            {
+                KillProcess(process);
+                return 0;
+            }
+
+            string output = outputTask.GetAwaiter().GetResult();
+            _ = errorTask.GetAwaiter().GetResult();
+            long pageSize = ParseVmStatPageSize(output);
+            long freePages = ParseVmStatPages(output, "Pages free");
+            long inactivePages = ParseVmStatPages(output, "Pages inactive");
+            long speculativePages = ParseVmStatPages(output, "Pages speculative");
+            if (pageSize <= 0 || freePages < 0 || inactivePages < 0 || speculativePages < 0)
+            {
+                return 0;
+            }
+
+            long availablePages = freePages + inactivePages + speculativePages;
+            double availableBytes = availablePages * (double)pageSize;
+            return (totalMemoryBytes - availableBytes) / totalMemoryBytes * 100;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static void KillProcess(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    internal static long ParseVmStatPageSize(string output)
+    {
+        Match match = Regex.Match(output ?? string.Empty, @"page size of (?<value>\d+) bytes", RegexOptions.CultureInvariant);
+        return match.Success && long.TryParse(match.Groups["value"].Value, out long parsed)
+            ? parsed
+            : 0;
+    }
+
+    internal static long ParseVmStatPages(string output, string label)
+    {
+        if (string.IsNullOrWhiteSpace(output) || string.IsNullOrWhiteSpace(label))
+        {
+            return -1;
+        }
+
+        foreach (string line in output.Split('\n'))
+        {
+            if (!line.TrimStart().StartsWith(label, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string digits = new(line.Where(char.IsDigit).ToArray());
+            return long.TryParse(digits, out long parsed) ? parsed : -1;
+        }
+
+        return -1;
     }
 
     private static double GetWindowsMemoryUsagePercent()
