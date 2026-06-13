@@ -9,6 +9,7 @@ namespace SocketCommon.Diagnostics;
 public class ResourceUsageProvider
 {
     private CpuSample previousCpuSample;
+    private double? previousMemoryUsagePercent;
 
     public ResourceUsageProvider()
     {
@@ -31,10 +32,22 @@ public class ResourceUsageProvider
         return new ResourceUsageSnapshot
         {
             CpuUsagePercent = ClampPercent(cpuPercent),
-            MemoryUsagePercent = ClampPercent(GetSystemMemoryUsagePercent()),
+            MemoryUsagePercent = this.NormalizeMemoryUsagePercent(GetSystemMemoryUsagePercent()),
             StorageUsagePercent = ClampPercent(GetStorageUsagePercent(storagePath)),
             CapturedAt = now
         };
+    }
+
+    internal double NormalizeMemoryUsagePercent(double memoryUsagePercent)
+    {
+        double capturedMemoryUsagePercent = ClampPercent(memoryUsagePercent);
+        if (capturedMemoryUsagePercent > 0)
+        {
+            this.previousMemoryUsagePercent = capturedMemoryUsagePercent;
+            return capturedMemoryUsagePercent;
+        }
+
+        return this.previousMemoryUsagePercent ?? capturedMemoryUsagePercent;
     }
 
     private static CpuSample CaptureCpuSample()
@@ -184,6 +197,17 @@ public class ResourceUsageProvider
             return 0;
         }
 
+        double hostStatisticsMemoryUsagePercent = GetMacHostStatisticsMemoryUsagePercent(totalMemoryBytes);
+        if (hostStatisticsMemoryUsagePercent > 0)
+        {
+            return hostStatisticsMemoryUsagePercent;
+        }
+
+        return GetMacSysctlMemoryUsagePercent(totalMemoryBytes);
+    }
+
+    private static double GetMacHostStatisticsMemoryUsagePercent(long totalMemoryBytes)
+    {
         int[] vmInfo = new int[HostVmInfo64Count];
         uint count = HostVmInfo64Count;
         int result = host_statistics64(MachHostPort.Value, HostVmInfo64, vmInfo, ref count);
@@ -199,6 +223,20 @@ public class ResourceUsageProvider
             (uint)vmInfo[VmSpeculativeCount];
         long availableBytes = availablePages * pageSize;
         return (double)(totalMemoryBytes - availableBytes) / totalMemoryBytes * 100;
+    }
+
+    private static double GetMacSysctlMemoryUsagePercent(long totalMemoryBytes)
+    {
+        if (!TryReadSysctlUInt("vm.page_free_count", out uint freePages) ||
+            !TryReadSysctlUInt("vm.page_inactive_count", out uint inactivePages) ||
+            !TryReadSysctlUInt("vm.page_speculative_count", out uint speculativePages))
+        {
+            return 0;
+        }
+
+        ulong availablePages = (ulong)freePages + inactivePages + speculativePages;
+        ulong availableBytes = availablePages * (ulong)Environment.SystemPageSize;
+        return (totalMemoryBytes - (double)availableBytes) / totalMemoryBytes * 100;
     }
 
     private static double GetWindowsMemoryUsagePercent()
@@ -221,6 +259,14 @@ public class ResourceUsageProvider
         nuint size = (nuint)sizeof(long);
         int result = sysctlbyname("hw.memsize", ref totalMemoryBytes, ref size, IntPtr.Zero, 0);
         return result == 0 ? totalMemoryBytes : 0;
+    }
+
+    private static bool TryReadSysctlUInt(string name, out uint value)
+    {
+        value = 0;
+        nuint size = (nuint)sizeof(uint);
+        int result = sysctlbyname(name, ref value, ref size, IntPtr.Zero, 0);
+        return result == 0;
     }
 
     private static long ParseMemInfoKilobytes(string line)
@@ -308,6 +354,14 @@ public class ResourceUsageProvider
     private static extern int sysctlbyname(
         [MarshalAs(UnmanagedType.LPStr)] string name,
         ref long oldp,
+        ref nuint oldlenp,
+        IntPtr newp,
+        nuint newlen);
+
+    [DllImport("libSystem.dylib")]
+    private static extern int sysctlbyname(
+        [MarshalAs(UnmanagedType.LPStr)] string name,
+        ref uint oldp,
         ref nuint oldlenp,
         IntPtr newp,
         nuint newlen);
