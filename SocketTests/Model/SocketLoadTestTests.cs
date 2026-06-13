@@ -117,11 +117,11 @@ public class SocketLoadTestTests
     public void ParseSourceIpOptionsRejectsUnboundAddressTest()
     {
         Assert.IsFalse(LoadTestOptions.TryParse(
-            new[] { "--source-ips", "127.0.0.2" },
+            new[] { "--source-ips", "203.0.113.250" },
             out _,
             out string error));
 
-        Assert.AreEqual("--source-ips contains an address that cannot be bound on this host: 127.0.0.2", error);
+        Assert.AreEqual("--source-ips contains an address that cannot be bound on this host: 203.0.113.250", error);
     }
 
     [TestMethod]

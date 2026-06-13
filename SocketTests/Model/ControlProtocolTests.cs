@@ -118,6 +118,23 @@ public class ControlProtocolTests
     }
 
     [TestMethod]
+    public void ControlRelayBatchFitCheckRejectsOversizedBatchTest()
+    {
+        ControlRelayBatchItem[] items = Enumerable.Range(1, 80)
+            .Select(index => new ControlRelayBatchItem
+            {
+                ClientId = (uint)index,
+                MessageId = ControlMessageIds.SessionSummaryUpsert,
+                Payload = Enumerable.Repeat((byte)index, 80).ToArray(),
+                PayloadType = nameof(SessionEventMessage)
+            })
+            .ToArray();
+
+        Assert.IsFalse(ControlServer.CanFitControlRelayBatchFrame(items, DateTimeOffset.UtcNow));
+        Assert.IsTrue(ControlServer.CanFitControlRelayBatchFrame(items.Take(10).ToArray(), DateTimeOffset.UtcNow));
+    }
+
+    [TestMethod]
     public void ServerRelayBatchEncodeDecodePreservesResultsTest()
     {
         ClientMessageSendRequest request = ClientMessageProtocol.CreateSendRequest(11, 22, "hello");
