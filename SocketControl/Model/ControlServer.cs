@@ -1068,22 +1068,55 @@ public class ControlServer : IDisposable
 
     private async Task PublishBatchToPeerAsync(EndpointConfig peer, IReadOnlyList<PeerRelayCommand> commands)
     {
+        List<PeerRelayCommand> pendingCommands = new();
+        List<ControlRelayBatchItem> pendingItems = new();
+        DateTimeOffset createdAt = DateTimeOffset.UtcNow;
+        foreach (PeerRelayCommand command in commands)
+        {
+            if (!TryCreateControlRelayBatchItem(command, out ControlRelayBatchItem item))
+            {
+                await PublishToPeerAsync(peer, command.MessageId, command.Payload, command.PayloadType);
+                continue;
+            }
+
+            if (pendingItems.Count > 0)
+            {
+                List<ControlRelayBatchItem> candidateItems = new(pendingItems) { item };
+                if (!CanFitControlRelayBatchFrame(candidateItems, createdAt))
+                {
+                    await PublishBatchItemsToPeerAsync(peer, pendingCommands, pendingItems, createdAt);
+                    pendingCommands.Clear();
+                    pendingItems.Clear();
+                    createdAt = DateTimeOffset.UtcNow;
+                }
+            }
+
+            if (!CanFitControlRelayBatchFrame(new[] { item }, createdAt))
+            {
+                await PublishToPeerAsync(peer, command.MessageId, command.Payload, command.PayloadType);
+                continue;
+            }
+
+            pendingCommands.Add(command);
+            pendingItems.Add(item);
+        }
+
+        if (pendingItems.Count > 0)
+        {
+            await PublishBatchItemsToPeerAsync(peer, pendingCommands, pendingItems, createdAt);
+        }
+    }
+
+    private async Task PublishBatchItemsToPeerAsync(
+        EndpointConfig peer,
+        IReadOnlyList<PeerRelayCommand> commands,
+        IReadOnlyList<ControlRelayBatchItem> items,
+        DateTimeOffset createdAt)
+    {
         ControlRelayBatchMessage batch = new()
         {
-            CreatedAt = DateTimeOffset.UtcNow,
-            Items = commands
-                .Select(command =>
-                {
-                    SocketMessageFrame frame = ControlProtocol.CreateFrame(0, command.MessageId, command.Payload);
-                    return new ControlRelayBatchItem
-                    {
-                        ClientId = frame.ClientId,
-                        MessageId = frame.MessageId,
-                        Payload = frame.Payload,
-                        PayloadType = command.PayloadType
-                    };
-                })
-                .ToList()
+            CreatedAt = createdAt,
+            Items = items.ToList()
         };
 
         try
@@ -1114,11 +1147,55 @@ public class ControlServer : IDisposable
             exception is IOException ||
             exception is AuthenticationException ||
             exception is TimeoutException ||
-            exception is ObjectDisposedException)
+            exception is ObjectDisposedException ||
+            exception is ArgumentOutOfRangeException)
         {
             Logger.Warn($"ControlServer peer relay batch failed. peer={peer.Host}:{peer.Port}, count={commands.Count}", exception);
             RelayLogger.Warn($"Control peer relay batch failed. controlNodeId={this.config.NodeId}, peer={peer.Host}:{peer.Port}, count={commands.Count}", exception);
             await PublishCommandsIndividuallyToPeerAsync(peer, commands);
+        }
+    }
+
+    private static bool TryCreateControlRelayBatchItem(PeerRelayCommand command, out ControlRelayBatchItem item)
+    {
+        item = null!;
+        try
+        {
+            SocketMessageFrame frame = ControlProtocol.CreateFrame(0, command.MessageId, command.Payload);
+            item = new ControlRelayBatchItem
+            {
+                ClientId = frame.ClientId,
+                MessageId = frame.MessageId,
+                Payload = frame.Payload,
+                PayloadType = command.PayloadType
+            };
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
+    }
+
+    internal static bool CanFitControlRelayBatchFrame(
+        IReadOnlyCollection<ControlRelayBatchItem> items,
+        DateTimeOffset createdAt)
+    {
+        try
+        {
+            _ = ControlProtocol.CreateFrame(
+                0,
+                ControlMessageIds.ControlRelayBatch,
+                new ControlRelayBatchMessage
+                {
+                    CreatedAt = createdAt,
+                    Items = items.ToList()
+                });
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
         }
     }
 
