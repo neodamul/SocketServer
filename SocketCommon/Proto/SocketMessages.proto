@@ -268,6 +268,7 @@ message ProtoClientMessageSendRequest {
   string content = 4;
   int32 ttl_seconds = 5;
   int64 created_at_unix_ms = 6;
+  bytes message_token_bytes = 7;
 }
 
 message ProtoClientMessageDelivery {
@@ -276,6 +277,7 @@ message ProtoClientMessageDelivery {
   uint32 target_client_id = 3;
   string content = 4;
   int64 created_at_unix_ms = 5;
+  bytes message_token_bytes = 6;
 }
 
 message ProtoClientMessageAck {
@@ -285,6 +287,7 @@ message ProtoClientMessageAck {
   bool delivered = 4;
   string target_instance_id = 5;
   int64 delivered_at_unix_ms = 6;
+  bytes message_token_bytes = 7;
 }
 
 message ProtoClientMessageError {
@@ -294,6 +297,7 @@ message ProtoClientMessageError {
   string error_code = 4;
   string error_message = 5;
   int64 failed_at_unix_ms = 6;
+  bytes message_token_bytes = 7;
 }
 
 message ProtoServerRelayMessage {
@@ -305,6 +309,8 @@ message ProtoServerRelayMessage {
   string content = 6;
   int32 ttl_seconds = 7;
   int64 created_at_unix_ms = 8;
+  int32 source_server_id = 9;
+  bytes message_token_bytes = 10;
 }
 
 message ProtoServerRelayBatchMessage {
@@ -319,6 +325,7 @@ message ProtoServerRelayBatchResultItem {
   string error_code = 4;
   string error_message = 5;
   int32 item_index = 6;
+  bytes message_token_bytes = 7;
 }
 
 message ProtoServerRelayBatchResult {

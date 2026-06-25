@@ -7,9 +7,11 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Google.Protobuf;
 using SocketCommon.Configuration;
 using SocketCommon.Diagnostics;
 using SocketCommon.Model;
+using SocketCommon.Protobuf;
 using SocketControl.Model;
 
 namespace SocketTests.Model;
@@ -142,14 +144,20 @@ public class ControlProtocolTests
         {
             Items =
             {
-                ClientMessageProtocol.CreateRelay("socket-cluster-1", "server-1", request)
+                ClientMessageProtocol.CreateRelay("socket-cluster-1", "server-1", request, 7)
             }
         };
 
         SocketMessageFrame frame = ClientMessageProtocol.CreateFrame(11, ServerRelayMessageIds.ServerRelayBatch, batch);
+        Assert.IsFalse(ContainsUtf8(frame.Payload, "socket-cluster-1"));
+        Assert.IsFalse(ContainsUtf8(frame.Payload, "server-1"));
+        Assert.IsFalse(ContainsUtf8(frame.Payload, request.MessageToken));
         Assert.IsTrue(ClientMessageProtocol.TryDecodeRelayBatch(frame, out ServerRelayBatchMessage decodedBatch));
         Assert.AreEqual(1, decodedBatch.Items.Count);
         Assert.AreEqual(request.MessageToken, decodedBatch.Items[0].MessageToken);
+        Assert.AreEqual(7, decodedBatch.Items[0].SourceServerId);
+        Assert.AreEqual("", decodedBatch.Items[0].ClusterId);
+        Assert.AreEqual("", decodedBatch.Items[0].SourceInstanceId);
         Assert.AreEqual((uint)22, decodedBatch.Items[0].TargetClientId);
 
         ServerRelayBatchResult result = new()
@@ -166,11 +174,47 @@ public class ControlProtocolTests
             }
         };
         SocketMessageFrame resultFrame = ClientMessageProtocol.CreateFrame(11, ServerRelayMessageIds.ServerRelayBatchResult, result);
+        Assert.IsFalse(ContainsUtf8(resultFrame.Payload, request.MessageToken));
         Assert.IsTrue(ClientMessageProtocol.TryDecodeRelayBatchResult(resultFrame, out ServerRelayBatchResult decodedResult));
         Assert.AreEqual(1, decodedResult.Items.Count);
         Assert.AreEqual(0, decodedResult.Items[0].ItemIndex);
         Assert.IsTrue(decodedResult.Items[0].Success);
         Assert.AreEqual("server-2", decodedResult.Items[0].TargetInstanceId);
+    }
+
+    [TestMethod]
+    public void ClientMessageTokenEncodeDecodeUsesBinaryTokenForGuidHexTest()
+    {
+        string token = "00112233445566778899aabbccddeeff";
+        ClientMessageSendRequest request = ClientMessageProtocol.CreateSendRequest(11, 22, "hello", token);
+
+        SocketMessageFrame frame = ClientMessageProtocol.CreateFrame(11, ClientMessageIds.ClientMessageSend, request);
+
+        Assert.IsFalse(ContainsUtf8(frame.Payload, token));
+        Assert.IsTrue(ClientMessageProtocol.TryDecodeSendRequest(frame, out ClientMessageSendRequest decoded));
+        Assert.AreEqual(token, decoded.MessageToken);
+        Assert.AreEqual((uint)11, decoded.SourceClientId);
+        Assert.AreEqual((uint)22, decoded.TargetClientId);
+    }
+
+    [TestMethod]
+    public void ClientMessageTokenDecodeReadsLegacyStringTokenTest()
+    {
+        string token = "legacy-token";
+        ProtoClientMessageSendRequest legacy = new()
+        {
+            MessageToken = token,
+            SourceClientId = 11,
+            TargetClientId = 22,
+            Content = "hello",
+            TtlSeconds = 10,
+            CreatedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        };
+        SocketMessageFrame frame = new(11, ClientMessageIds.ClientMessageSend, legacy.ToByteArray());
+
+        Assert.IsTrue(ClientMessageProtocol.TryDecodeSendRequest(frame, out ClientMessageSendRequest decoded));
+        Assert.AreEqual(token, decoded.MessageToken);
+        Assert.AreEqual("hello", decoded.Content);
     }
 
     [TestMethod]
@@ -1523,6 +1567,35 @@ public class ControlProtocolTests
     private static string CreateRegistryPath()
     {
         return Path.Combine(Path.GetTempPath(), $"socket-registry-{Guid.NewGuid():N}.json");
+    }
+
+    private static bool ContainsUtf8(byte[] payload, string text)
+    {
+        byte[] needle = Encoding.UTF8.GetBytes(text);
+        if (needle.Length == 0 || payload.Length < needle.Length)
+        {
+            return false;
+        }
+
+        for (int index = 0; index <= payload.Length - needle.Length; index++)
+        {
+            bool matched = true;
+            for (int needleIndex = 0; needleIndex < needle.Length; needleIndex++)
+            {
+                if (payload[index + needleIndex] != needle[needleIndex])
+                {
+                    matched = false;
+                    break;
+                }
+            }
+
+            if (matched)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string FindRepositoryRoot()

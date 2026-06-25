@@ -109,6 +109,8 @@ public class ServerRelayMessage
 
     public string SourceInstanceId { get; set; } = "";
 
+    public int SourceServerId { get; set; }
+
     public string MessageToken { get; set; } = "";
 
     public uint SourceClientId { get; set; }
@@ -192,12 +194,14 @@ public static class ClientMessageProtocol
     public static ServerRelayMessage CreateRelay(
         string clusterId,
         string sourceInstanceId,
-        ClientMessageSendRequest request)
+        ClientMessageSendRequest request,
+        int sourceServerId = 0)
     {
         return new ServerRelayMessage
         {
             ClusterId = clusterId ?? "",
             SourceInstanceId = sourceInstanceId ?? "",
+            SourceServerId = sourceServerId,
             MessageToken = request.MessageToken,
             SourceClientId = request.SourceClientId,
             TargetClientId = request.TargetClientId,

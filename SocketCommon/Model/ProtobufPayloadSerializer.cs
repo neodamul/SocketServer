@@ -908,9 +908,11 @@ internal static class ProtobufPayloadSerializer
 
     private static ProtoClientMessageSendRequest ToProto(ClientMessageSendRequest value)
     {
+        ByteString tokenBytes = EncodeMessageTokenBytes(value.MessageToken);
         return new ProtoClientMessageSendRequest
         {
-            MessageToken = value.MessageToken ?? "",
+            MessageToken = tokenBytes.Length == 0 ? value.MessageToken ?? "" : "",
+            MessageTokenBytes = tokenBytes,
             SourceClientId = value.SourceClientId,
             TargetClientId = value.TargetClientId,
             Content = value.Content ?? "",
@@ -923,7 +925,7 @@ internal static class ProtobufPayloadSerializer
     {
         return new ClientMessageSendRequest
         {
-            MessageToken = value.MessageToken,
+            MessageToken = DecodeMessageToken(value.MessageTokenBytes, value.MessageToken),
             SourceClientId = value.SourceClientId,
             TargetClientId = value.TargetClientId,
             Content = value.Content,
@@ -934,9 +936,11 @@ internal static class ProtobufPayloadSerializer
 
     private static ProtoClientMessageDelivery ToProto(ClientMessageDelivery value)
     {
+        ByteString tokenBytes = EncodeMessageTokenBytes(value.MessageToken);
         return new ProtoClientMessageDelivery
         {
-            MessageToken = value.MessageToken ?? "",
+            MessageToken = tokenBytes.Length == 0 ? value.MessageToken ?? "" : "",
+            MessageTokenBytes = tokenBytes,
             SourceClientId = value.SourceClientId,
             TargetClientId = value.TargetClientId,
             Content = value.Content ?? "",
@@ -948,7 +952,7 @@ internal static class ProtobufPayloadSerializer
     {
         return new ClientMessageDelivery
         {
-            MessageToken = value.MessageToken,
+            MessageToken = DecodeMessageToken(value.MessageTokenBytes, value.MessageToken),
             SourceClientId = value.SourceClientId,
             TargetClientId = value.TargetClientId,
             Content = value.Content,
@@ -958,9 +962,11 @@ internal static class ProtobufPayloadSerializer
 
     private static ProtoClientMessageAck ToProto(ClientMessageAck value)
     {
+        ByteString tokenBytes = EncodeMessageTokenBytes(value.MessageToken);
         return new ProtoClientMessageAck
         {
-            MessageToken = value.MessageToken ?? "",
+            MessageToken = tokenBytes.Length == 0 ? value.MessageToken ?? "" : "",
+            MessageTokenBytes = tokenBytes,
             SourceClientId = value.SourceClientId,
             TargetClientId = value.TargetClientId,
             Delivered = value.Delivered,
@@ -973,7 +979,7 @@ internal static class ProtobufPayloadSerializer
     {
         return new ClientMessageAck
         {
-            MessageToken = value.MessageToken,
+            MessageToken = DecodeMessageToken(value.MessageTokenBytes, value.MessageToken),
             SourceClientId = value.SourceClientId,
             TargetClientId = value.TargetClientId,
             Delivered = value.Delivered,
@@ -984,9 +990,11 @@ internal static class ProtobufPayloadSerializer
 
     private static ProtoClientMessageError ToProto(ClientMessageError value)
     {
+        ByteString tokenBytes = EncodeMessageTokenBytes(value.MessageToken);
         return new ProtoClientMessageError
         {
-            MessageToken = value.MessageToken ?? "",
+            MessageToken = tokenBytes.Length == 0 ? value.MessageToken ?? "" : "",
+            MessageTokenBytes = tokenBytes,
             SourceClientId = value.SourceClientId,
             TargetClientId = value.TargetClientId,
             ErrorCode = value.ErrorCode ?? "",
@@ -999,7 +1007,7 @@ internal static class ProtobufPayloadSerializer
     {
         return new ClientMessageError
         {
-            MessageToken = value.MessageToken,
+            MessageToken = DecodeMessageToken(value.MessageTokenBytes, value.MessageToken),
             SourceClientId = value.SourceClientId,
             TargetClientId = value.TargetClientId,
             ErrorCode = value.ErrorCode,
@@ -1010,11 +1018,14 @@ internal static class ProtobufPayloadSerializer
 
     private static ProtoServerRelayMessage ToProto(ServerRelayMessage value)
     {
+        ByteString tokenBytes = EncodeMessageTokenBytes(value.MessageToken);
         return new ProtoServerRelayMessage
         {
-            ClusterId = value.ClusterId ?? "",
-            SourceInstanceId = value.SourceInstanceId ?? "",
-            MessageToken = value.MessageToken ?? "",
+            ClusterId = "",
+            SourceInstanceId = value.SourceServerId == 0 ? value.SourceInstanceId ?? "" : "",
+            SourceServerId = value.SourceServerId,
+            MessageToken = tokenBytes.Length == 0 ? value.MessageToken ?? "" : "",
+            MessageTokenBytes = tokenBytes,
             SourceClientId = value.SourceClientId,
             TargetClientId = value.TargetClientId,
             Content = value.Content ?? "",
@@ -1029,7 +1040,8 @@ internal static class ProtobufPayloadSerializer
         {
             ClusterId = value.ClusterId,
             SourceInstanceId = value.SourceInstanceId,
-            MessageToken = value.MessageToken,
+            SourceServerId = value.SourceServerId,
+            MessageToken = DecodeMessageToken(value.MessageTokenBytes, value.MessageToken),
             SourceClientId = value.SourceClientId,
             TargetClientId = value.TargetClientId,
             Content = value.Content,
@@ -1069,10 +1081,12 @@ internal static class ProtobufPayloadSerializer
         };
         foreach (ServerRelayBatchResultItem item in value.Items ?? Enumerable.Empty<ServerRelayBatchResultItem>())
         {
+            ByteString tokenBytes = EncodeMessageTokenBytes(item.MessageToken);
             result.Items.Add(new ProtoServerRelayBatchResultItem
             {
                 ItemIndex = item.ItemIndex,
-                MessageToken = item.MessageToken ?? "",
+                MessageToken = tokenBytes.Length == 0 ? item.MessageToken ?? "" : "",
+                MessageTokenBytes = tokenBytes,
                 Success = item.Success,
                 TargetInstanceId = item.TargetInstanceId ?? "",
                 ErrorCode = item.ErrorCode ?? "",
@@ -1090,7 +1104,7 @@ internal static class ProtobufPayloadSerializer
             Items = value.Items.Select(item => new ServerRelayBatchResultItem
             {
                 ItemIndex = item.ItemIndex,
-                MessageToken = item.MessageToken,
+                MessageToken = DecodeMessageToken(item.MessageTokenBytes, item.MessageToken),
                 Success = item.Success,
                 TargetInstanceId = item.TargetInstanceId,
                 ErrorCode = item.ErrorCode,
@@ -1098,6 +1112,73 @@ internal static class ProtobufPayloadSerializer
             }).ToList(),
             CreatedAt = FromUnixMs(value.CreatedAtUnixMs)
         };
+    }
+
+    private static ByteString EncodeMessageTokenBytes(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token) || token.Length != 32)
+        {
+            return ByteString.Empty;
+        }
+
+        byte[] bytes = new byte[16];
+        for (int index = 0; index < bytes.Length; index++)
+        {
+            int high = FromHex(token[index * 2]);
+            int low = FromHex(token[index * 2 + 1]);
+            if (high < 0 || low < 0)
+            {
+                return ByteString.Empty;
+            }
+
+            bytes[index] = (byte)((high << 4) | low);
+        }
+
+        return ByteString.CopyFrom(bytes);
+    }
+
+    private static string DecodeMessageToken(ByteString tokenBytes, string tokenText)
+    {
+        if (tokenBytes == null || tokenBytes.Length == 0)
+        {
+            return tokenText ?? "";
+        }
+
+        char[] chars = new char[tokenBytes.Length * 2];
+        byte[] bytes = tokenBytes.ToByteArray();
+        for (int index = 0; index < bytes.Length; index++)
+        {
+            byte value = bytes[index];
+            chars[index * 2] = ToHex(value >> 4);
+            chars[index * 2 + 1] = ToHex(value & 0x0F);
+        }
+
+        return new string(chars);
+    }
+
+    private static int FromHex(char value)
+    {
+        if (value >= '0' && value <= '9')
+        {
+            return value - '0';
+        }
+
+        if (value >= 'a' && value <= 'f')
+        {
+            return value - 'a' + 10;
+        }
+
+        if (value >= 'A' && value <= 'F')
+        {
+            return value - 'A' + 10;
+        }
+
+        return -1;
+    }
+
+    private static char ToHex(int value)
+    {
+        return (char)(value < 10 ? '0' + value : 'a' + value - 10);
     }
 
     private static ProtoServerHealthState ToProto(ServerHealthState value)
