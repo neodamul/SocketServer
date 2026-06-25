@@ -61,7 +61,7 @@ Client-to-client messages go through the SocketServer: local delivery if the tar
 2004 CLIENT_MESSAGE_ACK
 2005 CLIENT_MESSAGE_ERROR
 ```
-`CLIENT_MESSAGE_SEND` payload (`ProtoClientMessageSendRequest`): `message_token`, `source_client_id`, `target_client_id`, `content`, `ttl_seconds`, `created_at_unix_ms`. `CLIENT_MESSAGE_DELIVER` carries source/target/content to the target; the source receives `CLIENT_MESSAGE_ACK` or `CLIENT_MESSAGE_ERROR`.
+`CLIENT_MESSAGE_SEND` payload (`ProtoClientMessageSendRequest`): `message_token_bytes` for normal 32-hex tokens, legacy `message_token` fallback for non-hex or old-writer messages, `source_client_id`, `target_client_id`, `content`, `ttl_seconds`, `created_at_unix_ms`. `CLIENT_MESSAGE_DELIVER` carries source/target/content to the target; the source receives `CLIENT_MESSAGE_ACK` or `CLIENT_MESSAGE_ERROR`.
 
 ## Server relay
 SocketServer-to-SocketServer delivery connects directly to the target server's listen endpoint over TLS. Each source server keeps a persistent per-endpoint relay channel pool with at least 2 channels, so cross-server messages do not serialize behind a single send lock during bursts.
@@ -75,6 +75,8 @@ SocketServer-to-SocketServer delivery connects directly to the target server's l
 The source server first tries local delivery. If the target is remote, it checks the in-process client-location cache and sends a targeted relay on a cache hit. Cache misses go to ControlServer client-location lookup; successful lookups populate the cache. If targeted relay fails because the cached or resolved target no longer has the client, the cache entry is invalidated and the server falls back to lookup/broadcast. Broadcast remains the final fallback across the healthy relay-server snapshot, and a successful broadcast ACK can also populate the cache.
 
 Repeated SocketServer-to-SocketServer relay messages are coalesced for a short flush interval and sent as `SERVER_RELAY_BATCH`; the receiver processes each item and returns one `SERVER_RELAY_BATCH_RESULT` containing per-message success/error entries. Single-message relay remains supported for compatibility.
+
+Relay envelopes are compact on new writes: `message_token_bytes` carries 16 raw token bytes, `source_server_id` replaces the string `source_instance_id` for source correlation, and `cluster_id` is omitted on server-to-server relay. Upgraded decoders still accept legacy string token/source/cluster fields from old writers, but old readers are not compatible with compact new writes and must be upgraded before or with compact writers.
 
 ## Control plane
 ControlServer/SocketServer/SocketClient use protobuf payloads over the common frame.
