@@ -28,6 +28,8 @@ public class ControlServerConfigFile
 
 public class ControlServerNodeConfig
 {
+    public const int DefaultRouteReservationSeconds = 60;
+
     public string ClusterId { get; set; } = "socket-cluster-1";
 
     public string NodeId { get; set; } = "control-1";
@@ -42,7 +44,7 @@ public class ControlServerNodeConfig
 
     public int PeerSnapshotSyncIntervalSeconds { get; set; } = 30;
 
-    public int RouteReservationSeconds { get; set; } = 10;
+    public int RouteReservationSeconds { get; set; } = DefaultRouteReservationSeconds;
 
     public string RoutingPolicy { get; set; } = "MostAvailableConnections";
 
@@ -82,6 +84,8 @@ public class SocketServerConfigFile
 
 public class SocketServerInstanceConfig
 {
+    public const int DefaultPendingAcceptCount = 512;
+
     public int ServerId { get; set; } = 1;
 
     public string InstanceId { get; set; } = "server-1";
@@ -96,7 +100,7 @@ public class SocketServerInstanceConfig
 
     public int MaxConnections { get; set; } = 10000;
 
-    public int PendingAcceptCount { get; set; } = 100;
+    public int PendingAcceptCount { get; set; } = DefaultPendingAcceptCount;
 
     public int IdleTimeoutSeconds { get; set; } = 90;
 
@@ -123,11 +127,15 @@ public class SocketClientConfigFile
 
 public class SocketOperationConfig
 {
+    public const int DefaultListenBacklog = 100;
+
     public int ConnectTimeoutSeconds { get; set; } = 30;
 
     public int ReadTimeoutSeconds { get; set; } = 30;
 
     public int WriteTimeoutSeconds { get; set; } = 30;
+
+    public int ListenBacklog { get; set; } = DefaultListenBacklog;
 }
 
 public class SocketSecurityConfig

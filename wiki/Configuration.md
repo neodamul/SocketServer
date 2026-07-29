@@ -49,13 +49,14 @@ Executable projects apply transport security via `security` (default TLS). Profi
 > Note: on macOS, `SslStream` cannot explicitly request `Tls13`; use `Auto` (OS negotiation) for non-server components.
 
 ## Socket options
-`socketOptions` sets network operation timeouts; missing or ≤0 falls back to 30s.
+`socketOptions` sets network operation timeouts and listener backlog; missing or ≤0 falls back to 30s for timeouts and 100 for backlog.
 ```json
-{ "socketOptions": { "connectTimeoutSeconds": 30, "readTimeoutSeconds": 30, "writeTimeoutSeconds": 30 } }
+{ "socketOptions": { "connectTimeoutSeconds": 30, "readTimeoutSeconds": 30, "writeTimeoutSeconds": 30, "listenBacklog": 4096 } }
 ```
 - `connectTimeoutSeconds`: TCP connect limit between ControlServer/SocketServer/client
 - `readTimeoutSeconds`: frame header/payload read limit
 - `writeTimeoutSeconds`: frame write/flush limit
+- `listenBacklog`: pending TCP accept backlog for ControlServer and SocketServer listeners
 
 ## Dashboard
 `SocketDashboard/appsettings.json` sets ControlServer endpoints to query. `dashboard.controlServers[]` shows multiple ControlServers as `ControlServer` rows with per-endpoint query status; the legacy single `dashboard.controlServer` remains a fallback. A `dashboard.security` section may set the dashboard's transport security (e.g. `tlsProtocol: Auto` on macOS).
@@ -81,7 +82,7 @@ Default location is the solution-root `Certificates/`; override with `security.c
     "clusterId": "socket-cluster-1", "nodeId": "control-1",
     "host": "127.0.0.1", "port": 10001, "peerSyncPort": 10021,
     "heartbeatTimeoutSeconds": 90, "peerSnapshotSyncIntervalSeconds": 30,
-    "routeReservationSeconds": 10, "routingPolicy": "MostAvailableConnections",
+    "routeReservationSeconds": 60, "routingPolicy": "MostAvailableConnections",
     "degradedCpuPercent": 85, "degradedMemoryPercent": 85, "degradedStoragePercent": 90
   },
   "peers": [],
@@ -92,7 +93,7 @@ Default location is the solution-root `Certificates/`; override with `security.c
 - `peerSyncPort`: ControlServer-to-ControlServer sync
 - `heartbeatTimeoutSeconds`: timed-out servers excluded from routing
 - `peerSnapshotSyncIntervalSeconds`: interval to re-fetch peer full snapshot (recover missed events)
-- `routeReservationSeconds`: short reservation TTL between route response and actual connect
+- `routeReservationSeconds`: reservation TTL between route response and actual connect; keep it longer than the expected ramp delay and heartbeat interval during large connection ramps
 - `degraded*Percent`: marks `Degraded` above resource thresholds — evaluated on **machine-wide** usage (not the process)
 - `registry.provider`: `InMemory` or `File`; `registry.connectionString`: file path (empty → `{nodeId}-registry.json` in the run dir)
 
@@ -107,7 +108,7 @@ The default config uses `File`; tests/ephemeral runs use `InMemory`. The registr
     {
       "serverId": 1, "instanceId": "server-1-a", "name": "socket-server-1",
       "bindHost": "127.0.0.1", "portRangeStart": 10100, "portRangeEnd": 10199,
-      "maxConnections": 10000, "pendingAcceptCount": 100,
+      "maxConnections": 10000, "pendingAcceptCount": 512,
       "idleTimeoutSeconds": 90, "heartbeatIntervalSeconds": 30
     }
   ]

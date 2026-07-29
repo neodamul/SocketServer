@@ -22,7 +22,7 @@ public class SocketFactoryTests
     {
         using Socket socket = SocketFactory.CreateTcpSocket();
 
-        Assert.AreEqual(SocketFactory.ListenBacklog, 100);
+        Assert.AreEqual(SocketFactory.DefaultListenBacklog, SocketFactory.ListenBacklog);
         Assert.IsTrue(socket.NoDelay);
     }
 
@@ -60,6 +60,7 @@ public class SocketFactoryTests
         Assert.AreEqual(30000, SocketFactory.ConnectTimeoutMilliseconds);
         Assert.AreEqual(30000, SocketFactory.ReadTimeoutMilliseconds);
         Assert.AreEqual(30000, SocketFactory.WriteTimeoutMilliseconds);
+        Assert.AreEqual(SocketFactory.DefaultListenBacklog, SocketFactory.ListenBacklog);
     }
 
     [TestMethod]
@@ -69,12 +70,14 @@ public class SocketFactoryTests
         {
             ConnectTimeoutSeconds = 3,
             ReadTimeoutSeconds = 5,
-            WriteTimeoutSeconds = 7
+            WriteTimeoutSeconds = 7,
+            ListenBacklog = 4096
         });
 
         Assert.AreEqual(3000, SocketFactory.ConnectTimeoutMilliseconds);
         Assert.AreEqual(5000, SocketFactory.ReadTimeoutMilliseconds);
         Assert.AreEqual(7000, SocketFactory.WriteTimeoutMilliseconds);
+        Assert.AreEqual(4096, SocketFactory.ListenBacklog);
     }
 
     [TestMethod]
@@ -84,12 +87,14 @@ public class SocketFactoryTests
         {
             ConnectTimeoutSeconds = 0,
             ReadTimeoutSeconds = -1,
-            WriteTimeoutSeconds = -30
+            WriteTimeoutSeconds = -30,
+            ListenBacklog = 0
         });
 
         Assert.AreEqual(30000, SocketFactory.ConnectTimeoutMilliseconds);
         Assert.AreEqual(30000, SocketFactory.ReadTimeoutMilliseconds);
         Assert.AreEqual(30000, SocketFactory.WriteTimeoutMilliseconds);
+        Assert.AreEqual(SocketFactory.DefaultListenBacklog, SocketFactory.ListenBacklog);
     }
 
     [TestMethod]

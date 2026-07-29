@@ -372,6 +372,9 @@ FodyWeavers.xsd
 
 # Runtime registry state
 control-registry*.json
+
+# CocoIndex Code (ccc)
+/.cocoindex_code/
 *-registry.json
 
 # Native sample build output

@@ -9,7 +9,7 @@ namespace SocketCommon.Model;
 
 public static class SocketFactory
 {
-    public const int ListenBacklog = 100;
+    public const int DefaultListenBacklog = SocketOperationConfig.DefaultListenBacklog;
     public const bool NoDelay = true;
     public const int DefaultOperationTimeoutSeconds = 30;
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger(typeof(SocketFactory));
@@ -17,6 +17,18 @@ public static class SocketFactory
     private static int connectTimeoutMilliseconds = DefaultOperationTimeoutSeconds * 1000;
     private static int readTimeoutMilliseconds = DefaultOperationTimeoutSeconds * 1000;
     private static int writeTimeoutMilliseconds = DefaultOperationTimeoutSeconds * 1000;
+    private static int listenBacklog = DefaultListenBacklog;
+
+    public static int ListenBacklog
+    {
+        get
+        {
+            lock (OptionsLock)
+            {
+                return listenBacklog;
+            }
+        }
+    }
 
     public static int ConnectTimeoutMilliseconds
     {
@@ -59,6 +71,7 @@ public static class SocketFactory
             connectTimeoutMilliseconds = NormalizeSeconds(config.ConnectTimeoutSeconds) * 1000;
             readTimeoutMilliseconds = NormalizeSeconds(config.ReadTimeoutSeconds) * 1000;
             writeTimeoutMilliseconds = NormalizeSeconds(config.WriteTimeoutSeconds) * 1000;
+            listenBacklog = NormalizeListenBacklog(config.ListenBacklog);
         }
     }
 
@@ -237,5 +250,10 @@ public static class SocketFactory
     private static int NormalizeSeconds(int seconds)
     {
         return seconds <= 0 ? DefaultOperationTimeoutSeconds : seconds;
+    }
+
+    private static int NormalizeListenBacklog(int backlog)
+    {
+        return backlog <= 0 ? DefaultListenBacklog : backlog;
     }
 }
