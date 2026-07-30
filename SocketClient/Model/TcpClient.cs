@@ -17,6 +17,7 @@ public class TcpClient : IClient, IDisposable
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<TcpClient>();
     private static readonly TimeSpan MinimumHealthCheckResponseTimeout = TimeSpan.FromMilliseconds(250);
     private const int MaxHealthCheckMissCount = 3;
+    private const int DefaultControlRouteAttempts = 3;
     private const int MaxRoutedServerConnectAttempts = 3;
     private const int RoutedServerConnectRetryDelayMilliseconds = 100;
 
@@ -157,7 +158,7 @@ public class TcpClient : IClient, IDisposable
 
     public async Task<bool> ConnectViaControlServerAsync(string controlHost, int controlPort)
     {
-        for (int attempt = 1; attempt <= 2; attempt++)
+        for (int attempt = 1; attempt <= DefaultControlRouteAttempts; attempt++)
         {
             if (await this.ConnectViaControlEndpointAsync(controlHost, controlPort))
             {
@@ -168,7 +169,9 @@ public class TcpClient : IClient, IDisposable
         return false;
     }
 
-    public async Task<bool> ConnectViaControlServersAsync(IEnumerable<IPEndPoint> controlEndpoints, int maxRouteAttempts = 2)
+    public async Task<bool> ConnectViaControlServersAsync(
+        IEnumerable<IPEndPoint> controlEndpoints,
+        int maxRouteAttempts = DefaultControlRouteAttempts)
     {
         List<IPEndPoint> endpoints = new();
         if (controlEndpoints != null)

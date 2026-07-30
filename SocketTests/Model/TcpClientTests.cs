@@ -162,6 +162,44 @@ public class TcpClientTests
         await controlTask;
     }
 
+    [TestMethod]
+    public async Task ClientConnectViaControlServerRetriesRouteRequestThreeTimesTest()
+    {
+        using Socket controlListener = CreateListener(0);
+        int controlPort = ((IPEndPoint)controlListener.LocalEndPoint!).Port;
+        int routeRequestCount = 0;
+
+        Task controlTask = Task.Run(async () =>
+        {
+            for (int requestIndex = 0; requestIndex < 3; requestIndex++)
+            {
+                using SecureSocketConnection controlConnection = await AcceptSecureAsync(controlListener);
+                (bool received, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(controlConnection);
+                Assert.IsTrue(received);
+                Assert.IsTrue(ControlProtocol.TryDecode(frame, ControlMessageIds.RouteRequest, out RouteRequest request));
+                Interlocked.Increment(ref routeRequestCount);
+
+                Assert.IsTrue(await ControlProtocol.SendAsync(
+                    controlConnection,
+                    request.ClientId,
+                    ControlMessageIds.RouteResponse,
+                    new RouteResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "No available server"
+                    }));
+            }
+        });
+
+        SocketClientTcpClient client = new(12, "route-request-retry-client");
+        Assert.IsFalse(await client.ConnectViaControlServerAsync("127.0.0.1", controlPort));
+
+        Task completedTask = await Task.WhenAny(controlTask, Task.Delay(5000));
+        Assert.AreSame(controlTask, completedTask);
+        await controlTask;
+        Assert.AreEqual(3, routeRequestCount);
+    }
+
     private static Socket CreateListener(int port = TestPort)
     {
         Socket listener = SocketFactory.CreateTcpSocket();
