@@ -17,6 +17,8 @@ public class TcpClient : IClient, IDisposable
     private static readonly SocketLogger Logger = SocketLogManager.GetLogger<TcpClient>();
     private static readonly TimeSpan MinimumHealthCheckResponseTimeout = TimeSpan.FromMilliseconds(250);
     private const int MaxHealthCheckMissCount = 3;
+    private const int MaxRoutedServerConnectAttempts = 3;
+    private const int RoutedServerConnectRetryDelayMilliseconds = 100;
 
     protected Socket Socket = null;
     protected SecureSocketConnection Connection = null;
@@ -243,7 +245,10 @@ public class TcpClient : IClient, IDisposable
             Logger.Debug(() => $"ControlServer route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={serverInstanceId}, serverEndpoint={serverHost}:{serverPort}, reservationId={reservationId}");
             this.SetIpAddress(serverHost);
             this.SetPort(serverPort);
-            return await this.ConnectAsync();
+            return await this.ConnectToRoutedServerAsync(
+                endpoint,
+                serverInstanceId,
+                reservationId);
         }
         catch (SocketException exception)
         {
@@ -266,6 +271,34 @@ public class TcpClient : IClient, IDisposable
             Logger.Warn($"ControlServer route request socket was disposed. clientId={this.ClientId}, endpoint={endpoint}", exception);
         }
 
+        return false;
+    }
+
+    private async Task<bool> ConnectToRoutedServerAsync(
+        string controlEndpoint,
+        string serverInstanceId,
+        string reservationId)
+    {
+        for (int attempt = 1; attempt <= MaxRoutedServerConnectAttempts; attempt++)
+        {
+            if (await this.ConnectAsync())
+            {
+                if (attempt > 1)
+                {
+                    Logger.Info($"Routed SocketServer connect succeeded after retry. clientId={this.ClientId}, controlEndpoint={controlEndpoint}, serverInstanceId={serverInstanceId}, reservationId={reservationId}, attempt={attempt}");
+                }
+
+                return true;
+            }
+
+            if (attempt < MaxRoutedServerConnectAttempts)
+            {
+                Logger.Warn($"Routed SocketServer connect failed; retrying selected route. clientId={this.ClientId}, controlEndpoint={controlEndpoint}, serverInstanceId={serverInstanceId}, reservationId={reservationId}, attempt={attempt}, nextDelayMs={RoutedServerConnectRetryDelayMilliseconds * attempt}");
+                await Task.Delay(RoutedServerConnectRetryDelayMilliseconds * attempt);
+            }
+        }
+
+        Logger.Warn($"Routed SocketServer connect failed after retries. clientId={this.ClientId}, controlEndpoint={controlEndpoint}, serverInstanceId={serverInstanceId}, reservationId={reservationId}, attempts={MaxRoutedServerConnectAttempts}");
         return false;
     }
 
