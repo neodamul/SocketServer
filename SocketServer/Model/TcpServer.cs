@@ -19,7 +19,7 @@ namespace SocketServer.Model;
 public class TcpServer : SocketClient.Model.TcpClient, IServer, IClient, IDisposable
 {
     public const int DefaultMaxConnections = 10000;
-    public const int DefaultPendingAcceptCount = 100;
+    public const int DefaultPendingAcceptCount = SocketServerInstanceConfig.DefaultPendingAcceptCount;
     public const int DefaultIdleTimeoutSeconds = 90;
     public const int DefaultIdleScanIntervalSeconds = 10;
 

@@ -18,7 +18,8 @@
   "socketOptions": {
     "connectTimeoutSeconds": 30,
     "readTimeoutSeconds": 30,
-    "writeTimeoutSeconds": 30
+    "writeTimeoutSeconds": 30,
+    "listenBacklog": 4096
   },
   "controlServer": {
     "clusterId": "socket-cluster-1",
@@ -28,7 +29,7 @@
     "peerSyncPort": 10021,
     "heartbeatTimeoutSeconds": 90,
     "peerSnapshotSyncIntervalSeconds": 30,
-    "routeReservationSeconds": 10,
+    "routeReservationSeconds": 60,
     "routingPolicy": "MostAvailableConnections",
     "degradedCpuPercent": 85,
     "degradedMemoryPercent": 85,
