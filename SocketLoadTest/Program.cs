@@ -53,11 +53,12 @@ internal static class Program
 
         IPAddress[] sourceIpAddresses = LoadTestOptions.ParseSourceIpAddresses(options.SourceIps);
         Console.WriteLine(
-            $"Starting load test: clients={options.Clients}, batch-size={options.BatchSize}, hold-seconds={options.HoldSeconds}, endpoint={options.Host}:{options.Port}, external-server={options.ExternalServer}, use-control-server={options.UseControlServer}, message-test={options.MessageTest}, message-rounds={options.MessageRounds}, ramp-delay-ms={options.RampDelayMilliseconds}, expected-connected={options.ExpectedConnected}, source-ips={FormatSourceIps(sourceIpAddresses)}");
+            $"Starting load test: clients={options.Clients}, batch-size={options.BatchSize}, hold-seconds={options.HoldSeconds}, endpoint={options.Host}:{options.Port}, external-server={options.ExternalServer}, use-control-server={options.UseControlServer}, control-route-channels={options.ControlRouteChannels}, message-test={options.MessageTest}, message-rounds={options.MessageRounds}, ramp-delay-ms={options.RampDelayMilliseconds}, expected-connected={options.ExpectedConnected}, source-ips={FormatSourceIps(sourceIpAddresses)}");
 
         Stopwatch stopwatch = Stopwatch.StartNew();
         LoadTestCounters counters = new();
         List<ConnectedLoadClient> connectedClients = new(options.Clients);
+        using PersistentSecureChannelPool? controlRouteChannels = CreateControlRouteChannelPool(options);
 
         try
         {
@@ -81,7 +82,8 @@ internal static class Program
                     firstClientId,
                     batchCount,
                     counters,
-                    sourceIpAddresses);
+                    sourceIpAddresses,
+                    controlRouteChannels);
                 batchStopwatch.Stop();
 
                 foreach (ClientAttemptResult result in results)
@@ -172,16 +174,42 @@ internal static class Program
         int firstClientId,
         int batchCount,
         LoadTestCounters counters,
-        IPAddress[] sourceIpAddresses)
+        IPAddress[] sourceIpAddresses,
+        PersistentSecureChannelPool? controlRouteChannels)
     {
         Task<ClientAttemptResult>[] tasks = new Task<ClientAttemptResult>[batchCount];
         for (int index = 0; index < batchCount; index++)
         {
             int clientId = firstClientId + index;
-            tasks[index] = Task.Run(() => ConnectClientAsync(options, clientId, counters, sourceIpAddresses));
+            tasks[index] = Task.Run(() => ConnectClientAsync(
+                options,
+                clientId,
+                counters,
+                sourceIpAddresses,
+                controlRouteChannels));
         }
 
         return await Task.WhenAll(tasks);
+    }
+
+    internal static PersistentSecureChannelPool? CreateControlRouteChannelPool(LoadTestOptions options)
+    {
+        if (!options.UseControlServer || options.ControlRouteChannels <= 0)
+        {
+            return null;
+        }
+
+        if (SecureSocketConnection.EnforceClientCertificateId)
+        {
+            Console.WriteLine("Control route channel pool disabled because client certificate ID enforcement is enabled.");
+            return null;
+        }
+
+        int channelCount = Math.Min(
+            options.BatchSize,
+            Math.Max(1, options.ControlRouteChannels));
+        Console.WriteLine($"Using pooled ControlServer route channels: {channelCount}.");
+        return new PersistentSecureChannelPool(options.Host, options.Port, "SocketClient", channelCount);
     }
 
     private static int[] BuildClientIds(int firstClientId, int count)
@@ -220,7 +248,8 @@ internal static class Program
         LoadTestOptions options,
         int clientId,
         LoadTestCounters counters,
-        IPAddress[] sourceIpAddresses)
+        IPAddress[] sourceIpAddresses,
+        PersistentSecureChannelPool? controlRouteChannels)
     {
         Interlocked.Increment(ref counters.Attempted);
 
@@ -234,7 +263,11 @@ internal static class Program
         try
         {
             bool connected = options.UseControlServer
-                ? await client.ConnectViaControlServerAsync(options.Host, options.Port)
+                ? controlRouteChannels == null
+                    ? await client.ConnectViaControlServerAsync(options.Host, options.Port)
+                    : await client.ConnectViaControlChannelPoolAsync(
+                        controlRouteChannels,
+                        $"{options.Host}:{options.Port}")
                 : await client.ConnectAsync();
             if (!connected)
             {
@@ -466,6 +499,7 @@ internal static class Program
             Port = options.Port,
             ExternalServer = options.ExternalServer,
             UseControlServer = options.UseControlServer,
+            ControlRouteChannels = options.ControlRouteChannels,
             MessageTest = options.MessageTest,
             MessageRounds = options.MessageRounds,
             RampDelayMilliseconds = options.RampDelayMilliseconds,
@@ -494,7 +528,7 @@ internal static class Program
     private static void PrintUsage()
     {
         Console.Error.WriteLine(
-            "Usage: dotnet run --project SocketLoadTest -- [--ui] [--ui-port N] [--profile smoke|soak-1k|soak-10k|soak-50k|message-1k] [--clients N] [--start-client-id N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--source-ips IP[,IP...]] [--external-server] [--use-control-server] [--message-test] [--message-rounds N] [--ramp-delay-ms N] [--expected-connected N] [--healthcheck-timeout-seconds N] [--message-timeout-seconds N] [--report-file PATH]");
+            "Usage: dotnet run --project SocketLoadTest -- [--ui] [--ui-port N] [--profile smoke|soak-1k|soak-10k|soak-50k|message-1k] [--clients N] [--start-client-id N] [--batch-size N] [--hold-seconds N] [--host IP] [--port N] [--source-ips IP[,IP...]] [--external-server] [--use-control-server] [--control-route-channels N] [--message-test] [--message-rounds N] [--ramp-delay-ms N] [--expected-connected N] [--healthcheck-timeout-seconds N] [--message-timeout-seconds N] [--report-file PATH]");
     }
 
     internal static IPAddress SelectSourceIpAddress(
@@ -547,6 +581,7 @@ internal sealed record LoadTestOptions(
     int Port,
     bool ExternalServer,
     bool UseControlServer,
+    int ControlRouteChannels,
     bool MessageTest,
     int MessageRounds,
     int RampDelayMilliseconds,
@@ -570,6 +605,7 @@ internal sealed record LoadTestOptions(
             Port: 10000,
             ExternalServer: false,
             UseControlServer: false,
+            ControlRouteChannels: GetDefaultControlRouteChannelCount(),
             MessageTest: false,
             MessageRounds: 1,
             RampDelayMilliseconds: 0,
@@ -684,6 +720,15 @@ internal sealed record LoadTestOptions(
                     options = options with { UseControlServer = true, ExternalServer = true };
                     break;
 
+                case "--control-route-channels":
+                    if (!TryReadInt(args, ref index, value, arg, 0, int.MaxValue, out int controlRouteChannels, out error))
+                    {
+                        return false;
+                    }
+
+                    options = options with { ControlRouteChannels = controlRouteChannels };
+                    break;
+
                 case "--message-test":
                     if (value != null)
                     {
@@ -791,6 +836,11 @@ internal sealed record LoadTestOptions(
         }
 
         return true;
+    }
+
+    private static int GetDefaultControlRouteChannelCount()
+    {
+        return Math.Clamp(Environment.ProcessorCount * 2, 4, 64);
     }
 
     internal static IPAddress[] ParseSourceIpAddresses(string sourceIps)
@@ -1003,6 +1053,8 @@ internal sealed class LoadTestReport
     public bool ExternalServer { get; init; }
 
     public bool UseControlServer { get; init; }
+
+    public int ControlRouteChannels { get; init; }
 
     public bool MessageTest { get; init; }
 

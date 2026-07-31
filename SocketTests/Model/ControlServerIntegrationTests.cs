@@ -85,6 +85,44 @@ public class ControlServerIntegrationTests
     }
 
     [TestMethod]
+    public async Task ControlServerAcceptsMultipleRouteRequestsOnPersistentChannelTest()
+    {
+        using TestProgress progress = TestProgress.Start(nameof(ControlServerAcceptsMultipleRouteRequestsOnPersistentChannelTest));
+        progress.Step("starting empty ControlServer");
+        using ControlServer controlServer = new(new ControlServerConfigFile
+        {
+            ControlServer = new ControlServerNodeConfig
+            {
+                ClusterId = "socket-cluster-1",
+                NodeId = "control-persistent-route",
+                Host = "127.0.0.1",
+                Port = 0,
+                PeerSyncPort = 0
+            }
+        });
+        Assert.IsTrue(controlServer.Start());
+
+        progress.Step("sending two route requests over one persistent channel");
+        using PersistentSecureChannelPool pool = new("127.0.0.1", controlServer.Port, "SocketClient", 1);
+        for (uint clientId = 31; clientId <= 32; clientId++)
+        {
+            (bool success, SocketMessageFrame frame) = await pool.SendAndReceiveAsync(
+                connection => ControlProtocol.SendAndReceiveAsync(
+                    connection,
+                    clientId,
+                    ControlMessageIds.RouteRequest,
+                    new RouteRequest
+                    {
+                        ClientId = clientId,
+                        RoutingPolicy = "MostAvailableConnections"
+                    }));
+            Assert.IsTrue(success);
+            Assert.IsTrue(ControlProtocol.TryDecode(frame, ControlMessageIds.RouteResponse, out RouteResponse response));
+            Assert.IsFalse(response.Success);
+        }
+    }
+
+    [TestMethod]
     public async Task ClientRouteFallsBackAcrossControlEndpointsTest()
     {
         using TestProgress progress = TestProgress.Start(nameof(ClientRouteFallsBackAcrossControlEndpointsTest));

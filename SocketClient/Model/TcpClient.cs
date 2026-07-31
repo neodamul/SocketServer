@@ -205,6 +205,31 @@ public class TcpClient : IClient, IDisposable
         return false;
     }
 
+    public async Task<bool> ConnectViaControlChannelPoolAsync(
+        PersistentSecureChannelPool controlRouteChannels,
+        string controlEndpoint,
+        int maxRouteAttempts = DefaultControlRouteAttempts)
+    {
+        if (controlRouteChannels == null)
+        {
+            throw new ArgumentNullException(nameof(controlRouteChannels));
+        }
+
+        string endpoint = string.IsNullOrWhiteSpace(controlEndpoint)
+            ? controlRouteChannels.GetType().Name
+            : controlEndpoint;
+        int attempts = Math.Max(1, maxRouteAttempts);
+        for (int attempt = 1; attempt <= attempts; attempt++)
+        {
+            if (await this.ConnectViaControlChannelPoolOnceAsync(controlRouteChannels, endpoint))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private async Task<bool> ConnectViaControlEndpointAsync(string controlHost, int controlPort)
     {
         string endpoint = $"{controlHost}:{controlPort}";
@@ -272,6 +297,73 @@ public class TcpClient : IClient, IDisposable
         catch (ObjectDisposedException exception)
         {
             Logger.Warn($"ControlServer route request socket was disposed. clientId={this.ClientId}, endpoint={endpoint}", exception);
+        }
+
+        return false;
+    }
+
+    private async Task<bool> ConnectViaControlChannelPoolOnceAsync(
+        PersistentSecureChannelPool controlRouteChannels,
+        string endpoint)
+    {
+        try
+        {
+            string serverHost;
+            int serverPort;
+            string serverInstanceId;
+            string reservationId;
+            Logger.Debug(() => $"ControlServer pooled route request started. clientId={this.ClientId}, endpoint={endpoint}");
+            (bool success, SocketMessageFrame frame) = await controlRouteChannels.SendAndReceiveAsync(
+                connection => ControlProtocol.SendAndReceiveAsync(
+                    connection,
+                    this.ClientId,
+                    ControlMessageIds.RouteRequest,
+                    new RouteRequest
+                    {
+                        ClientId = this.ClientId,
+                        RoutingPolicy = "MostAvailableConnections"
+                    }));
+
+            if (!success ||
+                !ControlProtocol.TryDecode(frame, ControlMessageIds.RouteResponse, out RouteResponse response) ||
+                !response.Success)
+            {
+                Logger.Warn($"ControlServer pooled route request did not return usable server. clientId={this.ClientId}, endpoint={endpoint}, success={success}");
+                return false;
+            }
+
+            serverHost = response.Host;
+            serverPort = response.Port;
+            serverInstanceId = response.InstanceId;
+            reservationId = response.ReservationId;
+
+            Logger.Debug(() => $"ControlServer pooled route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={serverInstanceId}, serverEndpoint={serverHost}:{serverPort}, reservationId={reservationId}");
+            this.SetIpAddress(serverHost);
+            this.SetPort(serverPort);
+            return await this.ConnectToRoutedServerAsync(
+                endpoint,
+                serverInstanceId,
+                reservationId);
+        }
+        catch (SocketException exception)
+        {
+            Logger.Warn($"ControlServer pooled route request failed. clientId={this.ClientId}, endpoint={endpoint}", exception);
+        }
+        catch (AuthenticationException exception)
+        {
+            Logger.Warn($"ControlServer pooled route request TLS handshake failed. clientId={this.ClientId}, endpoint={endpoint}", exception);
+        }
+        catch (IOException exception)
+        {
+            Logger.Warn($"ControlServer pooled route request stream failed. clientId={this.ClientId}, endpoint={endpoint}", exception);
+        }
+        catch (TimeoutException exception)
+        {
+            Logger.Warn($"ControlServer pooled route request timed out. clientId={this.ClientId}, endpoint={endpoint}", exception);
+        }
+        catch (ObjectDisposedException exception)
+        {
+            Logger.Warn($"ControlServer pooled route request socket was disposed. clientId={this.ClientId}, endpoint={endpoint}", exception);
         }
 
         return false;

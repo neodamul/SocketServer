@@ -55,6 +55,7 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k 
 # high local fan-out from one host after configuring loopback source aliases
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 35000 --batch-size 100 --hold-seconds 60 --host 127.0.0.1 --port 10000 --use-control-server --source-ips 127.0.0.1,127.0.0.2,127.0.0.3,127.0.0.4
 ```
+For broker-routed CLI runs, `SocketLoadTest` uses a bounded persistent ControlServer route channel pool by default. `--control-route-channels N` controls the pool size; `0` disables the pool and reverts to per-client route TLS connections. Strict per-client certificate binding disables route pooling automatically.
 Presets: `smoke` (100/10s), `soak-1k` (1k/300s), `soak-10k` (10k/600s), `soak-50k` (50k/900s), `message-1k` (1k, client message delivery/ack). See [Testing → Load test](Testing.md#load-test) for options and UI mode.
 
 ## Scale notes

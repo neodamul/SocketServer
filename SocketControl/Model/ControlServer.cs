@@ -341,7 +341,7 @@ public class ControlServer : IDisposable
 
     private static bool ShouldCloseAfterResponse(uint messageId)
     {
-        return messageId == ControlMessageIds.RouteRequest;
+        return false;
     }
 
     private async Task RunConnectionCleanupLoopAsync(CancellationToken cancellationToken)

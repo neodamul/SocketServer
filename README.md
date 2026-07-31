@@ -124,6 +124,8 @@ ControlServer route profile:
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k --host 127.0.0.1 --port 10000 --use-control-server --report-file reports/soak-10k.json
 ```
 
+`SocketLoadTest` uses pooled persistent ControlServer route channels by default for broker-routed CLI runs. Override with `--control-route-channels N`; use `0` to fall back to one route TLS connection per client.
+
 Broker-routed client-to-client message load:
 
 ```bash
