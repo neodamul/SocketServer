@@ -39,9 +39,9 @@ public class ResponseWorkerConfigurationTests
     }
 
     [TestMethod]
-    public void ControlServerClosesClientRouteRequestAfterResponseTest()
+    public void ControlServerKeepsClientRouteRequestChannelOpenAfterResponseTest()
     {
-        Assert.IsTrue(InvokePrivateStaticBool(typeof(ControlServer), "ShouldCloseAfterResponse", ControlMessageIds.RouteRequest));
+        Assert.IsFalse(InvokePrivateStaticBool(typeof(ControlServer), "ShouldCloseAfterResponse", ControlMessageIds.RouteRequest));
         Assert.IsFalse(InvokePrivateStaticBool(typeof(ControlServer), "ShouldCloseAfterResponse", ControlMessageIds.ServerHeartbeat));
         Assert.IsFalse(InvokePrivateStaticBool(typeof(ControlServer), "ShouldCloseAfterResponse", ControlMessageIds.RegistrySnapshotRequest));
 

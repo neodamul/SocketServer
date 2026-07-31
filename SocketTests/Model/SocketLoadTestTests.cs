@@ -51,6 +51,7 @@ public class SocketLoadTestTests
                 "--port", "0",
                 "--message-test",
                 "--message-rounds", "3",
+                "--control-route-channels", "16",
                 "--ramp-delay-ms", "5",
                 "--expected-connected", "10",
                 "--healthcheck-timeout-seconds", "3",
@@ -67,6 +68,7 @@ public class SocketLoadTestTests
         Assert.AreEqual(0, options.Port);
         Assert.IsTrue(options.MessageTest);
         Assert.AreEqual(3, options.MessageRounds);
+        Assert.AreEqual(16, options.ControlRouteChannels);
         Assert.AreEqual(5, options.RampDelayMilliseconds);
         Assert.AreEqual(10, options.ExpectedConnected);
         Assert.AreEqual(3, options.HealthCheckTimeoutSeconds);
@@ -216,6 +218,7 @@ public class SocketLoadTestTests
         Assert.AreEqual("127.0.0.1", options.Host);
         Assert.AreEqual(10000, options.Port);
         Assert.IsTrue(options.UseControlServer);
+        Assert.IsTrue(options.ControlRouteChannels >= 4);
     }
 
     [TestMethod]
@@ -372,6 +375,80 @@ public class SocketLoadTestTests
         Assert.IsFalse(security.RequireTls13);
         Assert.IsTrue(security.RequireClientCertificate);
         Assert.IsFalse(security.EnforceClientCertificateId);
+    }
+
+    [TestMethod]
+    public void ControlRouteChannelPoolIsDisabledForStrictClientCertificateBindingTest()
+    {
+        Assert.IsTrue(LoadTestOptions.TryParse(
+            new[]
+            {
+                "--use-control-server",
+                "--control-route-channels", "4"
+            },
+            out LoadTestOptions options,
+            out string error));
+        Assert.AreEqual(string.Empty, error);
+
+        SecureSocketConnection.Configure(new SocketSecurityConfig
+        {
+            TransportMode = "Tls",
+            TlsProtocol = "Auto",
+            RequireTls13 = false,
+            RequireClientCertificate = true,
+            EnforceClientCertificateId = true,
+            AuthenticationTimeoutMilliseconds = 30000
+        });
+
+        using PersistentSecureChannelPool? pool = Program.CreateControlRouteChannelPool(options);
+        Assert.IsNull(pool);
+    }
+
+    [TestMethod]
+    public async Task RunLoadTestUsesPooledControlRouteChannelTest()
+    {
+        using Socket controlListener = CreateSocketListener(0);
+        int controlPort = ((IPEndPoint)controlListener.LocalEndPoint!).Port;
+        int controlAcceptCount = 0;
+        int routeRequestCount = 0;
+
+        Task controlTask = Task.Run(async () =>
+        {
+            using SecureSocketConnection controlConnection = await AcceptSecureAsync(controlListener);
+            Interlocked.Increment(ref controlAcceptCount);
+            for (int requestIndex = 0; requestIndex < 6; requestIndex++)
+            {
+                (bool received, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(controlConnection);
+                Assert.IsTrue(received);
+                Assert.IsTrue(ControlProtocol.TryDecode(frame, ControlMessageIds.RouteRequest, out RouteRequest request));
+                Interlocked.Increment(ref routeRequestCount);
+                Assert.IsTrue(await ControlProtocol.SendAsync(
+                    controlConnection,
+                    request.ClientId,
+                    ControlMessageIds.RouteResponse,
+                    new RouteResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "No available server"
+                    }));
+            }
+        });
+
+        int exitCode = await Program.RunAsync(new[]
+        {
+            "--clients", "2",
+            "--batch-size", "2",
+            "--hold-seconds", "0",
+            "--host", "127.0.0.1",
+            "--port", controlPort.ToString(),
+            "--use-control-server",
+            "--control-route-channels", "1"
+        });
+
+        Assert.AreEqual(2, exitCode);
+        await AssertCompletesAsync(controlTask, TimeSpan.FromSeconds(5));
+        Assert.AreEqual(1, controlAcceptCount);
+        Assert.AreEqual(6, routeRequestCount);
     }
 
     [TestMethod]
@@ -928,6 +1005,20 @@ public class SocketLoadTestTests
         int port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         return port;
+    }
+
+    private static Socket CreateSocketListener(int port)
+    {
+        Socket listener = SocketFactory.CreateTcpSocket();
+        listener.Bind(new IPEndPoint(IPAddress.Loopback, port));
+        listener.Listen(SocketFactory.ListenBacklog);
+        return listener;
+    }
+
+    private static async Task<SecureSocketConnection> AcceptSecureAsync(Socket listener)
+    {
+        Socket accepted = await listener.AcceptAsync();
+        return await SecureSocketConnection.AuthenticateServerAsync(accepted, "SocketControl");
     }
 
     private static async Task WaitForConnectedAsync(LoadTestUiService service, int expected)

@@ -200,6 +200,48 @@ public class TcpClientTests
         Assert.AreEqual(3, routeRequestCount);
     }
 
+    [TestMethod]
+    public async Task ClientConnectViaControlChannelPoolReusesRouteConnectionAcrossRetriesTest()
+    {
+        using Socket controlListener = CreateListener(0);
+        int controlPort = ((IPEndPoint)controlListener.LocalEndPoint!).Port;
+        int controlAcceptCount = 0;
+        int routeRequestCount = 0;
+
+        Task controlTask = Task.Run(async () =>
+        {
+            using SecureSocketConnection controlConnection = await AcceptSecureAsync(controlListener);
+            Interlocked.Increment(ref controlAcceptCount);
+            for (int requestIndex = 0; requestIndex < 3; requestIndex++)
+            {
+                (bool received, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(controlConnection);
+                Assert.IsTrue(received);
+                Assert.IsTrue(ControlProtocol.TryDecode(frame, ControlMessageIds.RouteRequest, out RouteRequest request));
+                Interlocked.Increment(ref routeRequestCount);
+
+                Assert.IsTrue(await ControlProtocol.SendAsync(
+                    controlConnection,
+                    request.ClientId,
+                    ControlMessageIds.RouteResponse,
+                    new RouteResponse
+                    {
+                        Success = false,
+                        ErrorMessage = "No available server"
+                    }));
+            }
+        });
+
+        using PersistentSecureChannelPool pool = new("127.0.0.1", controlPort, "SocketClient", 1);
+        SocketClientTcpClient client = new(13, "pooled-route-request-client");
+        Assert.IsFalse(await client.ConnectViaControlChannelPoolAsync(pool, "127.0.0.1:control", maxRouteAttempts: 3));
+
+        Task completedTask = await Task.WhenAny(controlTask, Task.Delay(5000));
+        Assert.AreSame(controlTask, completedTask);
+        await controlTask;
+        Assert.AreEqual(1, controlAcceptCount);
+        Assert.AreEqual(3, routeRequestCount);
+    }
+
     private static Socket CreateListener(int port = TestPort)
     {
         Socket listener = SocketFactory.CreateTcpSocket();
