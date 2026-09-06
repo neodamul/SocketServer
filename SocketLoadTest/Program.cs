@@ -56,34 +56,47 @@ internal static class Program
             $"Starting load test: clients={options.Clients}, batch-size={options.BatchSize}, hold-seconds={options.HoldSeconds}, endpoint={options.Host}:{options.Port}, external-server={options.ExternalServer}, use-control-server={options.UseControlServer}, control-route-channels={options.ControlRouteChannels}, message-test={options.MessageTest}, message-rounds={options.MessageRounds}, ramp-delay-ms={options.RampDelayMilliseconds}, expected-connected={options.ExpectedConnected}, source-ips={FormatSourceIps(sourceIpAddresses)}");
 
         Stopwatch stopwatch = Stopwatch.StartNew();
+        double rampMilliseconds = 0;
+        double? allReadyMilliseconds = options.Clients == 0 ? 0 : null;
+        LoadTestTimings timings = new();
         LoadTestCounters counters = new();
         List<ConnectedLoadClient> connectedClients = new(options.Clients);
         using PersistentSecureChannelPool? controlRouteChannels = CreateControlRouteChannelPool(options);
+        ActiveAdmissionStopwatch admissionStopwatch = new(StopwatchAdmissionClock.Instance);
+        admissionStopwatch.Start();
+        HashSet<string> warmedCertificateModules = new(StringComparer.Ordinal);
 
         try
         {
             int lastClientId = options.StartClientId + options.Clients - 1;
-            HashSet<string> warmedCertificateModules = new(StringComparer.Ordinal);
+            PrintDebug($"admission ramp start clients={options.Clients}, total-elapsed={stopwatch.Elapsed}");
+
             for (int firstClientId = options.StartClientId; firstClientId <= lastClientId; firstClientId += options.BatchSize)
             {
                 int batchCount = Math.Min(options.BatchSize, lastClientId - firstClientId + 1);
                 int[] batchClientIds = BuildClientIds(firstClientId, batchCount);
                 int[] warmupClientIds = batchClientIds
-                    .Where(clientId => warmedCertificateModules.Add(LoadTestCertificateWarmup.GetClientCertificateModuleName(clientId)))
+                    .Where(clientId => warmedCertificateModules.Add(
+                        LoadTestCertificateWarmup.GetClientCertificateModuleName(clientId)))
                     .ToArray();
-                await WarmUpClientCertificatesAsync(warmupClientIds, CancellationToken.None);
 
                 Stopwatch batchStopwatch = Stopwatch.StartNew();
                 PrintDebug(
                     $"batch start first-client-id={firstClientId}, count={batchCount}, " +
                     $"elapsed={stopwatch.Elapsed}");
-                ClientAttemptResult[] results = await ConnectBatchAsync(
-                    options,
-                    firstClientId,
-                    batchCount,
-                    counters,
-                    sourceIpAddresses,
-                    controlRouteChannels);
+                ClientAttemptResult[] results = await AdmissionBatchRunner.RunAsync(
+                    admissionStopwatch,
+                    warmupClientIds,
+                    WarmUpClientCertificatesAsync,
+                    () => ConnectBatchAsync(
+                        options,
+                        firstClientId,
+                        batchCount,
+                        counters,
+                        sourceIpAddresses,
+                        controlRouteChannels,
+                        timings),
+                    CancellationToken.None);
                 batchStopwatch.Stop();
 
                 foreach (ClientAttemptResult result in results)
@@ -92,6 +105,11 @@ internal static class Program
                     {
                         connectedClients.Add(new ConnectedLoadClient(result.ClientId, result.Client));
                     }
+                }
+
+                if (allReadyMilliseconds is null && counters.HealthCheckSuccess == options.Clients)
+                {
+                    allReadyMilliseconds = admissionStopwatch.Elapsed.TotalMilliseconds;
                 }
 
                 PrintDebug(
@@ -107,6 +125,9 @@ internal static class Program
                 }
             }
 
+            admissionStopwatch.Pause();
+            rampMilliseconds = options.Clients == 0 ? 0 : admissionStopwatch.Elapsed.TotalMilliseconds;
+            PrintDebug($"admission complete ready-clients={counters.HealthCheckSuccess}, ramp-ms={rampMilliseconds:F3}");
             if (options.MessageTest)
             {
                 PrintDebug("message test stage start");
@@ -140,7 +161,7 @@ internal static class Program
 
         stopwatch.Stop();
         PrintSummary(counters, stopwatch.Elapsed);
-        WriteReport(options, counters, stopwatch.Elapsed);
+        WriteReport(options, counters, stopwatch.Elapsed, rampMilliseconds, allReadyMilliseconds, timings);
         if (options.ExpectedConnected > 0 && counters.Connected < options.ExpectedConnected)
         {
             Console.Error.WriteLine($"Expected at least {options.ExpectedConnected} connected clients, but {counters.Connected} connected.");
@@ -175,7 +196,8 @@ internal static class Program
         int batchCount,
         LoadTestCounters counters,
         IPAddress[] sourceIpAddresses,
-        PersistentSecureChannelPool? controlRouteChannels)
+        PersistentSecureChannelPool? controlRouteChannels,
+        LoadTestTimings timings)
     {
         Task<ClientAttemptResult>[] tasks = new Task<ClientAttemptResult>[batchCount];
         for (int index = 0; index < batchCount; index++)
@@ -186,7 +208,8 @@ internal static class Program
                 clientId,
                 counters,
                 sourceIpAddresses,
-                controlRouteChannels));
+                controlRouteChannels,
+                timings));
         }
 
         return await Task.WhenAll(tasks);
@@ -249,11 +272,28 @@ internal static class Program
         int clientId,
         LoadTestCounters counters,
         IPAddress[] sourceIpAddresses,
-        PersistentSecureChannelPool? controlRouteChannels)
+        PersistentSecureChannelPool? controlRouteChannels,
+        LoadTestTimings timings)
     {
         Interlocked.Increment(ref counters.Attempted);
 
         TcpClient client = new(clientId, $"load-client-{clientId}", options.Host, options.Port);
+        client.AdmissionStageCompleted = timings.Record;
+        long readyStarted = Stopwatch.GetTimestamp();
+        bool ready = false;
+        bool readinessRecorded = false;
+
+        void RecordReadiness()
+        {
+            if (readinessRecorded)
+            {
+                return;
+            }
+
+            readinessRecorded = true;
+            timings.Record("client_ready", Stopwatch.GetElapsedTime(readyStarted), ready);
+        }
+
         IPAddress sourceIpAddress = SelectSourceIpAddress(options, sourceIpAddresses, clientId);
         if (sourceIpAddress != null)
         {
@@ -272,6 +312,7 @@ internal static class Program
             if (!connected)
             {
                 Interlocked.Increment(ref counters.ConnectFail);
+                RecordReadiness();
                 client.Dispose();
                 return ClientAttemptResult.Failed;
             }
@@ -282,13 +323,24 @@ internal static class Program
             if (!registerReceived || !registerAck.Success)
             {
                 Interlocked.Increment(ref counters.RegisterFail);
+                RecordReadiness();
                 client.Dispose();
                 return ClientAttemptResult.Failed;
             }
 
-            bool healthCheckSucceeded = await SendAndReceiveHealthCheckAsync(client, options.HealthCheckTimeoutSeconds);
+            long healthCheckStarted = Stopwatch.GetTimestamp();
+            bool healthCheckSucceeded = false;
+            try
+            {
+                healthCheckSucceeded = await SendAndReceiveHealthCheckAsync(client, options.HealthCheckTimeoutSeconds);
+            }
+            finally
+            {
+                timings.Record("first_healthcheck", Stopwatch.GetElapsedTime(healthCheckStarted), healthCheckSucceeded);
+            }
             if (healthCheckSucceeded)
             {
+                ready = true;
                 Interlocked.Increment(ref counters.HealthCheckSuccess);
                 if (!options.MessageTest && options.HoldSeconds > 0)
                 {
@@ -299,14 +351,22 @@ internal static class Program
             }
 
             Interlocked.Increment(ref counters.HealthCheckFail);
+            RecordReadiness();
             client.Dispose();
             return ClientAttemptResult.Failed;
         }
         catch (Exception exception) when (exception is TimeoutException or InvalidOperationException)
         {
             Interlocked.Increment(ref counters.HealthCheckFail);
+            RecordReadiness();
             client.Dispose();
             return ClientAttemptResult.Failed;
+        }
+        finally
+        {
+            RecordReadiness();
+            client.DrainAdmissionObservations();
+            client.AdmissionStageCompleted = null;
         }
     }
 
@@ -476,7 +536,8 @@ internal static class Program
         Console.WriteLine($"Elapsed: {elapsed}");
     }
 
-    private static void WriteReport(LoadTestOptions options, LoadTestCounters counters, TimeSpan elapsed)
+    private static void WriteReport(LoadTestOptions options, LoadTestCounters counters, TimeSpan elapsed,
+        double rampMilliseconds, double? allReadyMilliseconds, LoadTestTimings timings)
     {
         if (string.IsNullOrWhiteSpace(options.ReportFile))
         {
@@ -516,6 +577,10 @@ internal static class Program
             MessageSuccess = counters.MessageSuccess,
             MessageFail = counters.MessageFail,
             ElapsedMilliseconds = elapsed.TotalMilliseconds,
+            RampMilliseconds = rampMilliseconds,
+            AllClientsReadyMilliseconds = allReadyMilliseconds,
+            ReadyClients = counters.HealthCheckSuccess,
+            StageTimings = timings.Snapshot(),
             CompletedAt = DateTimeOffset.UtcNow
         };
 
@@ -1038,6 +1103,15 @@ internal sealed record LoadTestOptions(
 
 internal sealed class LoadTestReport
 {
+    public int ReadyClients { get; init; }
+
+    public double RampMilliseconds { get; init; }
+
+    public double? AllClientsReadyMilliseconds { get; init; }
+
+    public IReadOnlyDictionary<string, StageTimingReport> StageTimings { get; init; } =
+        new Dictionary<string, StageTimingReport>();
+
     public string Profile { get; init; } = "";
 
     public int Clients { get; init; }

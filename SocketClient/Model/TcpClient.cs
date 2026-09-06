@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -27,6 +28,8 @@ public class TcpClient : IClient, IDisposable
     private bool disposedValue;
     private CancellationTokenSource healthCheckCancellation;
     private Task healthCheckTask;
+    private readonly object admissionObservationGate = new();
+    private readonly Queue<AdmissionStageObservation> admissionObservations = new();
 
     private int Id { get; set; }
     private string Name { get; set; }
@@ -35,6 +38,79 @@ public class TcpClient : IClient, IDisposable
     protected IPAddress SourceIpAddress { get; private set; }
     protected int Port { get; private set; }
     protected uint ClientId => this.Id < 0 ? 0 : (uint)this.Id;
+
+    public Action<string, TimeSpan, bool> AdmissionStageCompleted { get; set; }
+
+    /// <summary>
+    /// Delivers buffered admission observations to the configured observer.
+    /// The observer is intentionally invoked only by this explicit drain operation,
+    /// never by the networking completion path.
+    /// </summary>
+    public int DrainAdmissionObservations()
+    {
+        Action<string, TimeSpan, bool> observer = this.AdmissionStageCompleted;
+        if (observer == null)
+        {
+            return 0;
+        }
+
+        int drained = 0;
+        while (true)
+        {
+            AdmissionStageObservation observation;
+            lock (this.admissionObservationGate)
+            {
+                if (this.admissionObservations.Count == 0)
+                {
+                    return drained;
+                }
+
+                observation = this.admissionObservations.Dequeue();
+            }
+
+            try
+            {
+                observer(observation.Stage, observation.Elapsed, observation.Success);
+            }
+            catch (Exception)
+            {
+                // Observability must not change networking or drain outcomes.
+            }
+
+            drained++;
+        }
+    }
+
+    private void EnqueueAdmissionObservation(string stage, TimeSpan elapsed, bool success)
+    {
+        lock (this.admissionObservationGate)
+        {
+            this.admissionObservations.Enqueue(new AdmissionStageObservation(stage, elapsed, success));
+        }
+    }
+
+    private readonly record struct AdmissionStageObservation(string Stage, TimeSpan Elapsed, bool Success);
+
+    private sealed class AdmissionStageMeasurement : IDisposable
+    {
+        private readonly TcpClient client;
+        private readonly string stage;
+        private readonly long started = Stopwatch.GetTimestamp();
+
+        public AdmissionStageMeasurement(TcpClient client, string stage)
+        {
+            this.client = client;
+            this.stage = stage;
+        }
+
+        public bool Success { get; set; }
+
+        public void Dispose()
+        {
+            TimeSpan elapsed = Stopwatch.GetElapsedTime(this.started);
+            this.client.EnqueueAdmissionObservation(this.stage, elapsed, this.Success);
+        }
+    }
 
     public TcpClient() : this(0, null)
     { }
@@ -124,8 +200,17 @@ public class TcpClient : IClient, IDisposable
                 this.Initialize();
             }
 
-            await SocketFactory.ConnectAsync(this.Socket, this.IpAddress, this.Port);
-            this.Connection = await SecureSocketConnection.AuthenticateClientAsync(this.Socket, this.GetCertificateModuleName());
+            using (AdmissionStageMeasurement stage = new(this, "tcp_connect"))
+            {
+                await SocketFactory.ConnectAsync(this.Socket, this.IpAddress, this.Port);
+                stage.Success = true;
+            }
+
+            using (AdmissionStageMeasurement stage = new(this, "tls_authenticate"))
+            {
+                this.Connection = await SecureSocketConnection.AuthenticateClientAsync(this.Socket, this.GetCertificateModuleName());
+                stage.Success = true;
+            }
             Logger.Debug(() => $"Client connected. clientId={this.ClientId}, endpoint={this.IpAddress}:{this.Port}");
             return true;
         }
@@ -240,8 +325,9 @@ public class TcpClient : IClient, IDisposable
             string serverInstanceId;
             string reservationId;
             Logger.Debug(() => $"ControlServer route request started. clientId={this.ClientId}, endpoint={endpoint}");
-            using (Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family))
+            using (AdmissionStageMeasurement stage = new(this, "route_lookup"))
             {
+                using Socket controlSocket = SocketFactory.CreateTcpSocket(this.Family);
                 SocketFactory.BindSourceAddress(controlSocket, this.SourceIpAddress);
                 await SocketFactory.ConnectAsync(controlSocket, controlHost, controlPort);
                 using SecureSocketConnection controlConnection =
@@ -268,6 +354,7 @@ public class TcpClient : IClient, IDisposable
                 serverPort = response.Port;
                 serverInstanceId = response.InstanceId;
                 reservationId = response.ReservationId;
+                stage.Success = true;
             }
 
             Logger.Debug(() => $"ControlServer route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={serverInstanceId}, serverEndpoint={serverHost}:{serverPort}, reservationId={reservationId}");
@@ -313,29 +400,33 @@ public class TcpClient : IClient, IDisposable
             string serverInstanceId;
             string reservationId;
             Logger.Debug(() => $"ControlServer pooled route request started. clientId={this.ClientId}, endpoint={endpoint}");
-            (bool success, SocketMessageFrame frame) = await controlRouteChannels.SendAndReceiveAsync(
-                connection => ControlProtocol.SendAndReceiveAsync(
-                    connection,
-                    this.ClientId,
-                    ControlMessageIds.RouteRequest,
-                    new RouteRequest
-                    {
-                        ClientId = this.ClientId,
-                        RoutingPolicy = "MostAvailableConnections"
-                    }));
-
-            if (!success ||
-                !ControlProtocol.TryDecode(frame, ControlMessageIds.RouteResponse, out RouteResponse response) ||
-                !response.Success)
+            using (AdmissionStageMeasurement stage = new(this, "route_lookup"))
             {
-                Logger.Warn($"ControlServer pooled route request did not return usable server. clientId={this.ClientId}, endpoint={endpoint}, success={success}");
-                return false;
-            }
+                (bool success, SocketMessageFrame frame) = await controlRouteChannels.SendAndReceiveAsync(
+                    connection => ControlProtocol.SendAndReceiveAsync(
+                        connection,
+                        this.ClientId,
+                        ControlMessageIds.RouteRequest,
+                        new RouteRequest
+                        {
+                            ClientId = this.ClientId,
+                            RoutingPolicy = "MostAvailableConnections"
+                        }));
 
-            serverHost = response.Host;
-            serverPort = response.Port;
-            serverInstanceId = response.InstanceId;
-            reservationId = response.ReservationId;
+                if (!success ||
+                    !ControlProtocol.TryDecode(frame, ControlMessageIds.RouteResponse, out RouteResponse response) ||
+                    !response.Success)
+                {
+                    Logger.Warn($"ControlServer pooled route request did not return usable server. clientId={this.ClientId}, endpoint={endpoint}, success={success}");
+                    return false;
+                }
+
+                serverHost = response.Host;
+                serverPort = response.Port;
+                serverInstanceId = response.InstanceId;
+                reservationId = response.ReservationId;
+                stage.Success = true;
+            }
 
             Logger.Debug(() => $"ControlServer pooled route request completed. clientId={this.ClientId}, endpoint={endpoint}, serverInstanceId={serverInstanceId}, serverEndpoint={serverHost}:{serverPort}, reservationId={reservationId}");
             this.SetIpAddress(serverHost);
@@ -627,6 +718,7 @@ public class TcpClient : IClient, IDisposable
             return (false, null);
         }
 
+        using AdmissionStageMeasurement stage = new(this, "register");
         if (!await ClientMessageProtocol.SendRegisterAsync(this.Connection, this.ClientId))
         {
             Logger.Warn($"Client register send failed. clientId={this.ClientId}");
@@ -637,6 +729,7 @@ public class TcpClient : IClient, IDisposable
         (bool success, SocketMessageFrame frame) = await SocketMessageFrame.TryReceiveAsync(this.Connection);
         ClientRegisterAck ack = null;
         bool decoded = success && ClientMessageProtocol.TryDecodeRegisterAck(frame, out ack);
+        stage.Success = decoded && ack.Success;
         Logger.Debug(() => $"Client register response received. clientId={this.ClientId}, success={decoded && ack.Success}");
         return decoded ? (true, ack) : (false, null);
     }

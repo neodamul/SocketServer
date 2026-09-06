@@ -407,6 +407,7 @@ public class SocketLoadTestTests
     [TestMethod]
     public async Task RunLoadTestUsesPooledControlRouteChannelTest()
     {
+        string reportFile = Path.Combine(Path.GetTempPath(), $"socket-route-report-{Guid.NewGuid():N}.json");
         using Socket controlListener = CreateSocketListener(0);
         int controlPort = ((IPEndPoint)controlListener.LocalEndPoint!).Port;
         int controlAcceptCount = 0;
@@ -434,6 +435,8 @@ public class SocketLoadTestTests
             }
         });
 
+        try
+        {
         int exitCode = await Program.RunAsync(new[]
         {
             "--clients", "2",
@@ -442,13 +445,27 @@ public class SocketLoadTestTests
             "--host", "127.0.0.1",
             "--port", controlPort.ToString(),
             "--use-control-server",
-            "--control-route-channels", "1"
+            "--control-route-channels", "1",
+            "--report-file", reportFile
         });
 
         Assert.AreEqual(2, exitCode);
         await AssertCompletesAsync(controlTask, TimeSpan.FromSeconds(5));
         Assert.AreEqual(1, controlAcceptCount);
         Assert.AreEqual(6, routeRequestCount);
+        using JsonDocument document = JsonDocument.Parse(File.ReadAllText(reportFile));
+        JsonElement root = document.RootElement;
+        Assert.AreEqual(0, root.GetProperty("ReadyClients").GetInt32());
+        Assert.AreEqual(JsonValueKind.Null, root.GetProperty("AllClientsReadyMilliseconds").ValueKind);
+        JsonElement timings = root.GetProperty("StageTimings");
+        Assert.AreEqual(6L, timings.GetProperty("route_lookup").GetProperty("Failed").GetProperty("Count").GetInt64());
+        Assert.AreEqual(2L, timings.GetProperty("client_ready").GetProperty("Failed").GetProperty("Count").GetInt64());
+        Assert.AreEqual(0L, timings.GetProperty("tls_authenticate").GetProperty("Succeeded").GetProperty("Count").GetInt64());
+        }
+        finally
+        {
+            if (File.Exists(reportFile)) File.Delete(reportFile);
+        }
     }
 
     [TestMethod]
@@ -658,7 +675,7 @@ public class SocketLoadTestTests
                 "--clients", "1",
                 "--start-client-id", "300",
                 "--batch-size", "1",
-                "--hold-seconds", "0",
+                "--hold-seconds", "1",
                 "--port", "0",
                 "--report-file", reportFile
             });
@@ -673,6 +690,55 @@ public class SocketLoadTestTests
             Assert.AreEqual(300, root.GetProperty("StartClientId").GetInt32());
             Assert.AreEqual(1, root.GetProperty("Connected").GetInt32());
             Assert.AreEqual(1, root.GetProperty("HealthCheckSuccess").GetInt32());
+            Assert.AreEqual(1, root.GetProperty("ReadyClients").GetInt32());
+            Assert.IsTrue(root.GetProperty("AllClientsReadyMilliseconds").GetDouble() >= 0);
+            Assert.IsTrue(root.GetProperty("RampMilliseconds").GetDouble() <=
+                root.GetProperty("ElapsedMilliseconds").GetDouble());
+            Assert.IsTrue(root.GetProperty("ElapsedMilliseconds").GetDouble() -
+                root.GetProperty("RampMilliseconds").GetDouble() >= 900,
+                "The one-second hold must be excluded from ramp timing.");
+            Assert.IsTrue(root.GetProperty("AllClientsReadyMilliseconds").GetDouble() <=
+                root.GetProperty("RampMilliseconds").GetDouble());
+            JsonElement stages = root.GetProperty("StageTimings");
+            foreach (string stage in new[] { "tcp_connect", "tls_authenticate", "register", "first_healthcheck", "client_ready" })
+            {
+                JsonElement timing = stages.GetProperty(stage).GetProperty("Succeeded");
+                Assert.AreEqual(1L, timing.GetProperty("Count").GetInt64(), stage);
+                Assert.IsTrue(timing.GetProperty("P99UpperBoundMilliseconds").GetDouble() >=
+                    timing.GetProperty("P50UpperBoundMilliseconds").GetDouble(), stage);
+            }
+        }
+        finally
+        {
+            if (File.Exists(reportFile))
+            {
+                File.Delete(reportFile);
+            }
+        }
+    }
+
+    [TestMethod]
+    public async Task RunZeroClientLoadTestWritesZeroAdmissionTimingTest()
+    {
+        string reportFile = Path.Combine(Path.GetTempPath(), $"socket-zero-client-report-{Guid.NewGuid():N}.json");
+        try
+        {
+            int exitCode = await Program.RunAsync(new[]
+            {
+                "--clients", "0",
+                "--hold-seconds", "0",
+                "--external-server",
+                "--host", "127.0.0.1",
+                "--port", "1",
+                "--report-file", reportFile
+            });
+
+            Assert.AreEqual(0, exitCode);
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(reportFile));
+            JsonElement root = document.RootElement;
+            Assert.AreEqual(0, root.GetProperty("ReadyClients").GetInt32());
+            Assert.AreEqual(0, root.GetProperty("RampMilliseconds").GetDouble());
+            Assert.AreEqual(0, root.GetProperty("AllClientsReadyMilliseconds").GetDouble());
         }
         finally
         {

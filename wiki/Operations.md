@@ -56,6 +56,7 @@ dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --profile soak-10k 
 dotnet run --project SocketLoadTest/SocketLoadTest.csproj -- --clients 35000 --batch-size 100 --hold-seconds 60 --host 127.0.0.1 --port 10000 --use-control-server --source-ips 127.0.0.1,127.0.0.2,127.0.0.3,127.0.0.4
 ```
 For broker-routed CLI runs, `SocketLoadTest` uses a bounded persistent ControlServer route channel pool by default. `--control-route-channels N` controls the pool size; `0` disables the pool and reverts to per-client route TLS connections. Strict per-client certificate binding disables route pooling automatically.
+Use `--report-file reports/run.json` for reproducible admission evidence. The report records `ReadyClients`, nullable `AllClientsReadyMilliseconds`, pre-hold `RampMilliseconds`, and bounded success/failure histograms for `route_lookup`, `tcp_connect`, `tls_authenticate`, `register`, `first_healthcheck`, and `client_ready`. Route retries are separate samples; pooled route queue wait belongs to `route_lookup`. `ElapsedMilliseconds` includes message testing, hold, and teardown, while admission stage timings stop before cleanup. See [Testing → Load test](Testing.md#load-test) for the field contract.
 Presets: `smoke` (100/10s), `soak-1k` (1k/300s), `soak-10k` (10k/600s), `soak-50k` (50k/900s), `message-1k` (1k, client message delivery/ack). See [Testing → Load test](Testing.md#load-test) for options and UI mode.
 
 ## Scale notes
